@@ -1,9 +1,13 @@
 import numpy as np
+from pyscarcopula._native import model_policy
+from pyscarcopula.numerical._arrays import as_float64_array
 
 from pyscarcopula.copula.base import BivariateCopula
 
 
 class ClaytonCopula(BivariateCopula):
+
+    _native_pair_family = "Clayton"
 
     def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         super().__init__(rotate)
@@ -15,29 +19,16 @@ class ClaytonCopula(BivariateCopula):
                 f"got '{transform_type}'"
             )
         self._transform_type = transform_type
-        upper = 20.0001 if transform_type == "logistic" else np.inf
-        self._bounds = [(0.0001, upper)]
+        self._bounds = model_policy.public_bounds(self)
 
     def tau_to_param(self, tau):
-        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        tau = np.atleast_1d(as_float64_array(tau, name="tau"))
         if np.any((tau <= 0.0) | (tau >= 1.0)):
             raise ValueError("Clayton Kendall tau must be in (0, 1)")
         return self._native_adapter().tau_to_param(self, tau)
 
     def param_to_tau(self, r):
-        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        r = np.atleast_1d(as_float64_array(r, name="r"))
         if np.any(r <= 0.0):
             raise ValueError("Clayton parameter must be positive")
         return self._native_adapter().param_to_tau(self, r)
-
-    @staticmethod
-    def psi(t, r):
-        return (1.0 + t * r) ** (-1.0 / r)
-
-    def V(self, n, r, rng=None):
-        if rng is None:
-            rng = np.random.default_rng()
-        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if parameter.size == 1:
-            parameter = np.full(n, parameter[0])
-        return rng.gamma(1.0 / parameter, scale=parameter)

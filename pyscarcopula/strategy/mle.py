@@ -10,25 +10,35 @@ from scipy.optimize import minimize
 
 from pyscarcopula._types import (
     MLEResult,
+    MultivariateMLEResult,
     NumericalConfig,
     DEFAULT_CONFIG,
     PredictiveState,
 )
 from pyscarcopula.strategy._base import (
     copula_dimension,
-    get_copula_capabilities,
+    has_dynamic_scalar_parameter,
     is_multivariate_copula,
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
-    reject_legacy_tol,
+    reject_unknown_mle_kwargs,
+    reject_unknown_operation_kwargs,
 )
 from pyscarcopula.strategy.predict_helpers import (
-    predict_from_strategy,
+    predictive_params_from_state,
     sample_predictive,
+    strategy_predict,
 )
-from pyscarcopula.numerical import static_likelihood
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula._native import pair as pair_native
+from pyscarcopula._native import static as static_likelihood
+from pyscarcopula._native import model_policy
+from pyscarcopula._native.registry import registry_entry_for
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    validate_float64_allocation,
+    validate_sampling_n_threads,
+)
 
 
 def _validate_scalar_mle_parameter(copula, value, *, name):
@@ -59,7 +69,28 @@ class MLEStrategy:
     the MLE objective.
     """
 
+    _strict_keyword_contract = True
+    # Shared prediction/vine adapters pass the context to both state steps.
+    _prediction_context_keywords = frozenset({
+        "given", "horizon", "predictive_r_mode", "n_threads",
+        "memory_budget_bytes", "state_cache", "cache_key", "posterior_cache",
+    })
+    _operation_keyword_aliases = {
+        "mixture_h_pair": frozenset({
+            "state_cache", "current_cache_key", "next_cache_key", "posterior_cache",
+        }),
+        "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
+        "predict": frozenset({
+            "given", "horizon", "predictive_r_mode", "n_threads",
+            "memory_budget_bytes",
+        }),
+        "predictive_params": _prediction_context_keywords,
+        "predictive_state": _prediction_context_keywords,
+        "sample_params": _prediction_context_keywords,
+    }
+
     def __init__(self, config: NumericalConfig | None = None, **kwargs):
+        reject_unknown_mle_kwargs(kwargs)
         self.config = config or DEFAULT_CONFIG
 
     def fit(self, copula, u: np.ndarray,
@@ -78,7 +109,7 @@ class MLEStrategy:
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations
         alpha0 : (1,) array_like or None
             Initial point in the copula's natural parameter space. When
@@ -87,13 +118,14 @@ class MLEStrategy:
             optimizer still evaluates the likelihood directly at that value.
         gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
         finite_diff_rel_step : L-BFGS-B options
-        **kwargs : ignored (for interface compatibility)
+        **kwargs : unsupported keyword arguments are rejected
 
         Returns
         -------
         MLEResult
         """
-        reject_legacy_tol(kwargs)
+        registry_entry_for(copula)
+        reject_unknown_mle_kwargs(kwargs)
         optimizer_overrides = lbfgsb_overrides(
             gtol=gtol,
             ftol=ftol,
@@ -104,15 +136,23 @@ class MLEStrategy:
             maxcor=maxcor,
             finite_diff_rel_step=finite_diff_rel_step,
         )
+        optimizer_overrides = {
+            key: value for key, value in optimizer_overrides.items()
+            if value is not None
+        }
 
-        capabilities = get_copula_capabilities(copula)
-        if (
-                capabilities is not None
-                and not capabilities.has_dynamic_scalar_parameter):
+        if is_multivariate_copula(copula) and alpha0 is not None:
+            raise TypeError("alpha0 is not supported by multivariate MLE")
+        if is_multivariate_copula(copula) and _prepared_evaluator is not None:
+            raise TypeError(
+                "_prepared_evaluator is not supported by multivariate MLE")
+
+        if not has_dynamic_scalar_parameter(copula):
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
                 result = direct_fit(
-                    u, to_pobs=False, config=self.config)
+                    u, method='MLE', to_pobs=False, config=self.config,
+                    **optimizer_overrides)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 
@@ -124,7 +164,8 @@ class MLEStrategy:
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
                 result = direct_fit(
-                    u, to_pobs=False, config=self.config)
+                    u, method='MLE', to_pobs=False, config=self.config,
+                    **optimizer_overrides)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 
@@ -137,7 +178,7 @@ class MLEStrategy:
             x0 = _validate_scalar_mle_parameter(
                 copula, alpha0, name="alpha0")
         else:
-            x0_val = copula.transform(np.array([1.5]))[0]
+            x0_val = model_policy.default_pair_mle_parameter(copula)
             x0 = _validate_scalar_mle_parameter(
                 copula, x0_val, name="default MLE initial point")
 
@@ -164,8 +205,18 @@ class MLEStrategy:
             raise RuntimeError(
                 "MLE optimizer returned a non-finite objective value")
 
+        # A finite failure penalty with zero gradient can look converged to
+        # L-BFGS-B. Require a genuine evaluation at the returned point, even
+        # when the optimizer reports success or the numerical failure recovers.
+        validated_value, _ = evaluator.validated_objective_and_gradient(
+            float(fitted_parameter[0]))
+        if objective_value != validated_value:
+            raise FloatingPointError(
+                "MLE optimizer objective does not match the final native "
+                "evaluation; a numerical failure penalty cannot be fitted")
+
         return MLEResult(
-            log_likelihood=-objective_value,
+            log_likelihood=-validated_value,
             method='MLE',
             copula_name=copula.name,
             success=result.success,
@@ -185,11 +236,16 @@ class MLEStrategy:
     def log_likelihood(self, copula, u: np.ndarray,
                        result: MLEResult) -> float:
         """sum log c(u1, u2; r_mle)."""
+        registry_entry_for(copula)
+        if isinstance(result, MultivariateMLEResult):
+            from pyscarcopula.strategy.multivariate_mle import (
+                log_likelihood_from_result,
+            )
+            return log_likelihood_from_result(
+                copula, u, result, n_threads=self.config.n_threads)
         if is_multivariate_copula(copula):
-            try:
-                return float(copula.log_likelihood(u, result.copula_param))
-            except TypeError:
-                return float(copula.log_likelihood(u))
+            return float(copula.log_likelihood(
+                u, result.copula_param, n_threads=self.config.n_threads))
         evaluator = static_likelihood.prepare(
             copula, u, n_threads=self.config.n_threads)
         return evaluator.log_likelihood(result.copula_param)
@@ -197,64 +253,100 @@ class MLEStrategy:
     def predictive_mean(self, copula, u: np.ndarray,
                         result: MLEResult) -> np.ndarray:
         """Constant parameter for all time steps."""
+        entry = registry_entry_for(copula)
+        if entry.native_id == "Gaussian":
+            raise NotImplementedError(
+                "GaussianCopula has no scalar parameter for predictive_mean")
         return np.full(len(u), result.copula_param)
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: MLEResult) -> np.ndarray:
-        """e2 = h(u2, u1; r_mle)."""
-        r = np.full(len(u), result.copula_param)
-        return copula.h(u[:, 1], u[:, 0], r)
+        """Conditional CDF of the second canonical variable given the first."""
+        second_given_first, _ = self.mixture_h_pair(copula, u, result)
+        return second_given_first
 
     def mixture_h(self, copula, u: np.ndarray,
                   result: MLEResult) -> np.ndarray:
-        """h(u2, u1; r_mle) — same as rosenblatt_e2 for MLE."""
+        """Second-given-first conditional CDF at the constant MLE parameter."""
         return self.rosenblatt_e2(copula, u, result)
 
     def mixture_h_pair(self, copula, u: np.ndarray,
                        result: MLEResult,
                        **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """Both conditional directions at the constant MLE parameter."""
+        reject_unknown_operation_kwargs(self, 'mixture_h_pair', kwargs)
+        registry_entry_for(copula)
         r = np.full(len(u), result.copula_param)
-        first_given_second, second_given_first = copula.h_pair(
-            u[:, 0], u[:, 1], r)
+        first_given_second, second_given_first = pair_native.h_pair(
+            copula, u[:, 0], u[:, 1], r)
         return second_given_first, first_given_second
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
-        """Minus log-likelihood: -sum log c(u1, u2; alpha[0])."""
-        try:
-            if is_multivariate_copula(copula):
-                try:
-                    return -float(copula.log_likelihood(u, float(alpha[0])))
-                except TypeError:
-                    return -float(copula.log_likelihood(u))
-            evaluator = static_likelihood.prepare(
-                copula, u, n_threads=self.config.n_threads)
-            value, _ = evaluator.objective_and_gradient(
-                float(alpha[0]), fail_value=self.config.fail_value)
-            return value
-        except Exception:
-            return float(self.config.fail_value)
+        """Negative likelihood at a natural scalar parameter, or empty Gaussian alpha.
+
+        Static multivariate correlations remain fixed at their current values;
+        correlation optimizer coordinates are private to model.fit.
+        """
+        reject_unknown_mle_kwargs(kwargs)
+        alpha = as_float64_array(alpha, name="alpha")
+        entry = registry_entry_for(copula)
+        if is_multivariate_copula(copula):
+            if entry.native_id == "Gaussian":
+                if alpha.ndim != 1 or alpha.size != 0:
+                    raise ValueError(
+                        "GaussianCopula alpha must be an empty vector; "
+                        "correlation coordinates are only supported by fit")
+                return -float(copula.log_likelihood(
+                    u, n_threads=self.config.n_threads))
+            if alpha.ndim != 1 or alpha.size != 1 or not np.isfinite(alpha[0]):
+                raise ValueError("alpha must contain exactly one finite value")
+            return -float(copula.log_likelihood(
+                u, float(alpha[0]), n_threads=self.config.n_threads))
+        evaluator = static_likelihood.prepare(
+            copula, u, n_threads=self.config.n_threads)
+        value, _ = evaluator.objective_and_gradient(
+            float(alpha[0]), fail_value=self.config.fail_value)
+        return value
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample n observations with constant r = theta_mle."""
-        r = np.full(n, result.copula_param)
+        reject_unknown_operation_kwargs(self, 'sample', kwargs)
+        n_threads = validate_sampling_n_threads(kwargs.get('n_threads', 1))
         d = copula_dimension(copula, u)
+        validate_float64_allocation(
+            (n, d), name="MLE sample output",
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"))
+        if isinstance(result, MultivariateMLEResult):
+            from pyscarcopula.strategy.multivariate_mle import (
+                sampling_model_from_result,
+            )
+            copula = sampling_model_from_result(copula, result)
+        r = np.full(n, result.copula_param)
         return sample_predictive(
-            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d,
+            n_threads=n_threads,
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+            config=self.config)
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
-        """Predict = sample for MLE (constant parameter)."""
-        return predict_from_strategy(
-            self, copula, u, result, n, rng=rng, **kwargs)
+        """Predict from the supplied static result without refitting its model."""
+        reject_unknown_operation_kwargs(self, 'predict', kwargs)
+        if isinstance(result, MultivariateMLEResult):
+            sample_kwargs = {
+                key: value for key, value in kwargs.items()
+                if key in self._operation_keyword_aliases['sample']
+            }
+            return self.sample(copula, u, result, n, rng=rng, **sample_kwargs)
+        return strategy_predict(self, copula, u, result, n, rng=rng, **kwargs)
 
-    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
-        """Constant predictive parameter for MLE."""
-        state = self.predictive_state(copula, u, result, **kwargs)
-        return self.sample_params(copula, state, n, rng=rng, **kwargs)
+    predictive_params = predictive_params_from_state
 
     def predictive_state(self, copula, u, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'predictive_state', kwargs)
         horizon = str(kwargs.get('horizon', 'next')).lower()
+        if horizon not in {'current', 'next'}:
+            raise ValueError("horizon must be 'current' or 'next'")
         return PredictiveState(
             method='MLE',
             horizon=horizon,
@@ -263,14 +355,25 @@ class MLEStrategy:
         )
 
     def condition_state(self, copula, state, observation, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'condition_state', kwargs)
         return state
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
+        reject_unknown_operation_kwargs(self, 'sample_params', kwargs)
         return np.full(n, float(np.asarray(state.r)[0]), dtype=np.float64)
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
         """Constant parameter path for model reproduction."""
+        reject_unknown_operation_kwargs(self, 'model_sample_params', kwargs)
         return np.full(n, result.copula_param, dtype=np.float64)
 
     def model_sample_state(self, copula, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'model_sample_state', kwargs)
         return None
+
+    def model_sample_params_batches(
+            self, copula, result, n, *, batch_rows, rng=None):
+        """Materialize only one block of the constant parameter path."""
+        for start in range(0, n, batch_rows):
+            yield self.model_sample_params(
+                copula, result, min(batch_rows, n - start), rng=rng)

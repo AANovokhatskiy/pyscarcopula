@@ -7,17 +7,17 @@ import os
 import numpy as np
 import pytest
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 from pyscarcopula import (
     EquicorrGaussianCopula,
     NumericalConfig,
     StochasticStudentCopula,
 )
-from pyscarcopula.numerical import (
-    _cpp_copula,
-    _cpp_extension,
-    multivariate_native,
-    static_likelihood,
+from pyscarcopula._native import (
+    _descriptors as _cpp_copula,
+    _extension as _cpp_extension,
+    multivariate as multivariate_native,
+    static as static_likelihood,
 )
 
 

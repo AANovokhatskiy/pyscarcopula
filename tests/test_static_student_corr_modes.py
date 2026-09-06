@@ -7,7 +7,7 @@ from scipy.stats import multivariate_t, t as t_dist
 from pyscarcopula import StudentCopula
 from pyscarcopula._types import NumericalConfig
 from pyscarcopula.copula.multivariate.correlation_policy import CorrelationPolicy
-from pyscarcopula.numerical import static_likelihood
+from pyscarcopula._native import static as static_likelihood
 
 
 def _sample(seed=17, n=350):

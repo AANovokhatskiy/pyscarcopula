@@ -1,7 +1,11 @@
 #include "scar/rvine.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "density_internal.hpp"
+
+#include "scar/core/threading.hpp"
+#include "scar/detail/copula/common.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -231,7 +235,7 @@ bool validate_traversal_plan(
         return true;
     }
 
-    // The Python builder validates initialization order, but the native
+    // The topology builder validates initialization order, but the native
     // boundary repeats it so malformed direct calls cannot read NaN sentinel
     // nodes or rely on unchecked plan topology.
     std::vector<unsigned char> initialized(
@@ -541,14 +545,14 @@ int prepare_edges(
     prepared.clear();
     prepared.reserve(edges.size());
     for (const EdgeSpec& edge : edges) {
-        if (!is_supported(edge.copula) || edge.copula.dim != 2) {
+        const PreparedPairKernel kernel(edge.copula);
+        if (!kernel.is_supported() || edge.copula.dim != 2) {
             prepared.clear();
             return SCAR_INVALID_FAMILY;
         }
-        prepared.push_back({
+        prepared.emplace_back(
             edge,
-            scar_internal::transposed_copula_spec(edge.copula),
-        });
+            scar_internal::transposed_copula_spec(edge.copula));
     }
     return SCAR_OK;
 }
@@ -562,13 +566,14 @@ int validate_parameter_pack(
     const auto rows = static_cast<std::size_t>(parameters.n_rows);
     const auto columns = static_cast<std::size_t>(
         parameters.row_parameter_columns);
+    std::size_t row_parameter_count = 0;
     if ((parameters.scalar_parameters.size() > 0
          && parameters.scalar_parameters.data() == nullptr)
         || (rows > 0 && columns > 0
             && parameters.row_parameters.data() == nullptr)
-        || (columns > 0
-            && rows > std::numeric_limits<std::size_t>::max() / columns)
-        || parameters.row_parameters.size() != rows * columns) {
+        || !scar_internal::checked_shape_size(
+            rows, columns, row_parameter_count)
+        || parameters.row_parameters.size() != row_parameter_count) {
         return SCAR_INVALID_SIZE;
     }
     for (std::size_t index = 0;
@@ -585,7 +590,7 @@ int validate_parameter_pack(
     }
     for (const EdgeSpec& edge : edges) {
         // A fitted IndependentResult is authoritative even when the retained
-        // Python copula object belongs to another family.  The reverse is not
+        // retained source descriptor belongs to another family. The reverse is not
         // valid: an Independent family must never request a parameter.
         if (edge.copula.family == CopulaFamily::Independent
             && !edge.parameter_free) {
@@ -661,11 +666,10 @@ double h(
     double value,
     double partner,
     double parameter) {
-    const CopulaSpec& copula = transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    return scar_internal::copula_h_rotated(
-        copula, value, partner, parameter);
+    const PreparedPairKernel& kernel = transposed
+        ? edge.transposed_kernel
+        : edge.kernel;
+    return kernel.h(value, partner, parameter);
 }
 
 void h_pair(
@@ -676,35 +680,24 @@ void h_pair(
     double parameter,
     double& first_next,
     double& second_next) {
-    const CopulaSpec& first_copula = first_transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    const CopulaSpec& second_copula = first_transposed
-        ? edge.edge.copula
-        : edge.transposed_copula;
-    if (first_copula.family == CopulaFamily::Gaussian
-        && second_copula.family == CopulaFamily::Gaussian
-        && first_copula.rotation == Rotation::R0
-        && second_copula.rotation == Rotation::R0) {
-        // The two Gaussian directions use the same pair of normal quantiles.
-        // Reusing them preserves the scalar kernel's operation order while
-        // avoiding two of the four inverse-normal evaluations.
-        const double first_quantile = scar_internal::normal_quantile(
-            clip_open_unit(first));
-        const double second_quantile = scar_internal::normal_quantile(
-            clip_open_unit(second));
-        scar_internal::gaussian_h_pair_from_quantiles(
-            first_quantile,
-            second_quantile,
+    const PreparedPairKernel& first_kernel = first_transposed
+        ? edge.transposed_kernel
+        : edge.kernel;
+    const PreparedPairKernel& second_kernel = first_transposed
+        ? edge.kernel
+        : edge.transposed_kernel;
+    if (first_kernel.is_unrotated_gaussian()
+        && second_kernel.is_unrotated_gaussian()) {
+        first_kernel.h_pair(
+            clip_open_unit(first),
+            clip_open_unit(second),
             parameter,
             first_next,
             second_next);
         return;
     }
-    first_next = h(
-        edge, first_transposed, first, second, parameter);
-    second_next = h(
-        edge, !first_transposed, second, first, parameter);
+    first_next = first_kernel.h(first, second, parameter);
+    second_next = second_kernel.h(second, first, parameter);
 }
 
 double h_inverse(
@@ -713,11 +706,10 @@ double h_inverse(
     double quantile,
     double given,
     double parameter) {
-    const CopulaSpec& copula = transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    return scar_internal::copula_h_inverse_rotated(
-        copula, quantile, given, parameter);
+    const PreparedPairKernel& kernel = transposed
+        ? edge.transposed_kernel
+        : edge.kernel;
+    return kernel.inverse_h(quantile, given, parameter);
 }
 
 namespace detail {
@@ -728,19 +720,10 @@ double edge_log_pdf(
     double first,
     double second,
     double parameter) {
-    const CopulaSpec& copula = transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    double rotated_first = 0.0;
-    double rotated_second = 0.0;
-    scar_internal::apply_rotation(
-        first,
-        second,
-        static_cast<int>(copula.rotation),
-        rotated_first,
-        rotated_second);
-    return scar_internal::copula_log_pdf_unrotated(
-        copula, rotated_first, rotated_second, parameter);
+    const PreparedPairKernel& kernel = transposed
+        ? edge.transposed_kernel
+        : edge.kernel;
+    return kernel.log_pdf(first, second, parameter);
 }
 
 }  // namespace detail
@@ -753,10 +736,10 @@ void fail_sample(
     std::int64_t row,
     int edge,
     int operation) noexcept {
-    out.status = status;
-    out.failure_row = row;
-    out.failure_edge = edge;
-    out.failure_operation = operation;
+    out.status = status_from_int(status);
+    out.failure.row = row;
+    out.failure.edge = edge;
+    out.failure.operation = operation;
 }
 
 void fail_conditional_sample(
@@ -765,29 +748,15 @@ void fail_conditional_sample(
     std::int64_t row,
     int edge,
     int operation) noexcept {
-    out.status = status;
-    out.failure_row = row;
-    out.failure_edge = edge;
-    out.failure_operation = operation;
-}
-
-bool checked_product(
-    std::size_t left,
-    std::size_t right,
-    std::size_t& product) noexcept {
-    if (left != 0
-        && right > std::numeric_limits<std::size_t>::max() / left) {
-        return false;
-    }
-    product = left * right;
-    return true;
+    out.status = status_from_int(status);
+    out.failure.row = row;
+    out.failure.edge = edge;
+    out.failure.operation = operation;
 }
 
 bool is_unrotated_gaussian(const PreparedEdge& edge) noexcept {
-    return edge.edge.copula.family == CopulaFamily::Gaussian
-        && edge.edge.copula.rotation == Rotation::R0
-        && edge.transposed_copula.family == CopulaFamily::Gaussian
-        && edge.transposed_copula.rotation == Rotation::R0;
+    return edge.kernel.is_unrotated_gaussian()
+        && edge.transposed_kernel.is_unrotated_gaussian();
 }
 
 double gaussian_inverse_from_quantiles(
@@ -798,7 +767,7 @@ double gaussian_inverse_from_quantiles(
     const double z = quantile
         * std::sqrt(1.0 - clipped_rho * clipped_rho)
         + clipped_rho * given;
-    return 0.5 * (1.0 + std::erf(z / std::sqrt(2.0)));
+    return math::normal_cdf(z);
 }
 
 }  // namespace
@@ -816,7 +785,7 @@ SampleResult sample(
     out.dimension = plan.dimension;
     out.n_threads_requested = n_threads;
     const std::size_t edge_count = edges.size();
-    if (n_threads <= 0 || uniform_rows < 0
+    if (!scar_internal::valid_thread_count(n_threads) || uniform_rows < 0
         || uniform_columns != plan.dimension
         || parameters.n_rows != uniform_rows
         || !validate_traversal_plan(plan, edge_count)) {
@@ -828,8 +797,10 @@ SampleResult sample(
     const auto dimension = static_cast<std::size_t>(plan.dimension);
     std::size_t uniform_values = 0;
     std::size_t output_values = 0;
-    if (!checked_product(rows, dimension, uniform_values)
-        || !checked_product(rows, dimension, output_values)
+    if (!scar_internal::checked_shape_size(
+            rows, dimension, uniform_values)
+        || !scar_internal::checked_shape_size(
+            rows, dimension, output_values)
         || uniforms.size() != uniform_values
         || (uniform_values > 0 && uniforms.data() == nullptr)) {
         fail_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
@@ -985,13 +956,15 @@ ConditionalSampleResult conditional_sample(
     DoubleView uniforms,
     std::int64_t uniform_rows,
     std::int64_t uniform_columns,
-    int n_threads) {
+    int n_threads,
+    bool capture_operation_inputs) {
     ConditionalSampleResult out;
     out.n_rows = uniform_rows;
     out.dimension = plan.dimension;
+    out.operation_count = static_cast<int>(plan.opcodes.size());
     out.n_threads_requested = n_threads;
     const std::size_t edge_count = edges.size();
-    if (n_threads <= 0 || uniform_rows < 0
+    if (!scar_internal::valid_thread_count(n_threads) || uniform_rows < 0
         || uniform_columns != plan.dimension
         || parameters.n_rows != uniform_rows
         || !validate_conditional_plan(plan, edge_count)) {
@@ -1003,8 +976,10 @@ ConditionalSampleResult conditional_sample(
     const auto dimension = static_cast<std::size_t>(plan.dimension);
     std::size_t uniform_value_count = 0;
     std::size_t output_value_count = 0;
-    if (!checked_product(rows, dimension, uniform_value_count)
-        || !checked_product(rows, dimension, output_value_count)
+    if (!scar_internal::checked_shape_size(
+            rows, dimension, uniform_value_count)
+        || !scar_internal::checked_shape_size(
+            rows, dimension, output_value_count)
         || given_values.size() != dimension
         || uniforms.size() != uniform_value_count
         || (dimension > 0 && given_values.data() == nullptr)
@@ -1042,9 +1017,24 @@ ConditionalSampleResult conditional_sample(
     }
 
     out.values.assign(output_value_count, 0.0);
+    if (capture_operation_inputs) {
+        std::size_t captured_pairs = 0;
+        std::size_t captured_values = 0;
+        if (!scar_internal::checked_size_mul(
+                rows, plan.opcodes.size(), captured_pairs)
+            || !scar_internal::checked_size_mul(
+                captured_pairs, 2U, captured_values)) {
+            fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+            return out;
+        }
+        out.operation_inputs.assign(
+            captured_values, std::numeric_limits<double>::quiet_NaN());
+    }
     if (rows == 0) {
         return out;
     }
+    // Bound per-chunk traversal state independently of the requested sample size.
+    // Keep row batching within the fixed workspace budget below.
     constexpr std::size_t conditional_max_block_rows = 1024;
     constexpr std::size_t conditional_workspace_budget =
         64U * 1024U * 1024U;
@@ -1052,7 +1042,8 @@ ConditionalSampleResult conditional_sample(
         2U * sizeof(double) + sizeof(unsigned char);
     const std::size_t node_count = static_cast<std::size_t>(plan.node_count);
     std::size_t bytes_per_row = 0;
-    if (!checked_product(node_count, bytes_per_node_value, bytes_per_row)) {
+    if (!scar_internal::checked_size_mul(
+            node_count, bytes_per_node_value, bytes_per_row)) {
         fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
         return out;
     }
@@ -1068,8 +1059,9 @@ ConditionalSampleResult conditional_sample(
         std::min(conditional_max_block_rows, memory_limited_rows));
     std::size_t node_value_count = 0;
     std::size_t peak_workspace_bytes = 0;
-    if (!checked_product(block_capacity, node_count, node_value_count)
-        || !checked_product(
+    if (!scar_internal::checked_size_mul(
+            block_capacity, node_count, node_value_count)
+        || !scar_internal::checked_size_mul(
             block_capacity, bytes_per_row, peak_workspace_bytes)) {
         fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
         return out;
@@ -1164,6 +1156,20 @@ ConditionalSampleResult conditional_sample(
             : 0;
         const bool transposed = plan.transposed[operation] != 0;
 
+        if (capture_operation_inputs) {
+            for (std::size_t row = 0; row < block_rows; ++row) {
+                const std::size_t result_row = row_start + row;
+                const std::size_t captured =
+                    (operation * rows + result_row) * 2U;
+                const double first = nodes[input1_offset + row];
+                const double second = nodes[input2_offset + row];
+                out.operation_inputs[captured] =
+                    transposed ? second : first;
+                out.operation_inputs[captured + 1U] =
+                    transposed ? first : second;
+            }
+        }
+
         if (edge.edge.parameter_free) {
             copy_node_state(input1_offset, output1_offset);
             if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
@@ -1195,8 +1201,8 @@ ConditionalSampleResult conditional_sample(
                 const auto quantile_at = [&](std::size_t position) {
                     if (gaussian_quantile_valid[position] == 0) {
                         gaussian_quantiles[position] =
-                            scar_internal::normal_quantile(
-                                clip_open_unit(nodes[position]));
+                            edge.kernel.prepare_conditional_value(
+                                nodes[position]);
                         gaussian_quantile_valid[position] = 1;
                     }
                     return gaussian_quantiles[position];
@@ -1204,10 +1210,10 @@ ConditionalSampleResult conditional_sample(
                 const double first_quantile = quantile_at(input1_offset + row);
                 const double second_quantile = quantile_at(input2_offset + row);
                 if (opcode == static_cast<int>(RVineOpcode::H)) {
-                    first_next = scar_internal::gaussian_h_from_quantiles(
+                    first_next = edge.kernel.h_from_prepared_values(
                         first_quantile, second_quantile, parameter);
                 } else if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
-                    scar_internal::gaussian_h_pair_from_quantiles(
+                    edge.kernel.h_pair_from_prepared_values(
                         first_quantile,
                         second_quantile,
                         parameter,

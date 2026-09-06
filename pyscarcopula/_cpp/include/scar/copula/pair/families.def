@@ -1,0 +1,8 @@
+// enum name, package stem, stable value, transform policy, rotation policy,
+// default transform, default offset
+SCAR_PAIR_FAMILY(Independent, independent, 0, Any, Any, Softplus, 0.0)
+SCAR_PAIR_FAMILY(Clayton, clayton, 1, Archimedean, Any, Softplus, 0.0001)
+SCAR_PAIR_FAMILY(Gumbel, gumbel, 2, Archimedean, Any, Softplus, 1.0001)
+SCAR_PAIR_FAMILY(Frank, frank, 3, Archimedean, R0Only, Softplus, 0.0001)
+SCAR_PAIR_FAMILY(Joe, joe, 4, Archimedean, Any, Softplus, 1.0001)
+SCAR_PAIR_FAMILY(Gaussian, gaussian, 5, GaussianTanh, R0Only, GaussianTanh, 0.0)

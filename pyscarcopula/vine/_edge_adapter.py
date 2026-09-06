@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pyscarcopula.numerical._arrays import as_float64_scalar
+
 
 @dataclass(frozen=True)
 class EdgeView:
@@ -68,12 +70,12 @@ def edge_param(edge, default=None):
     """Return a scalar edge parameter when the edge has a point parameter."""
     value = getattr(edge, 'param', None)
     if value is not None:
-        return float(value)
+        return as_float64_scalar(value, name="edge parameter")
 
     result = edge_result(edge)
     result_param = getattr(result, 'copula_param', None)
     if result_param is not None:
-        return float(result_param)
+        return as_float64_scalar(result_param, name="edge parameter")
     if _is_independent_copula(edge_copula(edge)):
         return 0.0
     return default
@@ -100,6 +102,18 @@ def edge_is_independent(edge):
 def edge_has_dynamic_params(edge):
     """Return True when an edge result carries strategy parameters."""
     return getattr(edge_result(edge), 'params', None) is not None
+
+
+def edge_has_static_params(edge):
+    """Identify constant built-in results without bypassing custom strategies."""
+    from pyscarcopula._types import MLEResult
+
+    result = edge_result(edge)
+    return (
+        result is None
+        or (type(result) is MLEResult and result.method.upper() == 'MLE')
+        or edge_is_independent(edge)
+    )
 
 
 def result_param_items(result):
@@ -135,7 +149,7 @@ def _is_independent_copula(copula):
     return isinstance(copula, IndependentCopula)
 
 
-def _normalize_horizon(horizon):
+def normalize_predict_horizon(horizon):
     if horizon in (1, '1'):
         return 'next'
     if horizon in (0, '0'):
@@ -172,7 +186,7 @@ def predict_r_path(copula, result, n, u_train_pair=None, horizon='next',
     """Generate an edge parameter vector for predictive vine sampling."""
     if rng is None:
         rng = np.random.default_rng()
-    horizon = _normalize_horizon(horizon)
+    horizon = normalize_predict_horizon(horizon)
 
     if result is None:
         if param is None:

@@ -6,16 +6,17 @@ on:
     paths:
       - ".github/workflows/native-safety.yml"
       - "pyscarcopula/_cpp/**"
-      - "pyscarcopula/numerical/_cpp_*.py"
-      - "pyscarcopula/numerical/multivariate_native.py"
+      - "pyscarcopula/_native/**"
       - "pyscarcopula/vine/**"
-      - "pyscarcopula/numerical/gas_filter.py"
+      - "pyscarcopula/numerical/**"
       - "pyscarcopula/strategy/gas.py"
       - "pyscarcopula/strategy/initial_point.py"
       - "pyscarcopula/stattests.py"
       - "pyscarcopula/strategy/scar_tm.py"
+      - "pyscarcopula/strategy/scar_jacobi.py"
       - "tests/test_cpp.py"
       - "tests/test_cpp_architecture.py"
+      - "tests/test_native_benchmarks.py"
       - "tests/test_cpp_gas_wrapper.py"
       - "tests/test_cpp_rvine_layer.py"
       - "tests/test_cpp_rvine_conditional.py"
@@ -30,25 +31,34 @@ on:
       - "tests/test_gas_backends.py"
       - "tests/test_fit.py"
       - "tests/test_tm_forward.py"
+      - "tests/test_native_jacobi_*.py"
+      - "tests/test_jacobi_*.py"
+      - "tests/test_scar_jacobi_strategy.py"
       - "tests/test_multivariate_stochastic_student_corr.py"
       - "tests/test_vine_performance.py"
       - "setup.py"
       - "tools/check_cpp_architecture.py"
+      - "tools/check_python_ownership.py"
+      - "tools/python_ownership_policy.py"
+      - "tools/run_native_benchmarks.py"
+      - "benchmarks/native_performance_v3.json"
       - "pyproject.toml"
+      - "tools/run_in_workspace.py"
   pull_request:
     paths:
       - ".github/workflows/native-safety.yml"
       - "pyscarcopula/_cpp/**"
-      - "pyscarcopula/numerical/_cpp_*.py"
-      - "pyscarcopula/numerical/multivariate_native.py"
+      - "pyscarcopula/_native/**"
       - "pyscarcopula/vine/**"
-      - "pyscarcopula/numerical/gas_filter.py"
+      - "pyscarcopula/numerical/**"
       - "pyscarcopula/strategy/gas.py"
       - "pyscarcopula/strategy/initial_point.py"
       - "pyscarcopula/stattests.py"
       - "pyscarcopula/strategy/scar_tm.py"
+      - "pyscarcopula/strategy/scar_jacobi.py"
       - "tests/test_cpp.py"
       - "tests/test_cpp_architecture.py"
+      - "tests/test_native_benchmarks.py"
       - "tests/test_cpp_gas_wrapper.py"
       - "tests/test_cpp_rvine_layer.py"
       - "tests/test_cpp_rvine_conditional.py"
@@ -63,11 +73,19 @@ on:
       - "tests/test_gas_backends.py"
       - "tests/test_fit.py"
       - "tests/test_tm_forward.py"
+      - "tests/test_native_jacobi_*.py"
+      - "tests/test_jacobi_*.py"
+      - "tests/test_scar_jacobi_strategy.py"
       - "tests/test_multivariate_stochastic_student_corr.py"
       - "tests/test_vine_performance.py"
       - "setup.py"
       - "tools/check_cpp_architecture.py"
+      - "tools/check_python_ownership.py"
+      - "tools/python_ownership_policy.py"
+      - "tools/run_native_benchmarks.py"
+      - "benchmarks/native_performance_v3.json"
       - "pyproject.toml"
+      - "tools/run_in_workspace.py"
   workflow_dispatch:
 
 env:
@@ -81,13 +99,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - name: Check C++ architecture
-        run: python tools/check_cpp_architecture.py
+        run: |
+          python tools/check_cpp_architecture.py
+          python tools/check_python_ownership.py
 
       - name: Install sanitizer build
         env:
@@ -110,6 +134,7 @@ jobs:
           export LD_PRELOAD="${asan_path}:${libstdcpp_path}"
           python -m pytest -vv -s --tb=long \
             tests/test_cpp_architecture.py \
+            tests/test_native_benchmarks.py \
             tests/test_cpp.py \
             tests/test_cpp_gas_wrapper.py \
             tests/test_cpp_rvine_layer.py \
@@ -123,6 +148,12 @@ jobs:
             tests/test_bivariate_gas_integration.py \
             tests/test_gas_backends.py \
             tests/test_tm_forward.py \
+            tests/test_native_jacobi_domain.py \
+            tests/test_native_jacobi_transition.py \
+            tests/test_native_jacobi_evaluator.py \
+            tests/test_native_jacobi_sampling.py \
+            tests/test_native_jacobi_operations.py \
+            tests/test_scar_jacobi_strategy.py \
             tests/test_fit.py \
             tests/test_multivariate_stochastic_student_corr.py \
             -m "not benchmark and not sanitizer_numerical"

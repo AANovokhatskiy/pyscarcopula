@@ -94,26 +94,7 @@ class TestTransform:
 
 
 class TestGumbelSampling:
-    """Verify Gumbel V (frailty variable) sampling from stable distribution."""
-
-    @pytest.mark.parametrize("r", [1.5, 2.0, 5.0, 10.0, 20.0])
-    def test_V_positive(self, r):
-        """V samples must be strictly positive."""
-        cop = GumbelCopula()
-        V = cop.V(10000, r, rng=np.random.default_rng(10_000 + int(10 * r)))
-        assert np.all(V > 0), f"Negative V at r={r}: min={V.min()}"
-
-    @pytest.mark.parametrize("r", [1.5, 2.0, 5.0])
-    def test_V_laplace_transform(self, r):
-        """Empirical check: E[exp(-tV)] ≈ exp(-t^(1/r)) for several t."""
-        cop = GumbelCopula()
-        V = cop.V(100000, r, rng=np.random.default_rng(20_000 + int(10 * r)))
-        alpha = 1.0 / r
-        for t in [0.5, 1.0, 2.0]:
-            empirical = np.mean(np.exp(-t * V))
-            theoretical = np.exp(-(t ** alpha))
-            np.testing.assert_allclose(empirical, theoretical, rtol=0.05,
-                                       err_msg=f"Laplace transform mismatch at t={t}, r={r}")
+    """Verify the public fixed-uniform native sampling path."""
 
     def test_sample_unit_interval(self):
         """Gumbel samples should be in (0,1)^2."""

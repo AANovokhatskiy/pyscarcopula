@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 from dataclasses import dataclass
+import importlib.util
 from pathlib import Path
 import re
 import sys
@@ -12,9 +13,139 @@ from typing import Iterable
 
 
 _SCAR_INCLUDE = re.compile(
-    r'^\s*#\s*include\s+"scar/([^"]+)"', re.MULTILINE)
+    r'^\s*#\s*include\s*[<"]scar/([^>"]+)[>"]', re.MULTILINE)
+_LOCAL_INCLUDE = re.compile(
+    r'^\s*#\s*include\s*(?:"([^"]+)"|<([^>]+)>)', re.MULTILINE)
 _MODULE_LINE = re.compile(
     r"pyscarcopula::bindings::bind_[A-Za-z0-9_]+\(module\);")
+_FORBIDDEN_COMPUTE_DEPENDENCIES = (
+    (
+        "pybind11",
+        re.compile(
+            r"#\s*include\s*[<\"]pybind11/|\bpybind11::|\bpy::",
+            re.MULTILINE,
+        ),
+    ),
+    (
+        "Python C API",
+        re.compile(
+            r"#\s*include\s*[<\"]Python\.h[>\"]|\bPyObject\b|\bPy_[A-Z]",
+            re.MULTILINE,
+        ),
+    ),
+    (
+        "NumPy C API",
+        re.compile(
+            r"#\s*include\s*[<\"]numpy/|\bPyArray_|\bNPY_[A-Z0-9_]",
+            re.MULTILINE,
+        ),
+    ),
+)
+_CALLER_SPECIFIC_CONTRACT_TERMS = re.compile(
+    r"\b(?:Python|pybind11|NumPy|PyObject)\b", re.IGNORECASE)
+_RAW_EXTENSION = "pyscarcopula._native._scar_cpp"
+_REMOVED_RAW_EXTENSION = "pyscarcopula._scar_cpp"
+_RAW_EXTENSION_IMPORT_ALLOWLIST = frozenset({
+    "pyscarcopula/_native/_extension.py",
+    "tests/test_linalg_backend.py",
+    "tests/test_native_smoke.py",
+})
+_REMOVED_RAW_EXTENSION_IMPORT_ALLOWLIST = frozenset({
+    "tests/test_native_facade.py",
+})
+
+
+# Logical build targets for the Python-free source tree.  These are not
+# separate library artifacts: they describe the dependency direction inside
+# the single canonical SCAR_COMPUTE_SOURCES boundary.  Keep the graph acyclic
+# and list every direct lower-layer dependency explicitly.
+_TARGET_DEPENDENCIES: dict[str, frozenset[str]] = {
+    "foundation": frozenset(),
+    "copula_models": frozenset({"foundation"}),
+    "static": frozenset({"foundation", "copula_models"}),
+    "gas": frozenset({"foundation", "copula_models"}),
+    "scar_ou": frozenset({"foundation", "copula_models"}),
+    "scar_jacobi": frozenset({"foundation", "copula_models"}),
+    "vine": frozenset({"foundation", "copula_models"}),
+    "gas_rvine_composition": frozenset({
+        "foundation", "copula_models", "gas", "vine",
+    }),
+    "vine_dynamic_composition": frozenset({
+        "foundation", "copula_models", "gas", "scar_ou",
+        "scar_jacobi", "vine",
+    }),
+    "python_bindings": frozenset({
+        "foundation", "copula_models", "static", "gas", "scar_ou",
+        "scar_jacobi", "vine", "gas_rvine_composition",
+        "vine_dynamic_composition",
+    }),
+}
+
+_FOUNDATION_HEADERS = frozenset({
+    "numerical_constants.hpp",
+    "observation.hpp",
+    "status.hpp",
+    "detail/linalg.hpp",
+    "detail/parallel.hpp",
+    "detail/safety.hpp",
+})
+
+
+def _target_for_header(relative: str) -> str | None:
+    if relative.startswith(("core/", "math/")):
+        return "foundation"
+    if relative in _FOUNDATION_HEADERS:
+        return "foundation"
+    if relative == "dynamic_rvine.hpp":
+        return "vine_dynamic_composition"
+    if relative == "gas_rvine.hpp" or relative.startswith("gas_rvine/"):
+        return "gas_rvine_composition"
+    if relative == "gas.hpp" or relative.startswith("gas/"):
+        return "gas"
+    if (
+            relative == "ou.hpp"
+            or relative.startswith(("scar_ou/", "detail/scar_ou/"))):
+        return "scar_ou"
+    if relative == "jacobi.hpp" or relative.startswith("scar_jacobi/"):
+        return "scar_jacobi"
+    if (
+            relative in {"rvine.hpp", "rvine_plan.hpp"}
+            or relative.startswith("vine/")):
+        return "vine"
+    if (
+            relative in {
+                "copula.hpp", "factor.hpp", "model_policy.hpp",
+        "numerical_validation.hpp", "copula/model_statistics.hpp",
+            }
+            or relative.startswith(("copula/", "detail/copula/", "static/"))):
+        # static/result.hpp is a DTO exposed by the generic copula contract;
+        # the compiled static evaluator remains its own application target.
+        return "copula_models"
+    return None
+
+
+def _target_for_source(relative: str) -> str | None:
+    if relative.startswith("bindings/"):
+        return "python_bindings"
+    if relative.startswith(("math/", "parallel/")):
+        return "foundation"
+    if relative == "gas/rvine_sampler.cpp":
+        return "gas_rvine_composition"
+    if relative.startswith("gas/"):
+        return "gas"
+    if relative.startswith("scar_ou/"):
+        return "scar_ou"
+    if relative.startswith("scar_jacobi/"):
+        return "scar_jacobi"
+    if relative.startswith("vine_dynamic/"):
+        return "vine_dynamic_composition"
+    if relative.startswith("vine/"):
+        return "vine"
+    if relative.startswith("likelihood/"):
+        return "static"
+    if relative.startswith("copula/"):
+        return "copula_models"
+    return None
 
 
 @dataclass(frozen=True)
@@ -75,6 +206,32 @@ def check_include_boundaries(root: Path) -> list[Violation]:
     src = cpp_root / "src"
     include = cpp_root / "include" / "scar"
     violations = []
+    foundation_files = [
+        *list(_source_files(include / "core")),
+        *list(_source_files(include / "math")),
+        *list(_source_files(src / "math")),
+        include / "copula" / "rotation.hpp",
+        include / "copula" / "transforms.hpp",
+        src / "copula" / "rotation.cpp",
+        src / "copula" / "transforms.cpp",
+    ]
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in foundation_files if path.is_file()),
+        "foundation-independent-of-models",
+        lambda value: value.startswith("detail/")
+        or value in {
+            "copula.hpp",
+            "copula/model_descriptor.hpp",
+            "factor.hpp",
+            "gas.hpp",
+            "gas_rvine.hpp",
+            "ou.hpp",
+            "rvine.hpp",
+            "rvine_plan.hpp",
+        },
+        "foundation helpers must not depend on model or workflow headers",
+    ))
     gas_files = [
         *list(_source_files(src / "gas")),
         include / "gas.hpp",
@@ -97,7 +254,10 @@ def check_include_boundaries(root: Path) -> list[Violation]:
     ))
     violations.extend(_forbid_includes(
         root,
-        _source_files(src / "copula" / "families"),
+        (
+            *list(_source_files(src / "copula" / "families")),
+            *list(_source_files(src / "copula" / "pair")),
+        ),
         "families-independent-of-ou",
         lambda value: value == "ou.hpp"
         or value.startswith("detail/scar_ou/"),
@@ -145,7 +305,7 @@ def check_module_entrypoint(root: Path) -> list[Violation]:
         ))
     for line_number, line in significant:
         allowed = (
-            line == '#include "common.hpp"'
+            line == '#include "module.hpp"'
             or line.startswith("PYBIND11_MODULE(")
             or line == "}"
             or _MODULE_LINE.fullmatch(line) is not None
@@ -154,72 +314,1572 @@ def check_module_entrypoint(root: Path) -> list[Violation]:
             violations.append(Violation(
                 "minimal-module-entrypoint",
                 path,
-                "only common.hpp, PYBIND11_MODULE, and bind_* calls are allowed",
+                "only module.hpp, PYBIND11_MODULE, and bind_* calls are allowed",
                 line_number,
             ))
     return violations
 
 
-def _setup_sources(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(
-            isinstance(target, ast.Name)
-            and target.id == "SCAR_CORE_SOURCES"
-            for target in node.targets
-        ):
-            continue
-        value = ast.literal_eval(node.value)
-        if not isinstance(value, list) or not all(
-            isinstance(item, str) for item in value
-        ):
-            raise ValueError("SCAR_CORE_SOURCES must be a list of strings")
-        if len(value) != len(set(value)):
-            raise ValueError("SCAR_CORE_SOURCES contains duplicate paths")
-        return {Path(item).as_posix() for item in value}
-    raise ValueError("SCAR_CORE_SOURCES assignment was not found")
+def _source_manifest(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    path = (
+        root / "pyscarcopula" / "_cpp" / "build_support" / "sources.py")
+    spec = importlib.util.spec_from_file_location(
+        "_pyscarcopula_cpp_source_manifest", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load canonical source manifest from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    values = []
+    for name in ("SCAR_COMPUTE_SOURCES", "PYTHON_BINDING_SOURCES"):
+        value = getattr(module, name, None)
+        if not isinstance(value, (list, tuple)) or not all(
+                isinstance(item, str) for item in value):
+            raise ValueError(f"{name} must be a list or tuple of strings")
+        normalized = tuple(Path(item).as_posix() for item in value)
+        if len(normalized) != len(set(normalized)):
+            raise ValueError(f"{name} contains duplicate paths")
+        if any(
+                Path(item).is_absolute() or ".." in Path(item).parts
+                for item in normalized):
+            raise ValueError(f"{name} must contain relative paths below src")
+        values.append(normalized)
+    return values[0], values[1]
 
 
 def check_source_manifest(root: Path) -> list[Violation]:
-    setup_path = root / "setup.py"
+    manifest_path = (
+        root / "pyscarcopula" / "_cpp" / "build_support" / "sources.py")
     src = root / "pyscarcopula" / "_cpp" / "src"
     try:
-        declared = _setup_sources(setup_path)
-    except (OSError, SyntaxError, ValueError) as error:
-        return [Violation("source-manifest", setup_path, str(error))]
+        compute, bindings = _source_manifest(root)
+    except (ImportError, OSError, SyntaxError, ValueError) as error:
+        return [Violation("source-manifest", manifest_path, str(error))]
+
+    declared_compute = set(compute)
+    declared_bindings = set(bindings)
     actual = {
         path.relative_to(src).as_posix()
         for path in src.rglob("*.cpp")
     }
     violations = []
-    for path in sorted(actual - declared):
+    overlap = declared_compute & declared_bindings
+    for path in sorted(overlap):
         violations.append(Violation(
             "source-manifest",
-            setup_path,
-            f"C++ source is not listed in SCAR_CORE_SOURCES: {path}",
+            manifest_path,
+            f"source is listed in both canonical manifests: {path}",
         ))
-    for path in sorted(declared - actual):
+
+    actual_bindings = {
+        path for path in actual if path.startswith("bindings/")
+    }
+    actual_compute = actual - actual_bindings
+    for label, declared, discovered in (
+        ("SCAR_COMPUTE_SOURCES", declared_compute, actual_compute),
+        ("PYTHON_BINDING_SOURCES", declared_bindings, actual_bindings),
+    ):
+        for path in sorted(discovered - declared):
+            violations.append(Violation(
+                "source-manifest",
+                manifest_path,
+                f"C++ source is not listed in {label}: {path}",
+            ))
+        for path in sorted(declared - discovered):
+            violations.append(Violation(
+                "source-manifest",
+                manifest_path,
+                f"{label} references a missing or mispartitioned file: {path}",
+            ))
+
+    setup_path = root / "setup.py"
+    try:
+        setup_text = setup_path.read_text(encoding="utf-8")
+    except OSError as error:
+        violations.append(Violation(
+            "source-manifest",
+            setup_path, str(error),
+        ))
+        return violations
+    for name in ("SCAR_COMPUTE_SOURCES", "PYTHON_BINDING_SOURCES"):
+        if name not in setup_text:
+            violations.append(Violation(
+                "source-manifest",
+                setup_path,
+                f"setup.py must consume canonical {name}",
+            ))
+    if "SCAR_CORE_SOURCES" in setup_text:
         violations.append(Violation(
             "source-manifest",
             setup_path,
-            f"SCAR_CORE_SOURCES references a missing file: {path}",
+            "legacy combined SCAR_CORE_SOURCES manifest must not be restored",
         ))
     return violations
 
 
+def check_python_free_compute_boundary(root: Path) -> list[Violation]:
+    cpp_root = root / "pyscarcopula" / "_cpp"
+    src = cpp_root / "src"
+    try:
+        compute, _ = _source_manifest(root)
+    except (ImportError, OSError, SyntaxError, ValueError):
+        return []  # check_source_manifest reports the canonical root cause.
+
+    files = [src / relative for relative in compute]
+    files.extend(_source_files(cpp_root / "include"))
+    files.extend(
+        path for path in _source_files(src)
+        if path.suffix == ".hpp"
+        and "bindings" not in path.relative_to(src).parts
+    )
+    violations = []
+    for path in sorted(set(files)):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for dependency, pattern in _FORBIDDEN_COMPUTE_DEPENDENCIES:
+            for match in pattern.finditer(text):
+                violations.append(Violation(
+                    "python-free-compute-boundary",
+                    path,
+                    f"computational C++ must not depend on {dependency}",
+                    text.count("\n", 0, match.start()) + 1,
+                ))
+    return violations
+
+
+def _raw_imports(tree: ast.AST) -> Iterable[tuple[str, int]]:
+    """Yield literal imports of either raw extension path from one AST."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in {_RAW_EXTENSION, _REMOVED_RAW_EXTENSION}:
+                    yield alias.name, node.lineno
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module in {_RAW_EXTENSION, _REMOVED_RAW_EXTENSION}:
+                yield module, node.lineno
+            elif module == "pyscarcopula":
+                for alias in node.names:
+                    if alias.name == "_scar_cpp":
+                        yield _REMOVED_RAW_EXTENSION, node.lineno
+            elif module == "pyscarcopula._native":
+                for alias in node.names:
+                    if alias.name == "_scar_cpp":
+                        yield _RAW_EXTENSION, node.lineno
+        elif isinstance(node, ast.Call) and node.args:
+            function = node.func
+            is_import = (
+                isinstance(function, ast.Name)
+                and function.id == "__import__"
+            ) or (
+                isinstance(function, ast.Attribute)
+                and function.attr == "import_module"
+            )
+            if (
+                    is_import
+                    and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value
+                    in {_RAW_EXTENSION, _REMOVED_RAW_EXTENSION}):
+                yield str(node.args[0].value), node.lineno
+
+
+def check_raw_extension_imports(root: Path) -> list[Violation]:
+    """Keep the raw binary private and reject the removed top-level path."""
+    rule = "raw-extension-import"
+    package = root / "pyscarcopula"
+    loader = package / "_native" / "_extension.py"
+    violations = []
+    canonical_loader_imports = 0
+    scan_roots = (package, root / "tests", root / "tools")
+    for scan_root in scan_roots:
+        if scan_root.is_dir():
+            paths = sorted(scan_root.rglob("*.py"))
+        else:
+            paths = ()
+        for path in paths:
+            relative = path.relative_to(root).as_posix()
+            try:
+                tree = ast.parse(
+                    path.read_text(encoding="utf-8"), filename=str(path))
+            except (OSError, SyntaxError) as error:
+                violations.append(Violation(rule, path, str(error)))
+                continue
+            for imported, line in _raw_imports(tree):
+                if imported == _REMOVED_RAW_EXTENSION:
+                    if relative not in _REMOVED_RAW_EXTENSION_IMPORT_ALLOWLIST:
+                        violations.append(Violation(
+                            rule,
+                            path,
+                            "removed raw extension path is allowed only in "
+                            "its explicit removal contract: " + imported,
+                            line,
+                        ))
+                elif relative not in _RAW_EXTENSION_IMPORT_ALLOWLIST:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "raw extension import is outside the explicit "
+                        "loader/direct-ABI allowlist",
+                        line,
+                    ))
+                elif path == loader:
+                    canonical_loader_imports += 1
+
+    if canonical_loader_imports != 1:
+        violations.append(Violation(
+            rule,
+            loader,
+            "the facade loader must import "
+            f"{_RAW_EXTENSION!r} exactly once; found "
+            f"{canonical_loader_imports}",
+        ))
+
+    setup_path = root / "setup.py"
+    try:
+        setup_text = setup_path.read_text(encoding="utf-8")
+    except OSError as error:
+        violations.append(Violation(rule, setup_path, str(error)))
+    else:
+        if f'"{_RAW_EXTENSION}"' not in setup_text:
+            violations.append(Violation(
+                rule,
+                setup_path,
+                "the extension target must be " + _RAW_EXTENSION,
+            ))
+        if f'"{_REMOVED_RAW_EXTENSION}"' in setup_text:
+            violations.append(Violation(
+                rule,
+                setup_path,
+                "setup.py still builds the removed top-level raw path",
+            ))
+    return violations
+
+
+def _cpp_enum_members(path: Path, enum_name: str) -> tuple[str, ...]:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(
+        rf"enum\s+class\s+{re.escape(enum_name)}\s*:[^{{]+{{(.*?)}};",
+        text,
+        re.DOTALL,
+    )
+    if match is None:
+        raise ValueError(f"missing C++ enum {enum_name}")
+    members = []
+    for item in match.group(1).split(","):
+        item = re.sub(r"//.*", "", item).strip()
+        if not item:
+            continue
+        member = re.match(r"([A-Za-z][A-Za-z0-9_]*)", item)
+        if member is None:
+            raise ValueError(f"invalid {enum_name} member: {item!r}")
+        members.append(member.group(1))
+    if len(members) != len(set(members)):
+        raise ValueError(f"duplicate C++ enum member in {enum_name}")
+    return tuple(members)
+
+
+def _bound_enum_members(path: Path, enum_name: str) -> tuple[str, ...]:
+    text = path.read_text(encoding="utf-8")
+    start = text.find(f"py::enum_<scar::{enum_name}>")
+    if start < 0:
+        raise ValueError(f"missing pybind enum {enum_name}")
+    end = text.find(";", start)
+    if end < 0:
+        raise ValueError(f"unterminated pybind enum {enum_name}")
+    block = text[start:end]
+    pairs = re.findall(
+        rf'\.value\(\s*"([A-Za-z][A-Za-z0-9_]*)"\s*,\s*'
+        rf'scar::{re.escape(enum_name)}::([A-Za-z][A-Za-z0-9_]*)\s*\)',
+        block,
+        re.DOTALL,
+    )
+    mismatched = [
+        (exported, member)
+        for exported, member in pairs
+        if exported != member
+    ]
+    if mismatched:
+        raise ValueError(
+            f"renamed pybind {enum_name} members are forbidden: {mismatched}")
+    return tuple(exported for exported, _ in pairs)
+
+
+def _python_literal_assignment(path: Path, name: str):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in tree.body:
+        value = None
+        if (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == name
+                    for target in node.targets)):
+            value = node.value
+        elif (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == name):
+            value = node.value
+        if value is not None:
+            return ast.literal_eval(value)
+    raise ValueError(f"missing literal Python registry declaration {name}")
+
+
+def check_registry_completeness(root: Path) -> list[Violation]:
+    """Keep C++, pybind, and exact-type Python registries in lockstep."""
+    rule = "registry-completeness"
+    cpp_include = root / "pyscarcopula" / "_cpp" / "include" / "scar"
+    model_header = cpp_include / "copula" / "model_descriptor.hpp"
+    capability_header = cpp_include / "copula" / "capability.hpp"
+    binding = (
+        root / "pyscarcopula" / "_cpp" / "src" / "bindings"
+        / "capability.cpp"
+    )
+    registry = root / "pyscarcopula" / "_native" / "registry.py"
+    violations = []
+    contracts = (
+        ("NativeModelId", model_header, "_REGISTERED_NATIVE_IDS"),
+        ("NativeOperation", capability_header, "_OPERATION_NAMES"),
+        ("DynamicsKind", capability_header, "_DYNAMICS_NAMES"),
+    )
+    for enum_name, header, python_name in contracts:
+        try:
+            cpp_members = _cpp_enum_members(header, enum_name)
+            bound_members = _bound_enum_members(binding, enum_name)
+            python_value = _python_literal_assignment(registry, python_name)
+            if isinstance(python_value, dict):
+                python_members = tuple(python_value.values())
+            else:
+                python_members = tuple(python_value)
+        except (OSError, SyntaxError, ValueError) as error:
+            violations.append(Violation(rule, registry, str(error)))
+            continue
+
+        expected = set(cpp_members)
+        for owner, actual, path in (
+                ("pybind", bound_members, binding),
+                ("Python", python_members, registry)):
+            actual_set = set(actual)
+            if actual_set != expected or len(actual) != len(expected):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"{owner} {enum_name} registry differs from C++: "
+                    f"missing={sorted(expected - actual_set)}, "
+                    f"extra={sorted(actual_set - expected)}",
+                ))
+    return violations
+
+
 def check_removed_monolith(root: Path) -> list[Violation]:
-    path = (
-        root / "pyscarcopula" / "_cpp" / "include"
-        / "scar" / "detail" / "internal.hpp")
-    if path.exists():
-        return [Violation(
-            "removed-internal-header",
-            path,
-            "the monolithic internal.hpp must not be reintroduced",
-        )]
-    return []
+    detail = (
+        root / "pyscarcopula" / "_cpp" / "include" / "scar" / "detail")
+    violations = []
+    for name in ("internal.hpp", "copula.hpp"):
+        path = detail / name
+        if path.exists():
+            violations.append(Violation(
+                "removed-internal-header",
+                path,
+                f"the monolithic detail/{name} must not be reintroduced",
+            ))
+    return violations
+
+
+def check_pair_verticalization(root: Path) -> list[Violation]:
+    cpp = root / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar" / "copula"
+    source = cpp / "src" / "copula"
+    violations = []
+    manifest = include / "pair" / "families.def"
+    entry_pattern = re.compile(
+        r"^SCAR_PAIR_FAMILY\(\s*"
+        r"([A-Za-z][A-Za-z0-9_]*)\s*,\s*"
+        r"([a-z][a-z0-9_]*)\s*,\s*"
+        r"([0-9]+)\s*,\s*"
+        r"(Any|Archimedean|GaussianTanh)\s*,\s*"
+        r"(Any|R0Only)\s*,\s*"
+        r"(Softplus|XTanh|GaussianTanh|Exponential|Logistic)\s*,\s*"
+        r"([0-9]+(?:\.[0-9]+)?)\s*\)$"
+    )
+    entries: list[tuple[str, str, int]] = []
+    if manifest.is_file():
+        for line_number, raw_line in enumerate(
+                manifest.read_text(encoding="utf-8").splitlines(), 1):
+            line = raw_line.strip()
+            if not line or line.startswith("//"):
+                continue
+            match = entry_pattern.fullmatch(line)
+            if match is None:
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    manifest,
+                    "invalid pair-family registry entry",
+                    line_number,
+                ))
+                continue
+            entries.append((match.group(1), match.group(2), int(match.group(3))))
+    family_names = tuple(package for _, package, _ in entries)
+
+    if not entries:
+        violations.append(Violation(
+            "pair-copula-verticalization",
+            manifest,
+            "pair-family registry must contain at least one entry",
+        ))
+    elif (
+            len({enum_name for enum_name, _, _ in entries}) != len(entries)
+            or len(set(family_names)) != len(entries)
+            or len({value for _, _, value in entries}) != len(entries)):
+        violations.append(Violation(
+            "pair-copula-verticalization",
+            manifest,
+            "pair-family enum names, package names, and values must be unique",
+        ))
+
+    required = [
+        manifest,
+        include / "pair" / "kernel.hpp",
+        include / "prepared_pair_kernel.hpp",
+        source / "pair" / "runtime_registry.cpp",
+    ]
+    required.extend(include / "pair" / f"{name}.hpp" for name in family_names)
+    required.extend(source / "pair" / f"{name}.cpp" for name in family_names)
+    for path in required:
+        if not path.is_file():
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                path,
+                "required pair-copula package file is missing",
+            ))
+
+    registry = source / "pair" / "runtime_registry.cpp"
+    if registry.is_file():
+        text = registry.read_text(encoding="utf-8")
+        if text.count("switch (family)") != 1:
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                registry,
+                "pair families must have exactly one runtime registration switch",
+            ))
+        if text.count('#include "scar/copula/pair/families.def"') != 2:
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                registry,
+                "runtime declarations and registration must use families.def",
+            ))
+
+    kernel_contract = include / "pair" / "kernel.hpp"
+    if kernel_contract.is_file():
+        text = kernel_contract.read_text(encoding="utf-8")
+        for forbidden in ("Rotation", "Transform", "supports"):
+            if re.search(rf"\b{forbidden}\b", text):
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    kernel_contract,
+                    f"{forbidden} must remain outside the family contract",
+                ))
+
+    dispatch = source / "dispatch.cpp"
+    if dispatch.is_file():
+        text = dispatch.read_text(encoding="utf-8")
+        for family in ("clayton", "gumbel", "frank", "joe"):
+            if re.search(rf"\b{family}_[A-Za-z0-9_]+", text):
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    dispatch,
+                    f"{family} implementation leaked into generic dispatch",
+                ))
+
+    for generic_source in (source / "core.cpp", dispatch):
+        if (
+                generic_source.is_file()
+                and "is_pair_copula_family" in generic_source.read_text(
+                    encoding="utf-8")):
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                generic_source,
+                "construct PreparedPairKernel directly to avoid a second lookup",
+            ))
+
+    pair_source = source / "pair"
+    for name in family_names:
+        path = pair_source / f"{name}.cpp"
+        if not path.is_file():
+            continue
+        includes = {value for value, _ in _include_lines(path)}
+        expected = f"copula/pair/{name}.hpp"
+        other_families = {
+            f"copula/pair/{other}.hpp"
+            for other in family_names
+            if other != name
+        }
+        if expected not in includes or includes & other_families:
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                path,
+                "a pair implementation must include its own package header only",
+            ))
+        text = path.read_text(encoding="utf-8")
+        for forbidden in (
+                "scar/copula/rotation.hpp",
+                "scar::Rotation",
+                "scar::Transform",
+                "_h_rotated",
+                "_h_inverse_rotated"):
+            if forbidden in text:
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    path,
+                    f"common rotation/transform concern leaked into family: {forbidden}",
+                ))
+
+    binding = cpp / "src" / "bindings" / "copula.cpp"
+    if binding.is_file():
+        text = binding.read_text(encoding="utf-8")
+        if text.count('#include "scar/copula/pair/families.def"') != 1:
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                binding,
+                "generic CopulaFamily binding must consume families.def",
+            ))
+        for enum_name, _, _ in entries:
+            if f'.value("{enum_name}",' in text:
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    binding,
+                    f"pair family {enum_name} is hard-coded in generic binding",
+                ))
+
+    adapter = root / "pyscarcopula" / "_native" / "_descriptors.py"
+    if adapter.is_file():
+        text = adapter.read_text(encoding="utf-8")
+        for enum_name, _, _ in entries:
+            if f"CopulaFamily.{enum_name}" in text:
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    adapter,
+                    f"pair family {enum_name} is hard-coded in generic adapter",
+                ))
+
+    rvine_adapter = root / "pyscarcopula" / "_native" / "vine.py"
+    if rvine_adapter.is_file():
+        text = rvine_adapter.read_text(encoding="utf-8")
+        if (
+                "_builtin_copula_types" in text
+                or "__pyscarcopula_native_rvine__" in text
+                or "from pyscarcopula.copula." in text):
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                rvine_adapter,
+                "generic R-vine adapter must use the exact-type registry",
+            ))
+    return violations
+
+
+def check_multivariate_verticalization(root: Path) -> list[Violation]:
+    cpp = root / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src" / "copula"
+    multivariate_include = include / "copula" / "multivariate"
+    multivariate_source = source / "multivariate"
+    violations = []
+
+    removed = (
+        source / "multivariate.cpp",
+        source / "families" / "student.cpp",
+        source / "student_rosenblatt.cpp",
+        cpp / "src" / "factor" / "operator.cpp",
+        cpp / "src" / "factor" / "student.cpp",
+        cpp / "src" / "factor" / "grid.cpp",
+        include / "detail" / "copula" / "student.hpp",
+    )
+    for path in removed:
+        if path.exists():
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                path,
+                "legacy horizontal multivariate source/header must be removed",
+            ))
+
+    required = (
+        include / "copula" / "spec.hpp",
+        include / "copula" / "model_storage.hpp",
+        include / "detail" / "copula" / "multivariate" / "batch.hpp",
+        multivariate_include / "correlation" / "dense.hpp",
+        multivariate_include / "correlation" / "factor.hpp",
+        multivariate_include / "gaussian" / "model.hpp",
+        multivariate_include / "gaussian" / "density.hpp",
+        multivariate_include / "gaussian" / "conditional.hpp",
+        multivariate_include / "equicorrelation" / "model.hpp",
+        multivariate_include / "equicorrelation" / "kernel.hpp",
+        multivariate_include / "student" / "model.hpp",
+        multivariate_include / "student" / "distribution.hpp",
+        multivariate_include / "student" / "quantile.hpp",
+        multivariate_include / "student" / "ppf_cache.hpp",
+        multivariate_include / "student" / "density.hpp",
+        multivariate_include / "student" / "conditional.hpp",
+        multivariate_include / "student" / "rosenblatt.hpp",
+        multivariate_source / "correlation" / "dense.cpp",
+        multivariate_source / "correlation" / "factor.cpp",
+        multivariate_source / "correlation" / "conditional.cpp",
+        multivariate_source / "gaussian" / "density.cpp",
+        multivariate_source / "gaussian" / "conditional.cpp",
+        multivariate_source / "equicorrelation" / "evaluator.cpp",
+        multivariate_source / "equicorrelation" / "model.cpp",
+        multivariate_source / "equicorrelation" / "kernel.cpp",
+        multivariate_source / "student" / "distribution.cpp",
+        multivariate_source / "student" / "density.cpp",
+        multivariate_source / "student" / "evaluator.cpp",
+        multivariate_source / "student" / "conditional.cpp",
+        multivariate_source / "student" / "factor_density.cpp",
+        multivariate_source / "student" / "factor_grid.cpp",
+        multivariate_source / "student" / "ppf_cache.cpp",
+        multivariate_source / "student" / "quantile.cpp",
+        multivariate_source / "student" / "rosenblatt.cpp",
+    )
+    for path in required:
+        if not path.is_file():
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                path,
+                "required vertical multivariate package file is missing",
+            ))
+
+    dispatch = multivariate_source / "dispatch.cpp"
+    if dispatch.is_file():
+        text = dispatch.read_text(encoding="utf-8")
+        forbidden_dispatch_markers = (
+            "StudentWorkspace",
+            "EquicorrStats",
+            "conditional_df",
+            "parallel_for_blocks",
+            "student_fill_",
+            "equicorr_log_pdf_from_stats(",
+            "normal_quantile",
+            "cholesky",
+        )
+        if len(text.splitlines()) > 100:
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                dispatch,
+                "multivariate dispatch must remain a thin translation unit",
+            ))
+        for marker in forbidden_dispatch_markers:
+            if marker in text:
+                violations.append(Violation(
+                    "multivariate-model-verticalization",
+                    dispatch,
+                    f"model implementation leaked into dispatch: {marker}",
+                ))
+
+    conditional_engine = (
+        multivariate_source / "correlation" / "conditional.cpp"
+    )
+    if conditional_engine.is_file():
+        text = conditional_engine.read_text(encoding="utf-8")
+        for marker in ("Student", "student_", "conditional_df", "chi_square"):
+            if marker in text:
+                violations.append(Violation(
+                    "multivariate-model-verticalization",
+                    conditional_engine,
+                    f"model-specific conditional policy leaked into correlation algebra: {marker}",
+                ))
+
+    student_conditional = multivariate_source / "student" / "conditional.cpp"
+    if student_conditional.is_file():
+        text = student_conditional.read_text(encoding="utf-8")
+        if (
+                "student_conditional_scale" not in text
+                or "conditional_df" not in text):
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                student_conditional,
+                "Student conditional scaling must be owned by the Student package",
+            ))
+
+    spec = include / "copula" / "spec.hpp"
+    if spec.is_file():
+        text = spec.read_text(encoding="utf-8")
+        for field in (
+                "l_inv", "log_det", "ppf_n_obs", "ppf_nodes", "ppf_table",
+                "gaussian_z1_cache", "gaussian_z2_cache",
+                "equicorr_sum_cache", "equicorr_sum_squares_cache"):
+            if re.search(rf"\b{field}\s*(?:=|;)", text):
+                violations.append(Violation(
+                    "multivariate-model-verticalization",
+                    spec,
+                    f"model-specific field remains in CopulaSpec: {field}",
+                ))
+
+    storage = include / "copula" / "model_storage.hpp"
+    if storage.is_file():
+        text = storage.read_text(encoding="utf-8")
+        required_alternatives = (
+            "gaussian::DenseModelStorage",
+            "gaussian::FactorModelStorage",
+            "equicorrelation::ModelStorage",
+            "student::DenseModelStorage",
+            "student::FactorModelStorage",
+        )
+        if "std::variant<" not in text or any(
+                alternative not in text for alternative in required_alternatives):
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                storage,
+                "typed model storage must enumerate every multivariate model",
+            ))
+
+    factor_contract = multivariate_include / "correlation" / "factor.hpp"
+    if factor_contract.is_file():
+        text = factor_contract.read_text(encoding="utf-8")
+        if "FactorCorrelationOperator" not in text or "FactorStudent" in text:
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                factor_contract,
+                "factor correlation contract must be model-independent",
+            ))
+
+    for package, forbidden in (
+        (multivariate_include / "gaussian", ("/student/", "Student")),
+        (multivariate_source / "gaussian", ("/student/", "Student")),
+        (include / "copula" / "pair", ("/multivariate/", "scar/factor.hpp", "scar/ou.hpp")),
+        (source / "pair", ("/multivariate/", "scar/factor.hpp", "scar/ou.hpp")),
+    ):
+        if not package.is_dir():
+            continue
+        for path in _source_files(package):
+            text = path.read_text(encoding="utf-8")
+            for marker in forbidden:
+                if marker in text:
+                    violations.append(Violation(
+                        "multivariate-model-verticalization",
+                        path,
+                        f"forbidden cross-model dependency: {marker}",
+                    ))
+
+    return violations
+
+
+def check_prepared_application_modules(root: Path) -> list[Violation]:
+    cpp = root / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src"
+    violations = []
+    rule = "prepared-application-modules"
+
+    required = (
+        include / "copula" / "grid_values.hpp",
+        include / "copula" / "prepared_pair_kernel.hpp",
+        include / "copula" / "prepared_dynamic_emission.hpp",
+        source / "copula" / "prepared_dynamic_emission.cpp",
+    )
+    for path in required:
+        if not path.is_file():
+            violations.append(Violation(
+                rule,
+                path,
+                "required prepared copula interface is missing",
+            ))
+
+    prepared_emission_header = (
+        include / "copula" / "prepared_dynamic_emission.hpp")
+    if prepared_emission_header.is_file():
+        text = prepared_emission_header.read_text(encoding="utf-8")
+        for marker in (
+                "class PreparedDynamicEmission",
+                "class PreparedDynamicEmissionWorkspace",
+                "DynamicEmissionRowResult evaluate_parameter(",
+                "bool observation_cache_compatible("):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    prepared_emission_header,
+                    f"dynamic emission contract is missing: {marker}",
+                ))
+        for include_name, line in _include_lines(prepared_emission_header):
+            if (
+                    include_name.startswith("copula/pair/")
+                    or include_name.startswith("copula/multivariate/")
+                    or include_name.startswith("detail/copula/")):
+                violations.append(Violation(
+                    rule,
+                    prepared_emission_header,
+                    "public dynamic-emission contract exposed a concrete model",
+                    line,
+                ))
+
+    gas_evaluator = source / "gas" / "evaluator.cpp"
+    if gas_evaluator.is_file():
+        text = gas_evaluator.read_text(encoding="utf-8")
+        if "PreparedDynamicEmission" not in text:
+            violations.append(Violation(
+                rule,
+                gas_evaluator,
+                "GAS must evaluate through the scalar dynamic-emission interface",
+            ))
+        violations.extend(_forbid_includes(
+            root,
+            (gas_evaluator,),
+            rule,
+            lambda value: value in {
+                "copula.hpp", "detail/copula/dispatch.hpp",
+            }
+            or value.startswith("copula/pair/")
+            or value.startswith("copula/multivariate/"),
+            "GAS must not include concrete copula implementations",
+        ))
+
+    gas_interface = include / "gas.hpp"
+    if gas_interface.is_file():
+        text = gas_interface.read_text(encoding="utf-8")
+        for marker in (
+                "GasStateResult initial_state_prepared(",
+                "GasUpdateResult update_one_prepared(",
+                "GasUpdateResult update_observation_prepared("):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    gas_interface,
+                    f"prepared GAS update contract is missing: {marker}",
+                ))
+
+    static_header = include / "copula.hpp"
+    static_source = source / "likelihood" / "static.cpp"
+    for path, markers in (
+        (static_header, ("PreparedDynamicEmission", "emission_")),
+        (static_source, ("emission_->evaluate_parameter(",)),
+    ):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for marker in markers:
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"static evaluator is not prepared through: {marker}",
+                ))
+
+    scar_ou_interface = include / "ou.hpp"
+    if scar_ou_interface.is_file():
+        text = scar_ou_interface.read_text(encoding="utf-8")
+        for marker in (
+                "const PreparedDynamicEmission* prepared_emission_",
+                "PreparedDynamicEmission emission_;"):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    scar_ou_interface,
+                    f"SCAR-OU prepared dependency is missing: {marker}",
+                ))
+
+    generic_scar_ou_files = tuple(
+        source / "scar_ou" / name
+        for name in (
+            "evaluator.cpp",
+            "evaluator_internal.hpp",
+            "likelihood.cpp",
+            "prediction.cpp",
+            "state_distribution.cpp",
+            "transition.cpp",
+            "validation.cpp",
+        )
+    )
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in generic_scar_ou_files if path.is_file()),
+        rule,
+        lambda value: value in {
+            "detail/copula/dispatch.hpp", "factor.hpp",
+        }
+        or value.startswith("copula/pair/")
+        or value.startswith("copula/multivariate/"),
+        "generic SCAR-OU execution must use its prepared emission dependency",
+    ))
+    forbidden_scar_ou_model_storage = (
+        "factor_operator(",
+        "dense_inverse_cholesky(",
+        "student_ppf_nodes(",
+        "student_ppf_table(",
+        "student_ppf_observation_count(",
+    )
+    for path in generic_scar_ou_files:
+        if path.is_file() and path.name not in {"evaluator_internal.hpp"}:
+            text = path.read_text(encoding="utf-8")
+            if "PreparedDynamicEmission" not in text:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "generic SCAR-OU execution lost its prepared emission dependency",
+                ))
+            for marker in forbidden_scar_ou_model_storage:
+                if marker in text:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "generic SCAR-OU execution accessed concrete model "
+                        f"storage: {marker}",
+                    ))
+
+    scar_ou_gradient = source / "scar_ou" / "gradient.cpp"
+    if scar_ou_gradient.is_file():
+        text = scar_ou_gradient.read_text(encoding="utf-8")
+        if "&prepared->compatibility_spec() == &copula" in text:
+            violations.append(Violation(
+                rule,
+                scar_ou_gradient,
+                "prepared SCAR-OU gradient emission must not be selected by "
+                "CopulaSpec address identity",
+            ))
+        for marker in (
+                "if (prepared != nullptr)",
+                "const CopulaSpec& copula = emission.compatibility_spec();"):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    scar_ou_gradient,
+                    f"prepared SCAR-OU gradient lifecycle is missing: {marker}",
+                ))
+
+    vine_header = include / "rvine.hpp"
+    vine_files = (
+        *tuple(_source_files(source / "vine")),
+        vine_header,
+        include / "rvine_plan.hpp",
+    )
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in vine_files if path.is_file()),
+        rule,
+        lambda value: value in {
+            "copula.hpp", "detail/copula/dispatch.hpp",
+        }
+        or value.startswith("copula/pair/")
+        or value.startswith("copula/multivariate/"),
+        "R-vine runtime must use PreparedPairKernel",
+    ))
+    if vine_header.is_file():
+        text = vine_header.read_text(encoding="utf-8")
+        if (
+                "PreparedPairKernel kernel;" not in text
+                or "PreparedPairKernel transposed_kernel;" not in text):
+            violations.append(Violation(
+                rule,
+                vine_header,
+                "each prepared vine edge must own forward and transposed pair kernels",
+            ))
+
+    scar_ou_files = (
+        *tuple(_source_files(source / "scar_ou")),
+        include / "ou.hpp",
+    )
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in scar_ou_files if path.is_file()),
+        rule,
+        lambda value: value in {
+            "copula.hpp", "gas.hpp", "gas_rvine.hpp",
+        },
+        "SCAR-OU must depend on prepared copulas and remain independent of GAS",
+    ))
+
+    model_files = (
+        *tuple(_source_files(include / "copula")),
+        *tuple(_source_files(source / "copula")),
+    )
+    violations.extend(_forbid_includes(
+        root,
+        model_files,
+        rule,
+        lambda value: value in {
+            "gas.hpp", "gas_rvine.hpp", "ou.hpp", "rvine.hpp",
+            "rvine_plan.hpp",
+        } or value.startswith("detail/scar_ou/"),
+        "copula models must not depend on application modules",
+    ))
+
+    composition = source / "gas" / "rvine_sampler.cpp"
+    composition_header = include / "gas_rvine.hpp"
+    if composition_header.is_file():
+        includes = {value for value, _ in _include_lines(composition_header)}
+        if "copula.hpp" in includes or "copula/spec.hpp" not in includes:
+            violations.append(Violation(
+                rule,
+                composition_header,
+                "GAS-vine composition must depend on CopulaSpec rather than "
+                "the static/copula umbrella",
+            ))
+    if composition.is_file():
+        includes = {value for value, _ in _include_lines(composition)}
+        for expected in (
+                "gas_rvine.hpp",
+                "rvine.hpp",
+                "copula/prepared_dynamic_emission.hpp"):
+            if expected not in includes:
+                violations.append(Violation(
+                    rule,
+                    composition,
+                    f"GAS-vine composition must explicitly own {expected}",
+                ))
+        text = composition.read_text(encoding="utf-8")
+        for marker in (
+                "gas_emissions",
+                "gas_workspaces",
+                "update_one_prepared("):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    composition,
+                    f"GAS-vine hot path lost prepared state: {marker}",
+                ))
+        if "evaluator.update_one(" in text:
+            violations.append(Violation(
+                rule,
+                composition,
+                "GAS-vine must not prepare a scalar emission inside its row loop",
+            ))
+
+    return violations
+
+
+def check_public_cpp_api(root: Path) -> list[Violation]:
+    """Enforce domain contracts and the opaque workspace boundary."""
+
+    cpp = root / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src"
+    rule = "public-cpp-api"
+    violations = []
+
+    result_contracts = {
+        include / "static" / "result.hpp": ("StaticObjectiveResult",),
+        include / "gas" / "result.hpp": (
+            "GasLogLikResult", "GasFilterResult", "GasUpdateResult",
+            "GasStateResult", "GasPredictResult", "GasPathResult"),
+        include / "scar_ou" / "result.hpp": (
+            "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
+            "StateDistribution", "SmoothedStateDistribution",
+            "OuGridFilterResult",),
+        include / "copula" / "result.hpp": (
+            "MultivariateRowsResult", "MultivariateGridResult",
+            "EquicorrPreparationResult"),
+        include / "vine" / "result.hpp": (
+            "SampleResult", "ConditionalSampleResult", "DensityResult",
+            "RosenblattResult", "MCMCResult"),
+        include / "gas_rvine" / "result.hpp": ("GasRvineSampleResult",),
+    }
+    for path, result_names in result_contracts.items():
+        if not path.is_file():
+            violations.append(Violation(
+                rule,
+                path,
+                "domain result contract is missing",
+            ))
+            continue
+        text = path.read_text(encoding="utf-8")
+        for result_name in result_names:
+            result_match = re.search(
+                rf"(?ms)^struct\s+{re.escape(result_name)}\s*\{{(.*?)^\}};",
+                text,
+            )
+            if result_match is None:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"domain result contract is missing: {result_name}",
+                ))
+                continue
+            body = result_match.group(1)
+            for required in ("Status status", "FailureContext failure"):
+                if required not in body:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        f"{result_name} is missing {required}",
+                    ))
+            if re.search(
+                    r"\bint\s+status\b|\bfailure_(?:index|row|edge|operation|coordinate)\b",
+                    body):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"{result_name} must use Status and FailureContext",
+                ))
+
+    for path in _source_files(include):
+        if "detail" in path.relative_to(include).parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(
+                r"(?ms)^struct\s+(\w*Result)\s*\{(.*?)^\};", text):
+            name, body = match.groups()
+            for required in ("Status status", "FailureContext failure"):
+                if required not in body:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        f"public result {name} is missing {required}",
+                        text.count("\n", 0, match.start()) + 1,
+                    ))
+            if re.search(
+                    r"\bint\s+status\b|\bfailure_(?:index|row|edge|operation|coordinate)\b",
+                    body):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"public result {name} exposes legacy integer errors",
+                    text.count("\n", 0, match.start()) + 1,
+                ))
+
+    umbrella_contracts = {
+        include / "copula.hpp": (
+            ("copula/result.hpp", "static/result.hpp"),
+            ("struct MultivariateRowsResult", "struct StaticObjectiveResult")),
+        include / "gas.hpp": ("gas/result.hpp", "struct GasLogLikResult"),
+        include / "ou.hpp": ("scar_ou/result.hpp", "struct LogLikResult"),
+        include / "rvine.hpp": ("vine/result.hpp", "struct SampleResult"),
+        include / "gas_rvine.hpp": (
+            "gas_rvine/result.hpp", "struct GasRvineSampleResult"),
+    }
+    for path, (required_includes, forbidden_definitions) in (
+            umbrella_contracts.items()):
+        if not path.is_file():
+            continue
+        includes = {value for value, _ in _include_lines(path)}
+        text = path.read_text(encoding="utf-8")
+        if isinstance(required_includes, str):
+            required_includes = (required_includes,)
+        if isinstance(forbidden_definitions, str):
+            forbidden_definitions = (forbidden_definitions,)
+        for required_include in required_includes:
+            if required_include not in includes:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"public API must import scar/{required_include}",
+                ))
+        for forbidden_definition in forbidden_definitions:
+            if forbidden_definition in text:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "domain result is defined in an umbrella header",
+                ))
+
+    copula_header = include / "copula.hpp"
+    if copula_header.is_file():
+        concrete_imports = {
+            value for value, _ in _include_lines(copula_header)
+            if value.startswith("copula/multivariate/")
+            or value.startswith("copula/pair/")
+            or value == "copula/prepared_dynamic_emission.hpp"
+        }
+        for concrete_import in sorted(concrete_imports):
+            violations.append(Violation(
+                rule,
+                copula_header,
+                "static copula umbrella imports concrete implementation: "
+                f"{concrete_import}",
+            ))
+
+    status_header = include / "core" / "status.hpp"
+    if status_header.is_file():
+        text = status_header.read_text(encoding="utf-8")
+        if re.search(r"operator\s*[!=]=\s*\(\s*(?:Status\s+\w+\s*,\s*int|int\s+\w+\s*,\s*Status)", text):
+            violations.append(Violation(
+                rule,
+                status_header,
+                "Status must not compare implicitly with legacy integer codes",
+            ))
+
+    ou_header = include / "ou.hpp"
+    if ou_header.is_file():
+        text = ou_header.read_text(encoding="utf-8")
+        for marker in (
+                "ScarOuGridGradientOperators",
+                "ScarOuGridGradientWorkspace",
+                "ScarOuSpectralGradientWorkspace"):
+            if marker in text:
+                violations.append(Violation(
+                    rule,
+                    ou_header,
+                    f"public SCAR-OU API exposes private workspace: {marker}",
+                ))
+        for marker in ("struct Workspace;", "std::unique_ptr<Workspace>"):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    ou_header,
+                    f"SCAR-OU evaluator PImpl boundary is missing: {marker}",
+                ))
+        for class_name in ("ScarOuEvaluator", "PreparedScarOuEvaluator"):
+            public = re.search(
+                rf"(?ms)class\s+{class_name}\s*\{{\s*public:(.*?)^private:",
+                text,
+            )
+            if public is not None and re.search(
+                    r"\bint\s*&\s*status\b|\bint&\s*status\b",
+                    public.group(1)):
+                violations.append(Violation(
+                    rule,
+                    ou_header,
+                    f"{class_name} exposes a legacy status out-parameter",
+                ))
+        for marker in (
+                "ScarOuVectorResult predictive_mean_local_gh(",
+                "ScarOuVectorResult mixture_h_pair_auto(",
+                "ScarOuVectorResult predictive_mean(const OuParams& params)",
+                "ScarOuVectorResult mixture_h_pair(const OuParams& params)"):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    ou_header,
+                    f"typed SCAR-OU vector contract is missing: {marker}",
+                ))
+
+    rvine_header = include / "rvine.hpp"
+    if rvine_header.is_file():
+        text = rvine_header.read_text(encoding="utf-8")
+        if re.search(r"\bfailure_(?:row|edge|operation)\s*[,);]", text):
+            violations.append(Violation(
+                rule,
+                rvine_header,
+                "public R-vine API exposes internal failure out-parameters",
+            ))
+
+    private_workspace = source / "scar_ou" / "gradient_workspace.hpp"
+    if not private_workspace.is_file():
+        violations.append(Violation(
+            rule,
+            private_workspace,
+            "private SCAR-OU gradient workspace is missing",
+        ))
+    elif "ScarOuSpectralGradientWorkspace" not in (
+            private_workspace.read_text(encoding="utf-8")):
+        violations.append(Violation(
+            rule,
+            private_workspace,
+            "private SCAR-OU gradient workspace is incomplete",
+        ))
+
+    compute_contract_files = (
+        *tuple(_source_files(include)),
+        *tuple(
+            path for path in _source_files(source)
+            if "bindings" not in path.relative_to(source).parts
+        ),
+    )
+    for path in compute_contract_files:
+        text = path.read_text(encoding="utf-8")
+        match = _CALLER_SPECIFIC_CONTRACT_TERMS.search(text)
+        if match is not None:
+            violations.append(Violation(
+                rule,
+                path,
+                "computational contracts must be caller-neutral; found "
+                f"{match.group(0)!r}",
+                text.count("\n", 0, match.start()) + 1,
+            ))
+
+    return violations
+
+
+def check_thin_bindings(root: Path) -> list[Violation]:
+    """Enforce pybind include and conversion boundaries."""
+
+    bindings = (
+        root / "pyscarcopula" / "_cpp" / "src" / "bindings")
+    rule = "thin-python-bindings"
+    violations = []
+
+    legacy_umbrella = bindings / "common.hpp"
+    if legacy_umbrella.exists():
+        violations.append(Violation(
+            rule,
+            legacy_umbrella,
+            "the umbrella bindings/common.hpp must not be restored",
+        ))
+
+    required = (
+        bindings / "module.hpp",
+        bindings / "array.hpp",
+        bindings / "array.cpp",
+    )
+    for path in required:
+        if not path.is_file():
+            violations.append(Violation(
+                rule,
+                path,
+                "required focused binding helper is missing",
+            ))
+
+    module_header = bindings / "module.hpp"
+    if module_header.is_file():
+        text = module_header.read_text(encoding="utf-8")
+        if _SCAR_INCLUDE.search(text):
+            violations.append(Violation(
+                rule,
+                module_header,
+                "module declarations must not import computational APIs",
+            ))
+        if "pybind11/numpy.h" in text:
+            violations.append(Violation(
+                rule,
+                module_header,
+                "module declarations must not import array conversion",
+            ))
+
+    array_header = bindings / "array.hpp"
+    if array_header.is_file():
+        text = array_header.read_text(encoding="utf-8")
+        for marker in (
+                "CopulaSpec", "GridValues", "Gas", "OuBackend",
+                "RVine", "Student", "Result"):
+            if marker in text:
+                violations.append(Violation(
+                    rule,
+                    array_header,
+                    f"array/view conversion depends on a domain type: {marker}",
+                ))
+        for signature in (
+                "const Float64Array& values",
+                "const Float64Array& values,"):
+            if signature not in text:
+                violations.append(Violation(
+                    rule,
+                    array_header,
+                    "view-producing conversion must retain its array owner "
+                    "through a const reference",
+                ))
+                break
+
+    shared_files = (
+        bindings / "common.cpp",
+        bindings / "array.cpp",
+        bindings / "array.hpp",
+        bindings / "module.hpp",
+    )
+    domain_include = re.compile(
+        r"^(?:copula(?:\.hpp|/)|factor\.hpp|gas(?:\.hpp|_rvine\.hpp|/)|"
+        r"ou\.hpp|rvine(?:\.hpp|_plan\.hpp)|scar_ou/|vine/|gas_rvine/)"
+    )
+    for path in shared_files:
+        if not path.is_file():
+            continue
+        for include, line in _include_lines(path):
+            if domain_include.match(include):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "shared binding helper imports a domain API: "
+                    f"scar/{include}",
+                    line,
+                ))
+
+    binder_sources = {
+        "common.cpp", "parallel.cpp", "copula.cpp", "factor.cpp",
+        "multivariate.cpp", "scar_ou_types.cpp", "rvine.cpp", "gas.cpp",
+        "scar_ou.cpp", "statistics.cpp",
+    }
+    for name in sorted(binder_sources):
+        path = bindings / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if '#include "module.hpp"' not in text:
+            violations.append(Violation(
+                rule,
+                path,
+                "domain binder must import only the focused module contract",
+            ))
+
+    forbidden_by_binder = {
+        "parallel.cpp": domain_include,
+        "gas.cpp": re.compile(
+            r"^(?:factor\.hpp|ou\.hpp|rvine\.hpp|scar_ou/|vine/|"
+            r"copula/multivariate/student/)"),
+        "rvine.cpp": re.compile(
+            r"^(?:factor\.hpp|gas(?:\.hpp|_rvine\.hpp|/)|ou\.hpp|"
+            r"scar_ou/|copula/multivariate/)"),
+        "factor.cpp": re.compile(
+            r"^(?:gas(?:\.hpp|_rvine\.hpp|/)|ou\.hpp|rvine\.hpp|"
+            r"scar_ou/|vine/)"),
+        "copula.cpp": re.compile(
+            r"^(?:gas(?:\.hpp|_rvine\.hpp|/)|ou\.hpp|rvine\.hpp|"
+            r"scar_ou/|vine/)"),
+        "multivariate.cpp": re.compile(
+            r"^(?:gas(?:\.hpp|_rvine\.hpp|/)|ou\.hpp|rvine\.hpp|"
+            r"scar_ou/|vine/)"),
+        "scar_ou_types.cpp": re.compile(
+            r"^(?:copula(?:\.hpp|/)|factor\.hpp|gas(?:\.hpp|_rvine\.hpp|/)|"
+            r"ou\.hpp|rvine\.hpp|vine/)"),
+        "scar_ou.cpp": re.compile(
+            r"^(?:factor\.hpp|gas(?:\.hpp|_rvine\.hpp|/)|rvine\.hpp|vine/)"),
+    }
+    for name, forbidden in forbidden_by_binder.items():
+        path = bindings / name
+        if not path.is_file():
+            continue
+        for include, line in _include_lines(path):
+            if forbidden.match(include):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "binder imports an unrelated domain API: "
+                    f"scar/{include}",
+                    line,
+                ))
+
+    result_owners = {
+        "copula.cpp": ("StaticObjectiveResult",),
+        "multivariate.cpp": (
+            "MultivariateRowsResult", "MultivariateGridResult",
+            "EquicorrPreparationResult", "ConditionalSampleResult"),
+        "gas.cpp": (
+            "GasLogLikResult", "GasFilterResult", "GasUpdateResult",
+            "GasStateResult", "GasPredictResult", "GasPathResult"),
+        "scar_ou.cpp": (
+            "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
+            "StateDistribution", "SmoothedStateDistribution",
+            "OuGridFilterResult",),
+        "factor.cpp": (
+            "FactorStudentRowsResult", "FactorStudentJointResult",
+            "FactorStudentGridResult"),
+        "rvine.cpp": (
+            "SampleResult", "ConditionalSampleResult", "DensityResult",
+            "RosenblattResult", "MCMCResult"),
+    }
+    all_result_names = {
+        result_name
+        for names in result_owners.values()
+        for result_name in names
+    }
+    for owner, names in result_owners.items():
+        path = bindings / owner
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for result_name in names:
+            if result_name not in text:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"domain result serialization is missing: {result_name}",
+                ))
+    for path in _source_files(bindings):
+        if path.suffix == ".hpp":
+            text = path.read_text(encoding="utf-8")
+            if "_result_to_dict" in text or any(
+                    name in text for name in all_result_names):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "model-specific result conversion must stay beside its binder",
+                ))
+
+    student_allowed = {"copula.cpp", "factor.cpp", "multivariate.cpp"}
+    for path in bindings.glob("*.cpp"):
+        if path.name in student_allowed:
+            continue
+        for include, line in _include_lines(path):
+            if "/student/" in include:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "Student API leaked into a Student-independent binder",
+                    line,
+                ))
+
+    factor_binding = bindings / "factor.cpp"
+    if factor_binding.is_file():
+        text = factor_binding.read_text(encoding="utf-8")
+        for marker in ("matrix_copy(", "vector_copy("):
+            if marker in text:
+                violations.append(Violation(
+                    rule,
+                    factor_binding,
+                    "factor binder duplicates shared array conversion: "
+                    f"{marker[:-1]}",
+                ))
+        for serializer in (
+                "factor_student_rows_result_to_dict",
+                "factor_student_joint_result_to_dict",
+                "factor_student_grid_result_to_dict"):
+            if serializer not in text:
+                violations.append(Violation(
+                    rule,
+                    factor_binding,
+                    "factor result serialization is missing: " + serializer,
+                ))
+        status_serialization = (
+            'output["status"] = static_cast<int>(result.status);')
+        if text.count(status_serialization) < 3:
+            violations.append(Violation(
+                rule,
+                factor_binding,
+                "every factor Student result must serialize Status",
+            ))
+
+    status_policy = re.compile(
+        r"\bif\s*\([^;{}]*\bresult\.(?:status|failure|is_ok\s*\()",
+        re.DOTALL,
+    )
+    gil_python_access = re.compile(
+        r"py::gil_scoped_release\s+\w+\s*;"
+        r"(?:(?!^\s*\}).)*?\b\w+\."
+        r"(?:request|mutable_data|writeable)\s*\(",
+        re.MULTILINE | re.DOTALL,
+    )
+    orchestration_calls = (
+        "build_ou_grid(",
+        "build_grid_transition_operator(",
+        "forward_filter_emissions(",
+        "backward_filter_emissions(",
+        "smooth_state_emissions(",
+    )
+    for path in bindings.glob("*.cpp"):
+        text = path.read_text(encoding="utf-8")
+        match = status_policy.search(text)
+        if match is not None:
+            violations.append(Violation(
+                rule,
+                path,
+                "binding must serialize Status without result-dependent policy",
+                text.count("\n", 0, match.start()) + 1,
+            ))
+        match = gil_python_access.search(text)
+        if match is not None:
+            violations.append(Violation(
+                rule,
+                path,
+                "Python/NumPy array API used while the GIL is released",
+                text.count("\n", 0, match.start()) + 1,
+            ))
+        for marker in orchestration_calls:
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "model orchestration belongs in the computational API: "
+                    f"{marker[:-1]}",
+                    text.count("\n", 0, index) + 1,
+                ))
+
+    copula_binding = bindings / "copula.cpp"
+    if copula_binding.is_file():
+        for include, line in _include_lines(copula_binding):
+            if include == "factor.hpp":
+                violations.append(Violation(
+                    rule,
+                    copula_binding,
+                    "generic copula binder must import the focused factor "
+                    "correlation contract instead of scar/factor.hpp",
+                    line,
+                ))
+
+    return violations
 
 
 def _find_cycle(graph: dict[str, set[str]]) -> list[str] | None:
@@ -275,20 +1935,816 @@ def check_public_header_cycles(root: Path) -> list[Violation]:
     )]
 
 
+def _cpp_target(root: Path, path: Path) -> str | None:
+    cpp_root = root / "pyscarcopula" / "_cpp"
+    include_root = cpp_root / "include" / "scar"
+    source_root = cpp_root / "src"
+    try:
+        relative = path.relative_to(include_root).as_posix()
+    except ValueError:
+        try:
+            relative = path.relative_to(source_root).as_posix()
+        except ValueError:
+            return None
+        return _target_for_source(relative)
+    return _target_for_header(relative)
+
+
+def _local_include_edges(
+    root: Path,
+) -> tuple[list[tuple[Path, str, Path, str, int]], list[tuple[Path, str]]]:
+    """Return resolved target edges and unclassified C++ files."""
+
+    cpp_root = root / "pyscarcopula" / "_cpp"
+    include_root = cpp_root / "include"
+    files = sorted({
+        *_source_files(cpp_root / "include"),
+        *_source_files(cpp_root / "src"),
+    })
+    targets = {path: _cpp_target(root, path) for path in files}
+    unclassified = [
+        (path, "public header" if include_root in path.parents else "source")
+        for path, target in targets.items()
+        if target is None
+    ]
+    edges = []
+    for path, owner in targets.items():
+        if owner is None:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in _LOCAL_INCLUDE.finditer(text):
+            include = match.group(1) or match.group(2)
+            target_path = (
+                include_root / include
+                if include.startswith("scar/")
+                else path.parent / include
+            ).resolve()
+            dependency = targets.get(target_path)
+            if dependency is None:
+                continue
+            edges.append((
+                path,
+                owner,
+                target_path,
+                dependency,
+                text.count("\n", 0, match.start()) + 1,
+            ))
+    return edges, unclassified
+
+
+def check_target_dependency_graph(root: Path) -> list[Violation]:
+    """Enforce the complete allowed graph for logical C++ build targets."""
+
+    rule = "target-dependency-graph"
+    violations = []
+    declared_cycle = _find_cycle({
+        target: set(dependencies)
+        for target, dependencies in _TARGET_DEPENDENCIES.items()
+    })
+    if declared_cycle:
+        path = root / "tools" / "check_cpp_architecture.py"
+        violations.append(Violation(
+            rule,
+            path,
+            "declared target dependency graph is cyclic: "
+            + " -> ".join(declared_cycle),
+        ))
+        return violations
+
+    edges, unclassified = _local_include_edges(root)
+    for path, kind in unclassified:
+        violations.append(Violation(
+            rule,
+            path,
+            f"{kind} is not assigned to a logical C++ target",
+        ))
+    for path, owner, target_path, dependency, line in edges:
+        if dependency == owner:
+            continue
+        allowed = _TARGET_DEPENDENCIES[owner]
+        if dependency not in allowed:
+            violations.append(Violation(
+                rule,
+                path,
+                f"target {owner!r} may not depend on {dependency!r}; "
+                f"include resolves to {target_path.name}",
+                line,
+            ))
+    return violations
+
+
+def check_domain_module_cycles(root: Path) -> list[Violation]:
+    """Reject cycles formed by real includes between logical domains."""
+
+    edges, _ = _local_include_edges(root)
+    graph = {target: set() for target in _TARGET_DEPENDENCIES}
+    for _, owner, _, dependency, _ in edges:
+        if owner != dependency:
+            graph[owner].add(dependency)
+    cycle = _find_cycle(graph)
+    if not cycle:
+        return []
+    return [Violation(
+        "domain-module-cycle",
+        root / "pyscarcopula" / "_cpp",
+        f"cyclic domain-module dependency: {' -> '.join(cycle)}",
+    )]
+
+
+def check_foundation_formula_duplicates(root: Path) -> list[Violation]:
+    """Reject private copies of numerical functions owned by foundation."""
+    rule = "foundation-formula-duplicates"
+    source = root / "pyscarcopula" / "_cpp" / "src"
+    canonical = {
+        "normal": (source / "math" / "normal.cpp").resolve(),
+        "beta": (source / "math" / "beta.cpp").resolve(),
+        "gamma": (source / "math" / "gamma.cpp").resolve(),
+        "transforms": (source / "copula" / "transforms.cpp").resolve(),
+    }
+    definitions = (
+        ("normal", re.compile(
+            r"\bdouble\s+(?:norm_cdf|normal_cdf)\s*\(")),
+        ("beta", re.compile(
+            r"\bdouble\s+(?:betacf|regularized_beta|continued_fraction)\s*\(")),
+        ("gamma", re.compile(
+            r"\bdouble\s+regularized_gamma_p\s*\(")),
+        ("gamma", re.compile(
+            r"(?<![_\w])(?:std::|::)?lgamma\s*\(")),
+        ("transforms", re.compile(
+            r"\bdouble\s+(?:softplus|inverse_softplus|sigmoid|"
+            r"stable_logistic|logistic_value|logistic_unit(?:_open)?)\s*\(")),
+    )
+    formulas = (
+        ("normal", re.compile(
+            r"0\.5\s*\*\s*\([^;{}]{0,80}\b(?:std::)?erf\s*\(")),
+        ("beta", re.compile(
+            r"\bqab\s*=\s*[^;]+;(?:(?!\}).){0,240}\bqap\s*=\s*[^;]+;"
+            r"(?:(?!\}).){0,240}\bqam\s*=", re.DOTALL)),
+        ("gamma", re.compile(
+            r"\bshifted_shape\b(?:(?!\}).){0,500}\blgamma\s*\(", re.DOTALL)),
+        ("transforms", re.compile(
+            r"1\.0\s*/\s*\(1\.0\s*\+\s*std::exp\s*\(\s*-")),
+        ("transforms", re.compile(
+            r"log1p\s*\(\s*std::exp\s*\(\s*-std::abs\s*\(")),
+    )
+    violations = []
+    for path in _source_files(source):
+        if path.suffix != ".cpp":
+            continue
+        text = path.read_text(encoding="utf-8")
+        checks = (
+            *((owner, pattern, False) for owner, pattern in definitions),
+            *((owner, pattern, True) for owner, pattern in formulas),
+        )
+        for owner, pattern, is_formula in checks:
+            if path.resolve() == canonical[owner]:
+                continue
+            if (
+                    is_formula
+                    and owner == "beta"
+                    and path.as_posix().endswith(
+                        "/copula/multivariate/student/distribution.cpp")):
+                # The df derivative uses dual-number recurrence terms; it is
+                # not a second scalar beta implementation.
+                continue
+            for match in pattern.finditer(text):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"private {owner} formula duplicates its canonical owner",
+                    text.count("\n", 0, match.start()) + 1,
+                ))
+    return violations
+
+
+def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
+    """Keep Jacobi trajectory and state evolution out of Python."""
+    rule = "jacobi-native-sampling-ownership"
+    numerical = root / "pyscarcopula" / "numerical"
+    forbidden = {
+        numerical / "jacobi_sampling.py": (
+            "@njit",
+            "_lamperti_chunk_kernel",
+            "np.sin(",
+            "np.arcsin(",
+        ),
+        numerical / "jacobi_sparse.py": (
+            "_sample_sparse_path_kernel",
+        ),
+        numerical / "jacobi_tm.py": (
+            "np.cumsum(transition",
+        ),
+    }
+    violations = []
+    for path, markers in forbidden.items():
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for marker in markers:
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "Jacobi sampling math must remain native: " + marker,
+                    text.count("\n", 0, index) + 1,
+                ))
+    return violations
+
+
+def check_vine_native_boundary(root: Path) -> list[Violation]:
+    """Keep production vine execution on the mandatory native path."""
+    rule = "vine-native-boundary"
+    violations = []
+    production_callers = tuple(
+        sorted((root / "pyscarcopula").rglob("*.py")))
+    forbidden_dispatch = (
+        "dispatch_rvine_backend",
+        "_rvine_backend",
+        "_RVINE_BACKEND_ENV",
+        "python_executor",
+        "native_strict",
+        "__pyscarcopula_native_rvine__",
+        "_sample_stepwise_stateful",
+        "_sample_with_r_python",
+        "_sample_suffix_given_with_r_python",
+        "_sample_dag_given_with_r_python",
+        "_log_pdf_rows_with_r_python",
+        "_sample_arbitrary_given_mcmc_python",
+        "_rvine_rosenblatt_transform_python",
+        "def available(",
+        "try_native",
+    )
+    for path in production_callers:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for marker in forbidden_dispatch:
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "supported production R-vine execution must not select "
+                    "a Python backend: " + marker,
+                    text.count("\n", 0, index) + 1,
+                ))
+
+    legacy_adapters = (
+        "_cpp_extension.py",
+        "_cpp_copula.py",
+        "_cpp_gas.py",
+        "_cpp_gas_rvine.py",
+        "_cpp_rvine.py",
+        "_cpp_scar_ou.py",
+        "_rvine_backend.py",
+        "copula_native.py",
+        "multivariate_native.py",
+        "static_likelihood.py",
+    )
+    numerical = root / "pyscarcopula" / "numerical"
+    for name in legacy_adapters:
+        path = numerical / name
+        if path.exists():
+            violations.append(Violation(
+                rule,
+                path,
+                "legacy numerical adapter must remain removed",
+            ))
+
+    package_init = root / "pyscarcopula" / "__init__.py"
+    if (
+            package_init.is_file()
+            and "_load_native()" not in package_init.read_text(encoding="utf-8")):
+        violations.append(Violation(
+            rule,
+            package_init,
+            "top-level package import must fail fast without the extension",
+        ))
+
+    adapter = root / "pyscarcopula" / "_native" / "vine.py"
+    if adapter.is_file():
+        text = adapter.read_text(encoding="utf-8")
+        for marker in (
+                "compile_dynamic_rosenblatt_edges(",
+                "DynamicRvineKind.GAS",
+                "DynamicRvineKind.SCAR_OU",
+                "DynamicRvineKind.SCAR_JACOBI",
+                "module.dynamic_rvine_rosenblatt_transform(",
+                'result["proposal_draws_used"]',
+                'result["acceptance_draws_used"]'):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    adapter,
+                    "native R-vine adapter is missing required contract: "
+                    + marker,
+                ))
+
+        cpp = root / "pyscarcopula" / "_cpp"
+        composition_files = {
+            cpp / "include" / "scar" / "dynamic_rvine.hpp": (
+                "DynamicRvineEdge",
+                "dynamic_rvine_rosenblatt_transform("),
+            cpp / "src" / "vine_dynamic" / "rosenblatt.cpp": (
+                "GasEvaluator",
+                "PreparedScarOuEvaluator",
+                "PreparedScarJacobiEvaluator",
+                "out.log_likelihood"),
+            cpp / "include" / "scar" / "vine" / "result.hpp": (
+                "proposal_draws_used",
+                "acceptance_draws_used",
+                "double log_likelihood"),
+            cpp / "src" / "bindings" / "rvine.cpp": (
+                'diagnostics["log_likelihood"] = result.log_likelihood;',),
+        }
+        for path, markers in composition_files.items():
+            if not path.is_file():
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "required native R-vine contract is missing",
+                ))
+                continue
+            source = path.read_text(encoding="utf-8")
+            for marker in markers:
+                if marker not in source:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "required native R-vine contract is missing: "
+                        + marker,
+                    ))
+    return violations
+
+
+def check_mandatory_vine_dispatch(root: Path) -> list[Violation]:
+    """Reject retired adapters, selectors, formulas, and Python model paths."""
+    rule = "mandatory-vine-dispatch"
+    violations = []
+
+    retired_modules = (
+        root / "pyscarcopula" / "_native" / "gof.py",
+        root / "pyscarcopula" / "numerical" / "student_gof.py",
+    )
+    for path in retired_modules:
+        if path.exists():
+            violations.append(Violation(
+                rule,
+                path,
+                "retired Python numerical formula module must stay removed",
+            ))
+
+    forbidden_surfaces = {
+        "python_executor": "removed Python R-vine backend selector",
+        "native_strict": "removed R-vine backend selector",
+        "PYSCARCOPULA_TEST_RVINE_BACKEND": "removed backend environment switch",
+        "pyscarcopula/numerical/_cpp_rvine.py": "removed numerical adapter path",
+        "pyscarcopula/numerical/multivariate_native.py":
+            "removed numerical adapter path",
+        "pyscarcopula/numerical/_rvine_backend.py":
+            "removed numerical adapter path",
+    }
+    workflow_root = root / ".github" / "workflows"
+    for path in sorted((*workflow_root.glob("*.yml"), *workflow_root.glob("*.yaml"))):
+        text = path.read_text(encoding="utf-8")
+        for marker, message in forbidden_surfaces.items():
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"{message}: {marker}",
+                    text.count("\n", 0, index) + 1,
+                ))
+
+    documentation_markers = (
+        "copula_native.py",
+        "multivariate_native.py",
+        "static_likelihood.py",
+        "_cpp_scar_ou.py",
+        "_cpp_gas.py",
+        "_cpp_gas_rvine.py",
+    )
+    for path in (
+            root / "ARCHITECTURE.md",
+            root / "docs" / "guide" / "architecture.md"):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for marker in documentation_markers:
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "architecture documentation names a retired adapter: "
+                    + marker,
+                    text.count("\n", 0, index) + 1,
+                ))
+
+    conftest = root / "tests" / "conftest.py"
+    if conftest.is_file():
+        text = conftest.read_text(encoding="utf-8")
+        index = text.find("install_reference_oracles")
+        if index >= 0:
+            violations.append(Violation(
+                rule,
+                conftest,
+                "tests must not monkeypatch reference methods onto production",
+                text.count("\n", 0, index) + 1,
+            ))
+
+    reference_root = root / "tests" / "reference"
+    for path in sorted(reference_root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            module = None
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            for module in names:
+                if module == "pyscarcopula" or module.startswith("pyscarcopula."):
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "reference modules must not import production code: "
+                        + module,
+                        node.lineno,
+                    ))
+
+    vine_path = root / "pyscarcopula" / "vine" / "vine.py"
+    if vine_path.is_file():
+        source = vine_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(vine_path))
+        likelihood = next((
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "log_likelihood"
+            and any(
+                isinstance(parent, ast.ClassDef)
+                and parent.name == "VineCopula"
+                and node in parent.body
+                for parent in ast.walk(tree)
+            )
+        ), None)
+        if likelihood is not None:
+            segment = ast.get_source_segment(source, likelihood) or ""
+            for marker in (
+                    "copula.log_likelihood(",
+                    "_edge_h_pair(",
+                    "for t, level in enumerate("):
+                index = segment.find(marker)
+                if index >= 0:
+                    violations.append(Violation(
+                        rule,
+                        vine_path,
+                        "VineCopula.log_likelihood must remain a native "
+                        "dispatch: " + marker,
+                        likelihood.lineno + segment.count("\n", 0, index),
+                    ))
+            if "return_log_likelihood=True" not in segment:
+                violations.append(Violation(
+                    rule,
+                    vine_path,
+                    "dynamic R-vine likelihood must request the native result",
+                    likelihood.lineno,
+                ))
+
+    mle_path = root / "pyscarcopula" / "strategy" / "mle.py"
+    if mle_path.is_file():
+        source = mle_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(mle_path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name not in {"rosenblatt_e2", "mixture_h_pair"}:
+                continue
+            segment = ast.get_source_segment(source, node) or ""
+            for marker in ("copula.h(", "copula.h_pair("):
+                if marker in segment:
+                    violations.append(Violation(
+                        rule,
+                        mle_path,
+                        "MLE pair operations must dispatch through _native.pair",
+                        node.lineno,
+                    ))
+
+    return violations
+
+
+def check_jacobi_python_cleanup(root: Path) -> list[Violation]:
+    """Keep the completed Jacobi boundary free of Python/Numba kernels."""
+    rule = "jacobi-python-cleanup"
+    numerical = root / "pyscarcopula" / "numerical"
+    paths = tuple(sorted(numerical.glob("jacobi*.py")))
+    forbidden_names = {
+        "_add_interpolated_mass",
+        "_build_sparse_fixed_kernel",
+        "_build_sparse_local_kernel",
+        "_iter_coeff_filter",
+        "_iter_matrix_filter",
+        "_iter_sparse_filter",
+        "_lamperti_chunk_kernel",
+        "_matrix_setup_fd_derivatives",
+        "_mh_correct_sparse_transition",
+        "_ipfp_correct_sparse_transition",
+        "_sample_sparse_path_kernel",
+        "_sparse_filter_loglik_kernel",
+        "_sparse_filter_setup",
+        "_sparse_neg_loglik_grad_kernel",
+        "_sparse_to_dense",
+    }
+    forbidden_numpy_calls = {
+        "arcsin",
+        "cos",
+        "cumsum",
+        "exp",
+        "fromiter",
+        "log",
+        "searchsorted",
+        "sin",
+        "sqrt",
+    }
+    violations = []
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text, filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                modules = (
+                    [alias.name for alias in node.names]
+                    if isinstance(node, ast.Import)
+                    else [node.module or ""]
+                )
+                for module in modules:
+                    if (
+                            module in {"numba", "scipy"}
+                            or module.startswith(("numba.", "scipy."))):
+                        violations.append(Violation(
+                            rule,
+                            path,
+                            "production Jacobi modules must not import "
+                            "Python numerical kernels",
+                            node.lineno,
+                        ))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name in forbidden_names:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "retired Python Jacobi kernel returned: " + node.name,
+                        node.lineno,
+                    ))
+            elif isinstance(node, ast.Call):
+                function = node.func
+                if (
+                        isinstance(function, ast.Attribute)
+                        and isinstance(function.value, ast.Name)
+                        and function.value.id == "np"
+                        and function.attr in forbidden_numpy_calls):
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "Jacobi model formula must remain native: np."
+                        + function.attr,
+                        node.lineno,
+                    ))
+    return violations
+
+
+def check_jacobi_strategy_facade(root: Path) -> list[Violation]:
+    """Keep model and state dispatch behind the native facade."""
+    rule = "jacobi-native-strategy-facade"
+    path = root / "pyscarcopula" / "strategy" / "scar_jacobi.py"
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8")
+    forbidden_calls = (
+        "jacobi_matrix_loglik(",
+        "jacobi_sparse_matrix_loglik(",
+        "jacobi_transition_matrix(",
+        "sample_jacobi_grid_trajectory(",
+        "sample_jacobi_lamperti_trajectory(",
+        "copula_native.",
+    )
+    violations = []
+    for marker in forbidden_calls:
+        index = text.find(marker)
+        if index >= 0:
+            violations.append(Violation(
+                rule,
+                path,
+                "SCARJacobiStrategy bypasses the native facade: " + marker,
+                text.count("\n", 0, index) + 1,
+            ))
+
+    tree = ast.parse(text, filename=str(path))
+    legacy_modules = {
+        "pyscarcopula.numerical.jacobi_tm",
+        "pyscarcopula.numerical.jacobi_sparse",
+        "pyscarcopula.numerical.jacobi_sampling",
+        "pyscarcopula._native.pair",
+    }
+    legacy_names = {
+        "jacobi_tm",
+        "jacobi_sparse",
+        "jacobi_sampling",
+        "copula_native",
+    }
+    constructs_prepared_evaluator = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if (
+                        alias.name in legacy_modules
+                        or any(
+                            alias.name.endswith("." + name)
+                            for name in legacy_names)):
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "SCARJacobiStrategy imports a legacy numerical module: "
+                        + alias.name,
+                        node.lineno,
+                    ))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if (
+                    module in legacy_modules
+                    or any(
+                        module == name or module.endswith("." + name)
+                        for name in legacy_names)):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "SCARJacobiStrategy imports a legacy numerical module: "
+                    + module,
+                    node.lineno,
+                ))
+            elif module.endswith("numerical"):
+                for alias in node.names:
+                    if alias.name in legacy_names:
+                        violations.append(Violation(
+                            rule,
+                            path,
+                            "SCARJacobiStrategy imports a legacy numerical "
+                            "module: " + alias.name,
+                            node.lineno,
+                        ))
+        elif isinstance(node, ast.Call):
+            function = node.func
+            if (
+                    isinstance(function, ast.Attribute)
+                    and function.attr == "PreparedScarJacobiEvaluator"
+                    and isinstance(function.value, ast.Name)
+                    and function.value.id == "jacobi_native"):
+                constructs_prepared_evaluator = True
+
+    if not constructs_prepared_evaluator:
+        violations.append(Violation(
+            rule,
+            path,
+            "SCARJacobiStrategy must construct the prepared native evaluator",
+        ))
+    return violations
+
+
+def check_removed_compatibility_cleanup(root: Path) -> list[Violation]:
+    """Keep removed Python compatibility surfaces physically absent."""
+    rule = "removed-compatibility-cleanup"
+    package = root / "pyscarcopula"
+    io_path = package / "io.py"
+    removed_files = (
+        package / "copula" / "_protocol.py",
+        package / "vine" / "cvine.py",
+        package / "vine" / "_conditional_cvine.py",
+        package / "numerical" / "tm_grid.py",
+    )
+    violations = []
+    for path in removed_files:
+        if path.exists():
+            violations.append(Violation(
+                rule,
+                path,
+                "removed compatibility module must be physically absent",
+            ))
+
+    forbidden = (
+        "CopulaCapabilities",
+        "CommonCopulaProtocol",
+        "BivariateCopulaProtocol",
+        "MultivariateCopulaProtocol",
+        "CopulaProtocol",
+        "CVineCopula",
+        "TMGrid",
+        "compatibility_capability_flags",
+        "__pyscarcopula_native_rvine__",
+    )
+    if package.is_dir():
+        for path in sorted(package.rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for marker in forbidden:
+                if path == io_path and marker == "CVineCopula":
+                    continue
+                if marker not in text:
+                    continue
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "removed compatibility symbol returned: " + marker,
+                    text.count("\n", 0, text.index(marker)) + 1,
+                ))
+
+    if io_path.is_file():
+        text = io_path.read_text(encoding="utf-8")
+        reject_at = text.find("_reject_removed_persistence(envelope)")
+        restore_at = text.find(
+            "_from_jsonable(envelope.get(\"state\"), True)")
+        if reject_at < 0 or restore_at < 0 or reject_at > restore_at:
+            violations.append(Violation(
+                rule,
+                io_path,
+                "removed persisted formats must be rejected before restore",
+            ))
+
+    return violations
+
+
 def check_repository(root: Path) -> list[Violation]:
     root = root.resolve()
     checks = (
         check_include_boundaries,
         check_module_entrypoint,
         check_source_manifest,
+        check_python_free_compute_boundary,
+        check_raw_extension_imports,
+        check_registry_completeness,
         check_removed_monolith,
+        check_pair_verticalization,
+        check_multivariate_verticalization,
+        check_prepared_application_modules,
+        check_public_cpp_api,
+        check_thin_bindings,
         check_public_header_cycles,
+        check_target_dependency_graph,
+        check_domain_module_cycles,
+        check_foundation_formula_duplicates,
+        check_vine_native_boundary,
+        check_mandatory_vine_dispatch,
+        check_jacobi_sampling_ownership,
+        check_jacobi_python_cleanup,
+        check_jacobi_strategy_facade,
+        check_removed_compatibility_cleanup,
+        check_python_numerical_ownership,
+        check_python_exact_duplicates,
     )
     return [
         violation
         for check in checks
         for violation in check(root)
     ]
+
+
+def check_python_numerical_ownership(root: Path) -> list[Violation]:
+    """Audit every shipped Python module, not just Jacobi/vine markers."""
+    try:
+        from tools.check_python_ownership import audit_package
+    except ModuleNotFoundError:
+        from check_python_ownership import audit_package
+    result = audit_package(root)
+    return [
+        Violation(item["rule"], root / item["path"],
+                  f'{item["symbol"]}: {item["message"]}', item["line"])
+        for item in result["violations"]
+    ]
+
+
+def check_python_exact_duplicates(root: Path) -> list[Violation]:
+    """Reject exact shipped function bodies, including same-file copies."""
+    try:
+        from tools.check_python_duplicates import exact_clone_groups
+    except ModuleNotFoundError:
+        from check_python_duplicates import exact_clone_groups
+    violations = []
+    for group in exact_clone_groups(root):
+        members = group["members"]
+        summary = ", ".join(
+            f'{item["path"]}:{item["line"]} {item["name"]}'
+            for item in members)
+        for item in members:
+            violations.append(Violation(
+                "python-exact-duplicates",
+                root / item["path"],
+                "exact function body duplicated across shipped code: "
+                + summary,
+                item["line"],
+            ))
+    return violations
 
 
 def main(argv: list[str] | None = None) -> int:

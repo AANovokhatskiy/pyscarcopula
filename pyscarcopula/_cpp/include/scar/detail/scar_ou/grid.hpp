@@ -7,8 +7,13 @@
 
 namespace scar_internal {
 
+// Preserve the five-sigma transition support used by the 0.20.1 contract.
+// Scalar likelihood and analytical gradients must use the same band rule.
+inline constexpr double kOuTransitionTailSigma = 5.0;
+
 struct OuGrid {
     int K = 0;
+    double K_requested = 0.0;
     double rho = 0.0;
     double sigma = 0.0;
     double sigma_cond = 0.0;

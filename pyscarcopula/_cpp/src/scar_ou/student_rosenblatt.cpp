@@ -1,12 +1,15 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/copula/multivariate/student/distribution.hpp"
+#include "scar/copula/multivariate/student/quantile.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
 #include "scar/factor.hpp"
+#include "scar/math/gamma.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,40 +23,24 @@ using namespace evaluator_detail;
 
 namespace {
 
-std::size_t rosenblatt_output_size(
-    ObservationView u,
-    const CopulaSpec& copula) {
-
-    std::size_t output_size = 0;
-    if (copula.dim < 2
-        || u.dim != copula.dim
-        || !scar_internal::checked_size_mul(
-            u.size(),
-            static_cast<std::size_t>(copula.dim),
-            output_size)) {
-        return 0;
-    }
-    return output_size;
-}
-
 bool valid_student_spec(const CopulaSpec& copula) {
     std::size_t matrix_size = 0;
     if (copula.family != CopulaFamily::Student || copula.dim < 2) {
         return false;
     }
     if (copula.correlation_kind == CorrelationKind::Factor) {
-        return copula.factor_correlation != nullptr
-            && copula.factor_correlation->dimension()
+        return copula.factor_operator() != nullptr
+            && copula.factor_operator()->dimension()
                 == static_cast<std::size_t>(copula.dim)
-            && std::isfinite(copula.factor_correlation->logdet());
+            && std::isfinite(copula.factor_operator()->logdet());
     }
     return copula.correlation_kind == CorrelationKind::DenseCholesky
         && scar_internal::checked_size_mul(
             static_cast<std::size_t>(copula.dim),
             static_cast<std::size_t>(copula.dim),
             matrix_size)
-        && copula.l_inv.size() == matrix_size
-        && std::isfinite(copula.log_det);
+        && copula.dense_inverse_cholesky().size() == matrix_size
+        && std::isfinite(copula.dense_log_determinant());
 }
 
 double multivariate_student_log_pdf(
@@ -63,8 +50,8 @@ double multivariate_student_log_pdf(
     double quadratic_form) {
 
     const double dimension_value = static_cast<double>(dimension);
-    return std::lgamma(0.5 * (df + dimension_value))
-        - std::lgamma(0.5 * df)
+    return math::log_gamma(0.5 * (df + dimension_value))
+        - math::log_gamma(0.5 * df)
         - 0.5 * dimension_value * std::log(df * 3.14159265358979323846)
         - 0.5 * log_determinant
         - 0.5 * (df + dimension_value)
@@ -72,8 +59,8 @@ double multivariate_student_log_pdf(
 }
 
 double univariate_student_log_pdf(double value, double df) {
-    return std::lgamma(0.5 * (df + 1.0))
-        - std::lgamma(0.5 * df)
+    return math::log_gamma(0.5 * (df + 1.0))
+        - math::log_gamma(0.5 * df)
         - 0.5 * std::log(df * 3.14159265358979323846)
         - 0.5 * (df + 1.0) * std::log1p(value * value / df);
 }
@@ -85,13 +72,18 @@ bool student_rosenblatt_impl(
     const scar_internal::GridTransitionOperator& transition,
     std::vector<double>& out) {
 
-    const std::size_t output_size = rosenblatt_output_size(u, copula);
-    if (output_size == 0
+    const PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
+    if (!output_shape.is_ok()
+        || output_shape.value == 0
         || u.size() < 2
         || u.data() == nullptr
         || !valid_student_spec(copula)) {
         return false;
     }
+    const std::size_t output_size = output_shape.value;
 
     const std::size_t dimension = static_cast<std::size_t>(copula.dim);
     const std::size_t K = static_cast<std::size_t>(grid.K);
@@ -118,7 +110,7 @@ bool student_rosenblatt_impl(
     const FactorCorrelationOperator* factor = nullptr;
     std::size_t factor_rank = 0;
     if (factor_correlation) {
-        factor = copula.factor_correlation.get();
+        factor = copula.factor_operator().get();
         factor_rank = factor->rank();
         std::size_t prefix_inverse_size = 0;
         if (!scar_internal::checked_size_mul(
@@ -215,7 +207,7 @@ bool student_rosenblatt_impl(
     } else {
         for (std::size_t prefix = 1; prefix < dimension; ++prefix) {
             const double diagonal =
-                copula.l_inv[(prefix - 1) * dimension + prefix - 1];
+                copula.dense_inverse_cholesky()[(prefix - 1) * dimension + prefix - 1];
             if (!std::isfinite(diagonal) || diagonal <= 0.0) {
                 return false;
             }
@@ -342,7 +334,7 @@ bool student_rosenblatt_impl(
                         factor_conditional_variance[column]);
                 } else {
                     const double diagonal =
-                        copula.l_inv[column * dimension + column];
+                        copula.dense_inverse_cholesky()[column * dimension + column];
                     if (!std::isfinite(diagonal) || diagonal <= 0.0) {
                         valid = false;
                         return;
@@ -351,7 +343,7 @@ bool student_rosenblatt_impl(
                          prefix < column;
                          ++prefix) {
                         conditional_mean -=
-                            copula.l_inv[column * dimension + prefix]
+                            copula.dense_inverse_cholesky()[column * dimension + prefix]
                             * quantiles[state_offset + prefix]
                             / diagonal;
                     }
@@ -363,7 +355,7 @@ bool student_rosenblatt_impl(
                              prefix <= factor_row;
                              ++prefix) {
                             whitened +=
-                                copula.l_inv[
+                                copula.dense_inverse_cholesky()[
                                     factor_row * dimension + prefix]
                                 * quantiles[state_offset + prefix];
                         }
@@ -460,7 +452,7 @@ bool student_rosenblatt_impl(
     };
 
     const bool filtered = scar_internal::forward_filter_grid(
-        copula,
+        emission,
         grid,
         u.data(),
         static_cast<std::int64_t>(u.size()),
@@ -480,8 +472,10 @@ std::vector<double> invalid_student_rosenblatt(
     int& status) {
 
     status = error;
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
     return std::vector<double>(
-        rosenblatt_output_size(u, copula), 0.0);
+        output_shape.is_ok() ? output_shape.value : 0, 0.0);
 }
 
 std::vector<double> student_rosenblatt_backend(
@@ -501,7 +495,11 @@ std::vector<double> student_rosenblatt_backend(
         return invalid_student_rosenblatt(
             u, copula, SCAR_INVALID_PARAMETER, status);
     }
-    if (u.size() < 2 || rosenblatt_output_size(u, copula) == 0) {
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
+    if (u.size() < 2
+        || !output_shape.is_ok()
+        || output_shape.value == 0) {
         return invalid_student_rosenblatt(
             u, copula, SCAR_INVALID_SIZE, status);
     }
@@ -581,8 +579,11 @@ std::vector<double> ScarOuEvaluator::student_rosenblatt_auto(
     }
 
     scar_internal::OuGrid grid;
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
     if (u.size() < 2
-        || rosenblatt_output_size(u, copula) == 0
+        || !output_shape.is_ok()
+        || output_shape.value == 0
         || !scar_internal::build_ou_grid(
             params.kappa,
             params.mu,

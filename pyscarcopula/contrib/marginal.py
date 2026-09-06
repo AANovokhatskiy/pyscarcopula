@@ -121,6 +121,15 @@ class ScipyMarginal(MarginalModel):
             res[:, k] = self._dist.ppf(u[:, k], *params[k])
         return res
 
+    def ppf_from_samples(self, u, x_samples):
+        """Evaluate an empirical inverse CDF from pre-generated samples."""
+        dim = u.shape[1]
+        res = np.empty_like(u)
+        for k in range(dim):
+            res[:, k] = np.quantile(
+                x_samples[:, k], u[:, k], method="median_unbiased")
+        return res
+
     def cdf(self, x, params):
         dim = x.shape[1]
         res = np.empty_like(x)
@@ -467,18 +476,6 @@ class HyperbolicMarginal(ScipyMarginal):
     n_params = 5
     _dist = genhyperbolic
 
-    def ppf_from_samples(self, u, x_samples):
-        """
-        Inverse CDF via quantile of pre-generated samples.
-        Useful when analytical ppf is slow.
-        u: (N, dim), x_samples: (M, dim).
-        """
-        dim = u.shape[1]
-        res = np.empty_like(u)
-        for k in range(dim):
-            res[:, k] = np.quantile(x_samples[:, k], u[:, k],
-                                     method='median_unbiased')
-        return res
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -490,14 +487,6 @@ class StableMarginal(ScipyMarginal):
     n_params = 4
     _dist = levy_stable
 
-    def ppf_from_samples(self, u, x_samples):
-        """Inverse CDF via quantile of pre-generated samples."""
-        dim = u.shape[1]
-        res = np.empty_like(u)
-        for k in range(dim):
-            res[:, k] = np.quantile(x_samples[:, k], u[:, k],
-                                     method='median_unbiased')
-        return res
 
     def rvs(self, params, N, batch_size=100000, n_jobs=-1):
         """Override: batched parallel rvs for large N."""

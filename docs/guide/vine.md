@@ -18,7 +18,9 @@ families via AIC, and can use constant (MLE) or time-varying (SCAR, GAS)
 parameters.
 
 The shared `transform_type` option is passed to candidate constructors.
-Archimedean edge families use it to select `softplus` or `xtanh`.
+Archimedean edge families support `softplus`, `xtanh`, `exp`, and `logistic`.
+For `exp` or `logistic`, use an Archimedean-only candidate pool as shown in
+[Parameter Transforms](transforms.md#using-with-vine).
 `BivariateGaussianCopula` accepts the same argument for constructor
 uniformity, but Gaussian edges always use their bounded `GaussianTanh`
 correlation mapping.
@@ -46,41 +48,14 @@ vine.fit(u, method='scar-tm-ou',
 vine.summary()
 ```
 
-### Legacy `CVineCopula`
-
-`CVineCopula` remains available for compatibility with existing code and
-persisted models. It is not removed, renamed, or accompanied by a runtime
-`DeprecationWarning`. New code should use the generic runtime:
-
-```python
-from pyscarcopula import CVineCopula, VineCopula
-from pyscarcopula.vine import cvine_structure
-
-# Existing supported API
-old = CVineCopula()
-
-# Preferred generic equivalents
-new = VineCopula.cvine(d=u.shape[1], order=range(u.shape[1]))
-new_explicit = VineCopula(
-    structure=cvine_structure(
-        d=u.shape[1],
-        order=range(u.shape[1]),
-    )
-)
-```
-
 Static MLE models fitted to the same C-vine structure and fixed edge families
 have equivalent edge semantics and likelihood. Internal edge ordering and
 seeded sampling trajectories are not an API parity guarantee.
 
-Conditional sampling intentionally follows different runtime paths:
-
-- legacy `CVineCopula` uses its C-vine-specific prefix/general algorithms;
-- generic `VineCopula` uses matrix-based suffix conditioning and a DAG+MCMC
+Conditional sampling uses matrix-based suffix conditioning and a DAG+MCMC
   fallback for arbitrary conditioning sets;
-- generic prediction supports `return_diagnostics`, MCMC controls, and
-  `dynamic_conditioning`; the legacy top-level adapter rejects these options
-  instead of silently ignoring them.
+prediction supports `return_diagnostics`, MCMC controls, and
+`dynamic_conditioning`.
 
 ## Auto-selected R-vine
 
@@ -123,7 +98,9 @@ vine.fit(
 `given_vars` is a fit-time structure-selection target. With the default
 `conditional_strict=True`, `fit` raises `ValueError` if no suffix-compatible
 exact structure is constructed. With `conditional_strict=False`, prediction can
-use the approximate fallback when the exact path is not available.
+still use other conditioning sets, but the unsupported fit-time target remains
+rejected by `predict`. To use the approximate fallback for that set, fit without
+`given_vars` and supply the set only to `predict(given=...)`.
 
 ## Fixed D-vine
 
@@ -224,17 +201,46 @@ For large d, not all edges benefit from dynamic parameters:
 
 ```python
 # Trees 0-1: SCAR, trees 2+: MLE
-vine.fit(u, method='scar-tm-ou', truncation_level=2)
+vine.fit(u, method='scar-tm-ou', truncation_level=2,
+         truncation_fill='mle')
 
-# Edges with weak MLE dependence stay MLE
+# Edges below min_edge_logL become independent
 vine.fit(u, method='scar-tm-ou', min_edge_logL=10)
 
-# Both
+# Default truncation_fill='independent': truncate and prune to independence
 vine.fit(u, method='scar-tm-ou',
          truncation_level=2, min_edge_logL=10)
 ```
 
 Edges where no parametric copula beats independence by AIC are set to `IndependentCopula` automatically.
+
+MLE optimizer options and `NumericalConfig` also apply to the refinement stage
+of automatic family selection. Screening uses the configured native thread
+count. An explicit natural-parameter `alpha0` requires exactly one
+non-independent candidate family, or fixed edge families via `copulas=`;
+with several candidate families, omit it to use family-specific itau starts.
+Internally generated itau starts are projected onto each family's MLE bounds;
+explicit `alpha0` values outside those bounds are rejected. Exact Kendall
+dependence (`tau = ±1`) is retained for selection: Gaussian starts at its
+admissible correlation bound, and bounded Archimedean families start at their
+upper parameter bound. An unbounded Archimedean itau limit is reported as a
+candidate numerical failure, rather than being replaced with an arbitrary
+finite parameter. The default pool can still select Gaussian; a pool with no
+evaluable candidate raises and preserves the previous fit. Interior itau
+mappings and public `tau_to_param` domains are unchanged. A fitted MLE point
+must pass a final native likelihood and gradient check: an optimizer's finite
+numerical-failure penalty is not accepted as a likelihood.
+Unexpected native, allocation, or configuration errors abort fitting and
+preserve any previous fitted model. A candidate's numerical failure is reported
+with a warning; if no candidate can be evaluated, fitting raises instead of
+reporting a successful independent model.
+
+`dynamic_failure_policy='fallback'` replaces an unsuccessful dynamic edge fit
+with its MLE selection result. Use `'keep'` to retain the unsuccessful dynamic
+result and its diagnostics, or `'raise'` to abort fitting while preserving any
+previous fitted model. This policy applies to fixed structures and every
+candidate in auto, beam, and multi-start structure selection. Falling back does
+not turn an unsuccessful MLE result into a successful fit.
 
 ## Goodness of fit
 
@@ -263,6 +269,11 @@ predictions = vine.predict(
 # Sample: reproduce fitted model (for parameter recovery)
 samples = vine.sample(n=10000, rng=np.random.default_rng(2024))
 ```
+
+For a vine with only built-in static MLE or independent edges, unconditional
+`predict` uses the same bounded row batches as `sample`. Static prediction
+does not compute or cache historical pseudo-observations, and static edge
+parameters remain scalar during conditional prediction.
 
 Conditional generation is supported via `given={var_index: u_value}` in
 pseudo-observation space:
@@ -295,6 +306,15 @@ For SCAR-TM edges, `predict(..., horizon='current')` uses the posterior latent
 state after the fitted history and `predict(..., horizon='next')` uses the
 one-step-ahead latent state. For SCAR-TM-OU edges, `sample` simulates
 independent OU trajectories.
+
+SCAR vines use edge-wise pseudo likelihood for fitting and likelihood
+evaluation. Each edge is optimized separately. Pseudo-observations for higher
+trees are constructed from the fitted lower-tree h-functions, using mixture
+h-functions for latent edges. `sample` reproduces the latent-trajectory vine,
+while `predict` uses edge-wise posterior or one-step predictive states from
+the observed history. The edge-wise criterion approximates the full joint
+marginal likelihood; joint latent-state optimization and filtering are outside
+this contract.
 
 For SCAR-TM predictive parameter sampling, `predictive_r_mode` may be `None`,
 `"grid"`, or `"histogram"`.

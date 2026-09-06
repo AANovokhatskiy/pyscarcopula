@@ -1,0 +1,683 @@
+name: Parallel release checks
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-gcc-py310
+            os: ubuntu-latest
+            python: "3.10"
+            cc: gcc
+            cxx: g++
+            cpp_compiler: ""
+          - name: linux-gcc-py314
+            os: ubuntu-latest
+            python: "3.14"
+            cc: gcc
+            cxx: g++
+            cpp_compiler: ""
+          - name: linux-clang-py312
+            os: ubuntu-latest
+            python: "3.12"
+            cc: clang
+            cxx: clang++
+            cpp_compiler: ""
+          - name: windows-msvc-py312
+            os: windows-latest
+            python: "3.12"
+            cc: ""
+            cxx: ""
+            cpp_compiler: ""
+          - name: windows-mingw64-py312
+            os: windows-latest
+            python: "3.12"
+            cc: gcc
+            cxx: g++
+            cpp_compiler: mingw32
+          - name: macos-arm64-clang-py312
+            os: macos-15
+            python: "3.12"
+            cc: clang
+            cxx: clang++
+            cpp_compiler: ""
+
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+
+      - name: Initialize workspace artifact root
+        shell: bash
+        env:
+          RELEASE_ARTIFACT_ROOT: >-
+            ${{ github.workspace }}/build/ci/pyscarcopula-release/${{ matrix.name }}
+        run: |
+          mkdir -p "$RELEASE_ARTIFACT_ROOT"
+          echo "RELEASE_ARTIFACT_ROOT=$RELEASE_ARTIFACT_ROOT" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Install MinGW-w64 toolchain
+        if: matrix.cpp_compiler == 'mingw32'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: Expose MinGW-w64 to setuptools
+        if: matrix.cpp_compiler == 'mingw32'
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $mingwBin = Join-Path $env:MSYS2_LOCATION "mingw64\bin"
+          $mingwBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install build and test dependencies
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          PYSCA_CPP_COMPILER: ${{ matrix.cpp_compiler }}
+          PYSCA_CPP_STRICT: "1"
+        run: >-
+          python -m pip install --upgrade pip build "setuptools>=77.0.3" wheel
+          "pybind11>=3.0.0"
+          -e ".[test]"
+
+      - name: Verify Python-free C++ build boundary
+        shell: bash
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          PYSCA_CPP_COMPILER: ${{ matrix.cpp_compiler }}
+          PYSCA_CPP_STRICT: "1"
+        run: |
+          python tools/check_cpp_architecture.py
+          python tools/check_python_ownership.py
+          python tools/build_cpp_tests.py --force -j 4 \
+            --build-dir "${{ github.workspace }}/build/ci/pyscarcopula-cpp-tests/${{ matrix.name }}"
+
+      - name: Run architecture contracts
+        run: >-
+          python -m pytest -n 4 -q
+          tests/test_cpp_architecture.py tests/test_native_benchmarks.py
+
+      - name: Build strict wheel
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          PYSCA_CPP_COMPILER: ${{ matrix.cpp_compiler }}
+          PYSCA_CPP_STRICT: "1"
+        run: >-
+          python -m pip wheel . --no-deps --no-build-isolation
+          --wheel-dir "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
+
+      - name: Install built wheel
+        shell: bash
+        run: |
+          python -m pip uninstall -y pyscarcopula
+          python -m pip install --force-reinstall \
+            "$RELEASE_ARTIFACT_ROOT"/wheelhouse/*.whl
+
+      - name: Validate wheel outside source tree
+        working-directory: ${{ github.workspace }}/build/ci
+        shell: bash
+        run: |
+          wheel=$(find "$RELEASE_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration "${{ matrix.name }}" \
+            --output "$RELEASE_ARTIFACT_ROOT/wheel_validation.json"
+
+      - name: Audit binary dependencies
+        working-directory: ${{ github.workspace }}/build/ci
+        run: >-
+          python "${{ github.workspace }}/tools/native_dependency_audit.py"
+          --output
+          "${{ env.RELEASE_ARTIFACT_ROOT }}/native_dependencies.json"
+
+      - name: Run full non-benchmark suite against wheel
+        working-directory: ${{ github.workspace }}/build/ci
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: >-
+          python -X faulthandler -m pytest "${{ github.workspace }}/tests"
+          --import-mode=importlib
+          -m "not benchmark"
+          -k "not test_documented_python_blocks_compile_import_and_bind_public_calls"
+          -vv -s --tb=long
+          -o faulthandler_timeout=120
+
+      - name: Write platform metadata
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          PYSCA_CPP_COMPILER: ${{ matrix.cpp_compiler }}
+        run: >-
+          python tools/write_release_metadata.py
+          --source-root "${{ github.workspace }}"
+          --configuration "${{ matrix.name }}"
+          --wheel-dir "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.RELEASE_ARTIFACT_ROOT }}/wheel_validation.json"
+          --test-workers 4 --build-jobs 4
+          --output "${{ env.RELEASE_ARTIFACT_ROOT }}/provenance.json"
+
+      - name: Finalize append-only platform evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.RELEASE_ARTIFACT_ROOT }}"
+          --producer "Release validation ${{ matrix.name }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-validation-${{ matrix.name }}
+          path: ${{ env.RELEASE_ARTIFACT_ROOT }}
+          if-no-files-found: error
+
+  asan-ubsan:
+    name: Linux Clang ASan and UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+      - name: Initialize workspace artifact root
+        env:
+          RELEASE_ARTIFACT_ROOT: >-
+            ${{ github.workspace }}/build/ci/pyscarcopula-release/linux-clang-asan-ubsan
+        run: |
+          mkdir -p "$RELEASE_ARTIFACT_ROOT"
+          echo "RELEASE_ARTIFACT_ROOT=$RELEASE_ARTIFACT_ROOT" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Install sanitizer build and test dependencies
+        run: |
+          python -m pip install --upgrade pip "setuptools>=77.0.3" wheel "pybind11>=3.0.0"
+          python -m pip install \
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56" \
+            "joblib>=1.0" "tqdm>=4.0" \
+            "pytest>=7.0" "pytest-xdist>=3.5" "pandas>=1.5" "mypy>=1.10"
+      - name: Run Python-free ASan and UBSan executable
+        env:
+          CC: clang
+          CXX: clang++
+          PYSCA_CPP_STRICT: "1"
+        run: >-
+          python tools/build_cpp_tests.py --force -j 4
+          --sanitize address-undefined
+          --build-dir "${{ github.workspace }}/build/ci/cpp-tests-asan-ubsan"
+      - name: Build and install external ASan and UBSan wheel
+        shell: bash
+        env:
+          CC: clang
+          CXX: clang++
+          PYSCA_CPP_SANITIZE: "1"
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip wheel . --no-deps --no-build-isolation \
+            --wheel-dir "$RELEASE_ARTIFACT_ROOT/wheelhouse"
+          python -m pip install --force-reinstall --no-deps \
+            "$RELEASE_ARTIFACT_ROOT"/wheelhouse/*.whl
+      - name: Validate installed ASan and UBSan wheel
+        working-directory: ${{ github.workspace }}/build/ci
+        shell: bash
+        env:
+          ASAN_OPTIONS: >-
+            detect_leaks=0:halt_on_error=1:abort_on_error=1:
+            strict_string_checks=1:symbolize=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          asan_path="$(clang++ -print-file-name=libclang_rt.asan-x86_64.so)"
+          export LD_PRELOAD="${asan_path}"
+          wheel=$(find "$RELEASE_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration linux-clang-asan-ubsan \
+            --output "$RELEASE_ARTIFACT_ROOT/wheel_validation.json"
+      - name: Run native parallel sanitizer suite
+        working-directory: ${{ github.workspace }}/build/ci
+        env:
+          ASAN_OPTIONS: >-
+            detect_leaks=0:halt_on_error=1:abort_on_error=1:
+            strict_string_checks=1:symbolize=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          asan_path="$(clang++ -print-file-name=libclang_rt.asan-x86_64.so)"
+          export LD_PRELOAD="${asan_path}"
+          python -m pytest --import-mode=importlib -p no:cacheprovider \
+            -vv -s --tb=long \
+            "$GITHUB_WORKSPACE/tests/test_parallel_runtime.py" \
+            "$GITHUB_WORKSPACE/tests/test_multivariate_parallelization_baselines.py" \
+            "$GITHUB_WORKSPACE/tests/test_static_parallelization.py" \
+            "$GITHUB_WORKSPACE/tests/test_sampling_parallelization.py" \
+            "$GITHUB_WORKSPACE/tests/test_external_parallel_fit.py" \
+            "$GITHUB_WORKSPACE/tests/test_equicorr_prepared.py" \
+            "$GITHUB_WORKSPACE/tests/test_linalg_backend.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_domain.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_transition.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_evaluator.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_sampling.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_operations.py" \
+            -m "not benchmark and not sanitizer_numerical" \
+            --junitxml="$RELEASE_ARTIFACT_ROOT/tests.xml"
+      - name: Write sanitizer metadata
+        env:
+          CC: clang
+          CXX: clang++
+        run: >-
+          python tools/write_release_metadata.py
+          --source-root "${{ github.workspace }}"
+          --configuration linux-clang-asan-ubsan
+          --wheel-dir "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.RELEASE_ARTIFACT_ROOT }}/wheel_validation.json"
+          --test-workers 4 --build-jobs 4
+          --output "${{ env.RELEASE_ARTIFACT_ROOT }}/provenance.json"
+      - name: Finalize append-only sanitizer evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.RELEASE_ARTIFACT_ROOT }}"
+          --producer "Release validation Linux Clang ASan UBSan"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-validation-asan-ubsan
+          path: ${{ env.RELEASE_ARTIFACT_ROOT }}
+          if-no-files-found: error
+
+  tsan:
+    name: Linux GCC ThreadSanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+      - name: Initialize workspace artifact root
+        env:
+          RELEASE_ARTIFACT_ROOT: >-
+            ${{ github.workspace }}/build/ci/pyscarcopula-release/linux-gcc-tsan
+        run: |
+          mkdir -p "$RELEASE_ARTIFACT_ROOT"
+          echo "RELEASE_ARTIFACT_ROOT=$RELEASE_ARTIFACT_ROOT" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Install ThreadSanitizer build and test dependencies
+        run: |
+          python -m pip install --upgrade pip "setuptools>=77.0.3" wheel "pybind11>=3.0.0"
+          python -m pip install \
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56" \
+            "joblib>=1.0" "tqdm>=4.0" \
+            "pytest>=7.0" "pytest-xdist>=3.5" "pandas>=1.5" "mypy>=1.10"
+      - name: Run Python-free ThreadSanitizer executable
+        env:
+          CC: gcc
+          CXX: g++
+          PYSCA_CPP_STRICT: "1"
+          TSAN_OPTIONS: >-
+            halt_on_error=1:abort_on_error=1:
+            second_deadlock_stack=1:history_size=7
+        run: >-
+          python tools/build_cpp_tests.py --force -j 4
+          --sanitize thread
+          --build-dir "${{ github.workspace }}/build/ci/cpp-tests-tsan"
+      - name: Build and install external ThreadSanitizer wheel
+        shell: bash
+        env:
+          CC: gcc
+          CXX: g++
+          PYSCA_CPP_THREAD_SANITIZE: "1"
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip wheel . --no-deps --no-build-isolation \
+            --wheel-dir "$RELEASE_ARTIFACT_ROOT/wheelhouse"
+          python -m pip install --force-reinstall --no-deps \
+            "$RELEASE_ARTIFACT_ROOT"/wheelhouse/*.whl
+      - name: Validate installed ThreadSanitizer wheel
+        working-directory: ${{ github.workspace }}/build/ci
+        shell: bash
+        env:
+          TSAN_OPTIONS: >-
+            halt_on_error=1:abort_on_error=1:
+            second_deadlock_stack=1:history_size=7
+        run: |
+          tsan_path="$(g++ -print-file-name=libtsan.so)"
+          libstdcxx_path="$(g++ -print-file-name=libstdc++.so.6)"
+          export LD_PRELOAD="${tsan_path}:${libstdcxx_path}"
+          wheel=$(find "$RELEASE_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration linux-gcc-tsan \
+            --output "$RELEASE_ARTIFACT_ROOT/wheel_validation.json"
+      - name: Run parallel race suite
+        working-directory: ${{ github.workspace }}/build/ci
+        env:
+          TSAN_OPTIONS: >-
+            halt_on_error=1:abort_on_error=1:
+            second_deadlock_stack=1:history_size=7
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          tsan_path="$(g++ -print-file-name=libtsan.so)"
+          libstdcxx_path="$(g++ -print-file-name=libstdc++.so.6)"
+          export LD_PRELOAD="${tsan_path}:${libstdcxx_path}"
+          python -m pytest --import-mode=importlib -p no:cacheprovider \
+            -vv -s --tb=long \
+            "$GITHUB_WORKSPACE/tests/test_parallel_runtime.py" \
+            "$GITHUB_WORKSPACE/tests/test_multivariate_parallelization_baselines.py" \
+            "$GITHUB_WORKSPACE/tests/test_static_parallelization.py" \
+            "$GITHUB_WORKSPACE/tests/test_sampling_parallelization.py" \
+            "$GITHUB_WORKSPACE/tests/test_external_parallel_fit.py" \
+            "$GITHUB_WORKSPACE/tests/test_equicorr_prepared.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_evaluator.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_sampling.py" \
+            -m "not benchmark and not sanitizer_numerical and not tsan_incompatible" \
+            --junitxml="$RELEASE_ARTIFACT_ROOT/tests.xml"
+      - name: Write sanitizer metadata
+        env:
+          CC: gcc
+          CXX: g++
+        run: >-
+          python tools/write_release_metadata.py
+          --source-root "${{ github.workspace }}"
+          --configuration linux-gcc-tsan
+          --wheel-dir "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.RELEASE_ARTIFACT_ROOT }}/wheel_validation.json"
+          --test-workers 4 --build-jobs 4
+          --output "${{ env.RELEASE_ARTIFACT_ROOT }}/provenance.json"
+      - name: Finalize append-only thread-sanitizer evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.RELEASE_ARTIFACT_ROOT }}"
+          --producer "Release validation Linux GCC TSan"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-validation-tsan
+          path: ${{ env.RELEASE_ARTIFACT_ROOT }}
+          if-no-files-found: error
+
+  unix-lifecycle-memory:
+    name: Unix lifecycle and memory stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+      - name: Initialize workspace artifact root
+        env:
+          RELEASE_ARTIFACT_ROOT: >-
+            ${{ github.workspace }}/build/ci/pyscarcopula-release/linux-lifecycle-memory
+        run: |
+          mkdir -p "$RELEASE_ARTIFACT_ROOT"
+          echo "RELEASE_ARTIFACT_ROOT=$RELEASE_ARTIFACT_ROOT" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Install lifecycle build and test dependencies
+        run: |
+          python -m pip install --upgrade pip "setuptools>=77.0.3" wheel "pybind11>=3.0.0"
+          python -m pip install \
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56" \
+            "joblib>=1.0" "tqdm>=4.0" \
+            "pytest>=7.0" "pytest-xdist>=3.5" "pandas>=1.5" "mypy>=1.10"
+      - name: Build and install external lifecycle wheel
+        env:
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip wheel . --no-deps --no-build-isolation \
+            --wheel-dir "$RELEASE_ARTIFACT_ROOT/wheelhouse"
+          python -m pip install --force-reinstall --no-deps \
+            "$RELEASE_ARTIFACT_ROOT"/wheelhouse/*.whl
+      - name: Validate installed lifecycle wheel
+        working-directory: ${{ github.workspace }}/build/ci
+        shell: bash
+        run: |
+          wheel=$(find "$RELEASE_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration linux-lifecycle-memory \
+            --output "$RELEASE_ARTIFACT_ROOT/wheel_validation.json"
+      - name: Build CI-only allocation probe
+        run: |
+          cc -shared -fPIC -O2 tools/allocation_probe.c \
+            -o "$RELEASE_ARTIFACT_ROOT/libpysca_alloc_probe.so"
+      - name: Run lifecycle, allocator and RSS checks
+        working-directory: ${{ github.workspace }}/build/ci
+        env:
+          PYSCA_RELEASE_STRESS_CYCLES: "100"
+          PYSCA_ALLOCATION_PROBE: ${{ env.RELEASE_ARTIFACT_ROOT }}/libpysca_alloc_probe.so
+          PYSCA_RELEASE_METRICS_OUTPUT: ${{ env.RELEASE_ARTIFACT_ROOT }}/metrics.json
+          LD_PRELOAD: ${{ env.RELEASE_ARTIFACT_ROOT }}/libpysca_alloc_probe.so
+        run: |
+          python -m pytest --import-mode=importlib -p no:cacheprovider \
+            -vv -s --tb=long --run-validation \
+            "$GITHUB_WORKSPACE/tests/test_parallel_release_validation.py" \
+            "$GITHUB_WORKSPACE/tests/test_parallel_runtime.py" \
+            --junitxml="$RELEASE_ARTIFACT_ROOT/tests.xml"
+      - name: Write lifecycle metadata
+        run: >-
+          python tools/write_release_metadata.py
+          --source-root "${{ github.workspace }}"
+          --configuration linux-lifecycle-memory
+          --wheel-dir "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.RELEASE_ARTIFACT_ROOT }}/wheel_validation.json"
+          --test-workers 4 --build-jobs 4
+          --output "${{ env.RELEASE_ARTIFACT_ROOT }}/provenance.json"
+      - name: Finalize append-only lifecycle evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.RELEASE_ARTIFACT_ROOT }}"
+          --producer "Release validation lifecycle memory"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-validation-lifecycle-memory
+          path: ${{ env.RELEASE_ARTIFACT_ROOT }}
+          if-no-files-found: error
+
+  subinterpreters:
+    name: Embedded subinterpreter rejection
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+      - name: Initialize workspace artifact root
+        env:
+          RELEASE_ARTIFACT_ROOT: >-
+            ${{ github.workspace }}/build/ci/pyscarcopula-release/subinterpreter-rejection
+        run: |
+          mkdir -p "$RELEASE_ARTIFACT_ROOT"
+          echo "RELEASE_ARTIFACT_ROOT=$RELEASE_ARTIFACT_ROOT" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Install subinterpreter build and test dependencies
+        run: |
+          python -m pip install --upgrade pip "setuptools>=77.0.3" wheel "pybind11>=3.0.0"
+          python -m pip install \
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56" \
+            "joblib>=1.0" "tqdm>=4.0" \
+            "pytest>=7.0" "pytest-xdist>=3.5" "pandas>=1.5" "mypy>=1.10"
+      - name: Build and install external subinterpreter wheel
+        env:
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip wheel . --no-deps --no-build-isolation \
+            --wheel-dir "$RELEASE_ARTIFACT_ROOT/wheelhouse"
+          python -m pip install --force-reinstall --no-deps \
+            "$RELEASE_ARTIFACT_ROOT"/wheelhouse/*.whl
+      - name: Validate installed subinterpreter wheel
+        working-directory: ${{ github.workspace }}/build/ci
+        shell: bash
+        run: |
+          wheel=$(find "$RELEASE_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration subinterpreter-rejection \
+            --output "$RELEASE_ARTIFACT_ROOT/wheel_validation.json"
+      - working-directory: ${{ github.workspace }}/build/ci
+        env:
+          PYSCA_RELEASE_METRICS_OUTPUT: ${{ env.RELEASE_ARTIFACT_ROOT }}/metrics.json
+        run: |
+          python -m pytest --import-mode=importlib -p no:cacheprovider \
+            -vv --run-validation \
+            "$GITHUB_WORKSPACE/tests/test_parallel_release_validation.py::test_subinterpreter_contract_is_immediate_rejection" \
+            --junitxml="$RELEASE_ARTIFACT_ROOT/tests.xml"
+      - name: Write subinterpreter metadata
+        run: >-
+          python tools/write_release_metadata.py
+          --source-root "${{ github.workspace }}"
+          --configuration subinterpreter-rejection
+          --wheel-dir "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.RELEASE_ARTIFACT_ROOT }}/wheel_validation.json"
+          --test-workers 4 --build-jobs 4
+          --output "${{ env.RELEASE_ARTIFACT_ROOT }}/provenance.json"
+      - name: Finalize append-only subinterpreter evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.RELEASE_ARTIFACT_ROOT }}"
+          --producer "Release validation subinterpreter rejection"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-validation-subinterpreters
+          path: ${{ env.RELEASE_ARTIFACT_ROOT }}
+          if-no-files-found: error
+
+  report:
+    name: Aggregate validation report
+    if: always()
+    needs:
+      - platform
+      - asan-ubsan
+      - tsan
+      - unix-lifecycle-memory
+      - subinterpreters
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+      - name: Initialize report path
+        env:
+          RELEASE_REPORT_ROOT: ${{ github.workspace }}/build/ci/parallel-release-validation
+        run: echo "RELEASE_REPORT_ROOT=$RELEASE_REPORT_ROOT" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: parallel-validation-*
+          path: ${{ github.workspace }}/build/ci/release-artifacts
+      - name: Reject incomplete validation matrix
+        env:
+          PLATFORM_RESULT: ${{ needs.platform.result }}
+          ASAN_RESULT: ${{ needs['asan-ubsan'].result }}
+          TSAN_RESULT: ${{ needs.tsan.result }}
+          LIFECYCLE_RESULT: ${{ needs['unix-lifecycle-memory'].result }}
+          SUBINTERPRETER_RESULT: ${{ needs.subinterpreters.result }}
+        run: |
+          python - <<'PY'
+          import os
+          results = {
+              name: os.environ[name]
+              for name in (
+                  "PLATFORM_RESULT",
+                  "ASAN_RESULT",
+                  "TSAN_RESULT",
+                  "LIFECYCLE_RESULT",
+                  "SUBINTERPRETER_RESULT",
+              )
+          }
+          print(results)
+          if set(results.values()) != {"success"}:
+              raise SystemExit("release-validation matrix is incomplete or failed")
+          PY
+      - name: Aggregate reports
+        if: ${{ !cancelled() }}
+        run: >-
+          python tools/aggregate_release_validation.py
+          --source-root "${{ github.workspace }}"
+          --artifacts "${{ github.workspace }}/build/ci/release-artifacts"
+          --json-output "${{ env.RELEASE_REPORT_ROOT }}/platform_matrix.json"
+          --markdown-output "${{ env.RELEASE_REPORT_ROOT }}/platform_matrix.md"
+          --required-configuration linux-gcc-py310
+          --required-configuration linux-gcc-py314
+          --required-configuration linux-clang-py312
+          --required-configuration windows-msvc-py312
+          --required-configuration windows-mingw64-py312
+          --required-configuration macos-arm64-clang-py312
+          --required-configuration linux-clang-asan-ubsan
+          --required-configuration linux-gcc-tsan
+          --required-configuration linux-lifecycle-memory
+          --required-configuration subinterpreter-rejection
+      - name: Publish validation summary
+        if: ${{ !cancelled() && hashFiles('build/ci/parallel-release-validation/platform_matrix.md') != '' }}
+        run: cat "$RELEASE_REPORT_ROOT/platform_matrix.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Finalize aggregated release evidence
+        if: ${{ !cancelled() && hashFiles('build/ci/parallel-release-validation/platform_matrix.json') != '' }}
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.RELEASE_REPORT_ROOT }}"
+          --producer "Release validation compiler and sanitizer matrix"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && hashFiles('build/ci/parallel-release-validation/platform_matrix.json') != '' }}
+        with:
+          name: parallel-release-validation
+          path: ${{ env.RELEASE_REPORT_ROOT }}
+          if-no-files-found: error

@@ -1,24 +1,14 @@
 import numpy as np
+from pyscarcopula._native import model_policy
+from pyscarcopula.numerical._arrays import as_float64_array
 
 from pyscarcopula.copula.base import BivariateCopula
 
 
-def _frank_bivariate_sample_from_uniforms(n, r, u0_data, v_data):
-    """Direct conditional-inversion sampling from fixed uniforms."""
-    parameter = np.asarray(r, dtype=np.float64)
-    if parameter.size == 1:
-        parameter = np.full(n, parameter[0])
-    t = np.exp(-parameter * u0_data)
-    p = np.exp(-parameter)
-    f1 = v_data * (1.0 - p)
-    f2 = t + v_data * (1.0 - t)
-    sampled = -np.log1p(-f1 / f2) / parameter
-    sampled = np.where(np.abs(f1 - f2) < 1e-9, u0_data, sampled)
-    return np.column_stack((u0_data, sampled))
-
-
 class FrankCopula(BivariateCopula):
     """Frank copula. Rotation is unsupported because it is symmetric."""
+
+    _native_pair_family = "Frank"
 
     def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         if rotate != 0:
@@ -32,28 +22,16 @@ class FrankCopula(BivariateCopula):
                 f"got '{transform_type}'"
             )
         self._transform_type = transform_type
-        upper = 20.0001 if transform_type == "logistic" else np.inf
-        self._bounds = [(0.0001, upper)]
+        self._bounds = model_policy.public_bounds(self)
 
     def tau_to_param(self, tau):
-        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        tau = np.atleast_1d(as_float64_array(tau, name="tau"))
         if np.any((tau <= 0.0) | (tau >= 1.0)):
             raise ValueError("Frank Kendall tau must be in (0, 1)")
         return self._native_adapter().tau_to_param(self, tau)
 
     def param_to_tau(self, r):
-        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        r = np.atleast_1d(as_float64_array(r, name="r"))
         if np.any(r <= 0.0):
             raise ValueError("Frank parameter must be positive")
         return self._native_adapter().param_to_tau(self, r)
-
-    def sample_at_parameter(self, n, r, rng=None):
-        if rng is None:
-            rng = np.random.default_rng()
-        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if parameter.size == 1:
-            parameter = np.full(n, parameter[0])
-        u0 = rng.uniform(0.0, 1.0, size=n)
-        v = rng.uniform(0.0, 1.0, size=n)
-        return _frank_bivariate_sample_from_uniforms(
-            n, parameter, u0, v)

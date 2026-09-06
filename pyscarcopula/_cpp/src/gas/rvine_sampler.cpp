@@ -1,11 +1,14 @@
 #include "scar/gas_rvine.hpp"
 
+#include "scar/copula/prepared_dynamic_emission.hpp"
+#include "scar/core/checked_arithmetic.hpp"
 #include "scar/rvine.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <memory>
 
 namespace scar {
 namespace {
@@ -15,9 +18,9 @@ void fail(
     int status,
     std::int64_t row,
     int edge) {
-    out.status = status;
-    out.failure_row = row;
-    out.failure_edge = edge;
+    out.status = status_from_int(status);
+    out.failure.row = row;
+    out.failure.edge = edge;
 }
 
 }  // namespace
@@ -47,8 +50,12 @@ GasRvineSampleResult gas_rvine_sample(
     }
     const std::size_t rows = static_cast<std::size_t>(n_rows);
     const std::size_t dimension = static_cast<std::size_t>(plan.dimension);
-    if (rows > std::numeric_limits<std::size_t>::max() / dimension
-        || rows > std::numeric_limits<std::size_t>::max() / edge_count) {
+    std::size_t result_size = 0;
+    std::size_t parameter_value_count = 0;
+    if (!scar_internal::checked_shape_size(
+            rows, dimension, result_size)
+        || !scar_internal::checked_shape_size(
+            rows, edge_count, parameter_value_count)) {
         fail(out, SCAR_INVALID_SIZE, -1, -1);
         return out;
     }
@@ -70,23 +77,36 @@ GasRvineSampleResult gas_rvine_sample(
     GasEvaluator evaluator;
     std::vector<double> gas_g(edge_count, 0.0);
     std::vector<double> gas_r(edge_count, 0.0);
+    std::vector<std::unique_ptr<PreparedDynamicEmission>> gas_emissions(
+        edge_count);
+    std::vector<std::unique_ptr<PreparedDynamicEmissionWorkspace>>
+        gas_workspaces(edge_count);
     for (std::size_t edge_index = 0; edge_index < edge_count; ++edge_index) {
         if (!edges[edge_index].dynamic) {
             continue;
         }
-        const GasStateResult state = evaluator.initial_state(
+        gas_emissions[edge_index] =
+            std::make_unique<PreparedDynamicEmission>(
+                edges[edge_index].copula);
+        gas_workspaces[edge_index] =
+            std::make_unique<PreparedDynamicEmissionWorkspace>(
+                gas_emissions[edge_index]->make_workspace(true));
+        const GasStateResult state = evaluator.initial_state_prepared(
             edges[edge_index].gas_params,
-            edges[edge_index].copula,
+            *gas_emissions[edge_index],
             edges[edge_index].gas_config);
-        if (state.status != SCAR_OK) {
-            fail(out, state.status, -1, static_cast<int>(edge_index));
+        if (!state.is_ok()) {
+            fail(
+                out,
+                static_cast<int>(state.status),
+                -1,
+                static_cast<int>(edge_index));
             return out;
         }
         gas_g[edge_index] = state.g;
         gas_r[edge_index] = state.parameter;
     }
 
-    const std::size_t result_size = rows * dimension;
     out.values.assign(result_size, 0.0);
     std::vector<double> nodes(
         static_cast<std::size_t>(plan.node_count),
@@ -190,15 +210,20 @@ GasRvineSampleResult gas_rvine_sample(
                 plan.update_u1_nodes[edge_index])];
             const double u2 = nodes[static_cast<std::size_t>(
                 plan.update_u2_nodes[edge_index])];
-            const GasUpdateResult update = evaluator.update_one(
+            const GasUpdateResult update = evaluator.update_one_prepared(
                 edge.gas_params,
-                edge.copula,
+                *gas_emissions[edge_index],
+                *gas_workspaces[edge_index],
                 gas_g[edge_index],
                 u1,
                 u2,
                 edge.gas_config);
-            if (update.status != SCAR_OK) {
-                fail(out, update.status, row, static_cast<int>(edge_index));
+            if (!update.is_ok()) {
+                fail(
+                    out,
+                    static_cast<int>(update.status),
+                    row,
+                    static_cast<int>(edge_index));
                 return out;
             }
             gas_g[edge_index] = update.g_next;

@@ -8,6 +8,7 @@ from pyscarcopula.vine._edge_adapter import (
     edge_has_dynamic_params,
     edge_method,
     edge_result,
+    normalize_predict_horizon,
 )
 from pyscarcopula.vine._rvine_edges import (
     _edge_initial_model_state,
@@ -15,17 +16,8 @@ from pyscarcopula.vine._rvine_edges import (
 )
 
 
-def normalize_predict_horizon(horizon):
-    """Normalize public horizon aliases to internal names."""
-    if horizon in (1, '1'):
-        return 'next'
-    if horizon in (0, '0'):
-        return 'current'
-    return str(horizon).lower()
-
-
 def predictive_state_cache_key(edge_key, horizon):
-    """Return cache key for strategy predictive state reuse."""
+    """Key a state by stable (tree, original edge index), never matrix column."""
     return 'predictive_state', edge_key, normalize_predict_horizon(horizon)
 
 

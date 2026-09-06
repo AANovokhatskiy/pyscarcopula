@@ -231,7 +231,7 @@ def test_default_operator_calls_do_not_initialize_parallel_runtime():
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import FactorCorrelation\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "op = FactorCorrelation(np.full((1024, 4), 0.01)).prepare()\n"

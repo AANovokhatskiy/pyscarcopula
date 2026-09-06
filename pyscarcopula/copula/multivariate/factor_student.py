@@ -15,7 +15,21 @@ from pyscarcopula.copula.multivariate.factor_correlation import (
     _validated_budget,
     _validated_n_threads,
 )
-from pyscarcopula.numerical._arrays import validate_integer
+from pyscarcopula.numerical._arrays import (
+    as_float64_array, as_float64_scalar, validate_integer,
+)
+
+
+def _raise_native_status(result: Mapping[str, Any], operation: str) -> None:
+    """Translate a mechanical native result at the Python adapter boundary."""
+    from pyscarcopula._native.errors import raise_for_status
+
+    raise_for_status(
+        result,
+        operation,
+        prefix="C++ factor Student",
+        failure_fields={"failure_index": "index"},
+    )
 
 
 @dataclass(frozen=True)
@@ -24,13 +38,17 @@ class FactorStudentEvaluation:
 
     log_pdf: np.ndarray
     dlog_ddf: np.ndarray
+    _log_likelihood: float
+    _dlog_likelihood_ddf: float
+    _negative_log_likelihood: float
+    _dnegative_log_likelihood_ddf: float
     diagnostics: Mapping[str, Any]
     common_df: bool
 
     @property
     def log_likelihood(self) -> float:
         """Sum the row log densities."""
-        return float(np.sum(self.log_pdf))
+        return self._log_likelihood
 
     @property
     def dlog_likelihood_ddf(self) -> float:
@@ -38,7 +56,20 @@ class FactorStudentEvaluation:
         if not self.common_df:
             raise ValueError(
                 "one aggregate df derivative requires a common scalar df")
-        return float(np.sum(self.dlog_ddf))
+        return self._dlog_likelihood_ddf
+
+    @property
+    def negative_log_likelihood(self) -> float:
+        """Return the native negative aggregate likelihood."""
+        return self._negative_log_likelihood
+
+    @property
+    def dnegative_log_likelihood_ddf(self) -> float:
+        """Return its native derivative for one common ``df``."""
+        if not self.common_df:
+            raise ValueError(
+                "one aggregate df derivative requires a common scalar df")
+        return self._dnegative_log_likelihood_ddf
 
 
 @dataclass(frozen=True)
@@ -52,6 +83,17 @@ class FactorStudentJointEvaluation:
 
 
 @dataclass(frozen=True)
+class FactorStudentParameterizedEvaluation:
+    """Native penalized objective in identifiable factor coordinates."""
+
+    objective: float
+    gradient: np.ndarray
+    loadings: np.ndarray
+    log_likelihood: float
+    diagnostics: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
 class FactorStudentGridEvaluation:
     """Immutable tiled Student log-density grid result."""
 
@@ -61,13 +103,20 @@ class FactorStudentGridEvaluation:
 
     def pdf_and_gradient(self) -> tuple[np.ndarray, np.ndarray]:
         """Convert stable log values into density and ``d pdf / d df``."""
-        density = np.exp(self.log_pdf)
-        gradient = density * self.dlog_ddf
-        if (
-                np.any(~np.isfinite(density))
-                or np.any(~np.isfinite(gradient))):
-            raise FloatingPointError(
-                "factor Student density grid overflowed; use log_pdf")
+        from pyscarcopula._native import _extension as _cpp_extension
+
+        native_result = dict(
+            _cpp_extension.load()._factor_student_density_from_log_grid(
+                self.log_pdf, self.dlog_ddf))
+        _raise_native_status(native_result, "density-grid conversion")
+        density = np.asarray(native_result["pdf"], dtype=np.float64)
+        gradient = np.asarray(
+            native_result["d_pdf_ddf"], dtype=np.float64)
+        if density.shape != self.log_pdf.shape or gradient.shape != (
+                self.log_pdf.shape):
+            raise RuntimeError(
+                "native factor Student density-grid conversion returned "
+                "invalid output")
         density.setflags(write=False)
         gradient.setflags(write=False)
         return density, gradient
@@ -92,7 +141,8 @@ class FactorStudentEvaluator:
                 "correlation must be FactorCorrelation or "
                 "PreparedFactorCorrelation")
 
-        values = np.array(observations, dtype=np.float64, order="C")
+        values = np.array(as_float64_array(observations, name="observations"),
+                          dtype=np.float64, order="C")
         if (
                 values.ndim != 2
                 or values.shape[0] < 1
@@ -133,7 +183,7 @@ class FactorStudentEvaluator:
         return self._correlation.rank
 
     def _df_values(self, df):
-        values = np.asarray(df, dtype=np.float64)
+        values = as_float64_array(df, name="df")
         common = values.ndim == 0
         if common:
             values = values.reshape(1)
@@ -150,7 +200,7 @@ class FactorStudentEvaluator:
             self, df: Any, *, n_threads: int = 1
     ) -> FactorStudentEvaluation:
         """Evaluate row log densities and analytical df derivatives."""
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         n_threads = _validated_n_threads(n_threads)
         df_values, common = self._df_values(df)
@@ -163,15 +213,28 @@ class FactorStudentEvaluator:
                 n_threads,
             )
         )
+        _raise_native_status(native_result, "row evaluation")
+        native_result.pop("status")
         log_pdf = np.asarray(
             native_result.pop("log_pdf"), dtype=np.float64)
         dlog_ddf = np.asarray(
             native_result.pop("dlog_ddf"), dtype=np.float64)
+        log_likelihood = float(native_result.pop("log_likelihood"))
+        dlog_likelihood_ddf = float(
+            native_result.pop("dlog_likelihood_ddf"))
+        negative_log_likelihood = float(
+            native_result.pop("negative_log_likelihood"))
+        dnegative_log_likelihood_ddf = float(
+            native_result.pop("dnegative_log_likelihood_ddf"))
         if (
                 log_pdf.shape != (self.n_observations,)
                 or dlog_ddf.shape != (self.n_observations,)
                 or np.any(~np.isfinite(log_pdf))
-                or np.any(~np.isfinite(dlog_ddf))):
+                or np.any(~np.isfinite(dlog_ddf))
+                or not np.isfinite(log_likelihood)
+                or not np.isfinite(dlog_likelihood_ddf)
+                or not np.isfinite(negative_log_likelihood)
+                or not np.isfinite(dnegative_log_likelihood_ddf)):
             raise RuntimeError(
                 "native factor Student evaluation returned invalid output")
         log_pdf.setflags(write=False)
@@ -187,6 +250,11 @@ class FactorStudentEvaluator:
         return FactorStudentEvaluation(
             log_pdf=log_pdf,
             dlog_ddf=dlog_ddf,
+            _log_likelihood=log_likelihood,
+            _dlog_likelihood_ddf=dlog_likelihood_ddf,
+            _negative_log_likelihood=negative_log_likelihood,
+            _dnegative_log_likelihood_ddf=
+                dnegative_log_likelihood_ddf,
             diagnostics=diagnostics,
             common_df=common,
         )
@@ -222,23 +290,89 @@ class FactorStudentEvaluator:
             self, df: float, *, n_threads: int = 1
     ) -> tuple[float, np.ndarray]:
         """Return negative likelihood and a one-element optimizer gradient."""
-        log_likelihood, gradient = self.log_likelihood_and_gradient(
-            df, n_threads=n_threads)
+        result = self.evaluate(df, n_threads=n_threads)
         return (
-            -log_likelihood,
-            np.asarray([-gradient], dtype=np.float64),
+            result.negative_log_likelihood,
+            np.asarray(
+                [result.dnegative_log_likelihood_ddf],
+                dtype=np.float64),
+        )
+
+    def penalized_parameterized_objective_and_gradient(
+            self, df, parameters, parameterization, *, penalty,
+            condition_max, n_threads=1
+    ) -> FactorStudentParameterizedEvaluation:
+        """Evaluate the joint factor objective entirely in native code."""
+        from pyscarcopula._native import _extension as _cpp_extension
+
+        df_value = as_float64_scalar(df, name="df")
+        if not np.isfinite(df_value) or df_value <= 2.0:
+            raise ValueError("df must be finite and greater than 2")
+        values = np.ascontiguousarray(
+            as_float64_array(parameters, name="factor parameters"))
+        if values.ndim != 1 or values.shape != (
+                parameterization.n_parameters,):
+            raise ValueError("factor parameters have unexpected shape")
+        n_threads = _validated_n_threads(n_threads)
+        native_result = dict(
+            _cpp_extension.load()
+            ._factor_student_penalized_parameterized_objective_gradient(
+                self._observations,
+                df_value,
+                values,
+                np.ascontiguousarray(
+                    parameterization.free_rows, dtype=np.float64),
+                np.ascontiguousarray(
+                    parameterization.free_columns, dtype=np.float64),
+                np.ascontiguousarray(
+                    parameterization.diagonal_entries, dtype=np.float64),
+                self.dimension,
+                self.rank,
+                float(parameterization.max_norm),
+                float(parameterization.uniqueness_min),
+                as_float64_scalar(condition_max, name="condition_max"),
+                as_float64_scalar(penalty, name="penalty"),
+                n_threads,
+            )
+        )
+        _raise_native_status(native_result, "parameterized objective")
+        native_result.pop("status")
+        objective = float(native_result.pop("objective"))
+        log_likelihood = float(native_result.pop("log_likelihood"))
+        gradient = np.asarray(
+            native_result.pop("gradient"), dtype=np.float64)
+        loadings = np.asarray(
+            native_result.pop("loadings"), dtype=np.float64)
+        if (
+                not np.isfinite(objective)
+                or not np.isfinite(log_likelihood)
+                or gradient.shape != (values.size + 1,)
+                or loadings.shape != (self.dimension, self.rank)
+                or np.any(~np.isfinite(gradient))
+                or np.any(~np.isfinite(loadings))):
+            raise RuntimeError(
+                "native factor Student parameterized objective returned "
+                "invalid output")
+        gradient.setflags(write=False)
+        loadings.setflags(write=False)
+        return FactorStudentParameterizedEvaluation(
+            objective=objective,
+            gradient=gradient,
+            loadings=loadings,
+            log_likelihood=log_likelihood,
+            diagnostics=MappingProxyType(native_result),
         )
 
     def joint_likelihood_and_gradient(
             self, df: float, *, n_threads: int = 1
     ) -> FactorStudentJointEvaluation:
         """Return aggregate analytical gradients for scalar ``df`` and B."""
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         if np.asarray(df).ndim != 0:
             raise ValueError(
                 "joint_likelihood_and_gradient requires a scalar df")
-        df_value = float(df)
+        df_value = as_float64_scalar(df, name="df")
         if not np.isfinite(df_value) or df_value <= 2.0:
             raise ValueError("df must be finite and greater than 2")
         n_threads = _validated_n_threads(n_threads)
@@ -251,6 +385,8 @@ class FactorStudentEvaluator:
                 n_threads,
             )
         )
+        _raise_native_status(native_result, "joint evaluation")
+        native_result.pop("status")
         log_likelihood = float(native_result.pop("log_likelihood"))
         df_gradient = float(
             native_result.pop("dlog_likelihood_ddf"))
@@ -284,7 +420,7 @@ class FactorStudentEvaluator:
         )
 
     def _grid_values(self, df_grid):
-        values = np.asarray(df_grid, dtype=np.float64)
+        values = as_float64_array(df_grid, name="df_grid")
         if values.ndim != 1 or values.shape[0] < 1:
             raise ValueError("df_grid must be a non-empty 1D array")
         if np.any(~np.isfinite(values)) or np.any(values <= 2.0):
@@ -297,7 +433,8 @@ class FactorStudentEvaluator:
             rows,
             grid_size,
             dimension_tile,
-            n_threads):
+            n_threads,
+            result_kind="log"):
         cells = rows * grid_size
         width = 4 + 2 * self.rank
         dimension_tiles = (
@@ -314,13 +451,27 @@ class FactorStudentEvaluator:
             dimension_tiles * (width * 8 + 1)
             if dimension_parallel else 0
         )
-        # Native result vectors coexist briefly with the two NumPy copies.
-        output_peak_bytes = 4 * cells * 8
-        return (
-            output_peak_bytes
-            + active_workers * worker_bytes
-            + partial_bytes
-        )
+        workspace_bytes = (
+            active_workers * worker_bytes + partial_bytes)
+        # Preserve the established conservative log-grid requirement: its
+        # binding copies and native workspace are both charged at once.
+        log_peak_bytes = 4 * cells * 8 + workspace_bytes
+        if result_kind == "log":
+            return log_peak_bytes
+        if result_kind == "density":
+            # Retained log arrays coexist with native density vectors and
+            # their two returned array copies.
+            return max(log_peak_bytes, 6 * cells * 8)
+        if result_kind == "stochastic":
+            # The transformed grid and its derivative remain alive through
+            # log evaluation and the native density/pullback conversion.
+            transformed_grid_bytes = 2 * grid_size * 8
+            return max(
+                log_peak_bytes + transformed_grid_bytes,
+                5 * cells * 8 + transformed_grid_bytes,
+                8 * cells * 8,
+            )
+        raise ValueError("unknown factor Student grid result kind")
 
     def _evaluate_grid_block(
             self,
@@ -330,7 +481,7 @@ class FactorStudentEvaluator:
             dimension_tile,
             n_threads,
             memory_budget_bytes):
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         required = self._grid_peak_bytes(
             len(observations),
@@ -354,6 +505,8 @@ class FactorStudentEvaluator:
                 n_threads,
             )
         )
+        _raise_native_status(native_result, "grid evaluation")
+        native_result.pop("status")
         log_pdf = np.asarray(
             native_result.pop("log_pdf"), dtype=np.float64)
         dlog_ddf = np.asarray(
@@ -434,13 +587,89 @@ class FactorStudentEvaluator:
             memory_budget_bytes: int | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return tiled row/grid densities and df derivatives."""
-        result = self.evaluate_grid(
-            df_grid,
+        dimension_tile = validate_integer(
+            dimension_tile, "dimension_tile", minimum=1)
+        n_threads = _validated_n_threads(n_threads)
+        grid = self._grid_values(df_grid)
+        required = self._grid_peak_bytes(
+            self.n_observations,
+            len(grid),
+            dimension_tile=dimension_tile,
+            n_threads=n_threads,
+            result_kind="density",
+        )
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "use pdf_and_grad_on_grid_batches(), reduce batch_rows, or "
+            "increase memory_budget_bytes",
+        )
+        result = self._evaluate_grid_block(
+            self._observations,
+            grid,
             dimension_tile=dimension_tile,
             n_threads=n_threads,
             memory_budget_bytes=memory_budget_bytes,
         )
         return result.pdf_and_gradient()
+
+    def stochastic_pdf_and_gradient_grid(
+            self,
+            raw_grid: Any,
+            *,
+            offset: float,
+            dimension_tile: int = 16384,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return density and d/dx for df=offset+softplus(x) natively."""
+        from pyscarcopula._native import _extension as _cpp_extension
+
+        dimension_tile = validate_integer(
+            dimension_tile, "dimension_tile", minimum=1)
+        n_threads = _validated_n_threads(n_threads)
+        grid = np.ascontiguousarray(
+            as_float64_array(raw_grid, name="raw_grid"))
+        offset = as_float64_scalar(offset, name="offset")
+        if grid.ndim != 1 or grid.shape[0] < 1:
+            raise ValueError("raw_grid must be a non-empty 1D array")
+        required = self._grid_peak_bytes(
+            self.n_observations,
+            len(grid),
+            dimension_tile,
+            n_threads,
+            result_kind="stochastic",
+        )
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "reduce the grid or increase memory_budget_bytes",
+        )
+        native_result = dict(
+            _cpp_extension.load()
+            ._factor_student_stochastic_pdf_and_grad_grid(
+                self._correlation._native,
+                self._observations,
+                grid,
+                float(offset),
+                dimension_tile,
+                n_threads,
+            )
+        )
+        _raise_native_status(
+            native_result, "stochastic density-grid evaluation")
+        density = np.asarray(
+            native_result["pdf"], dtype=np.float64)
+        gradient = np.asarray(
+            native_result["d_pdf_dx"], dtype=np.float64)
+        expected = (self.n_observations, len(grid))
+        if density.shape != expected or gradient.shape != expected:
+            raise RuntimeError(
+                "native stochastic factor Student grid returned "
+                "invalid output")
+        density.setflags(write=False)
+        gradient.setflags(write=False)
+        return density, gradient
 
     def evaluate_grid_batches(
             self,
@@ -488,8 +717,30 @@ class FactorStudentEvaluator:
             memory_budget_bytes: int | None = None
     ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """Yield bounded density/gradient grid batches."""
+        batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
+        dimension_tile = validate_integer(
+            dimension_tile, "dimension_tile", minimum=1)
+        n_threads = _validated_n_threads(n_threads)
+        grid = self._grid_values(df_grid)
+        planned_rows = (
+            batch_rows
+            if batch_rows < self.n_observations
+            else self.n_observations
+        )
+        required = self._grid_peak_bytes(
+            planned_rows,
+            len(grid),
+            dimension_tile,
+            n_threads,
+            result_kind="density",
+        )
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "reduce batch_rows or increase memory_budget_bytes",
+        )
         for result in self.evaluate_grid_batches(
-                df_grid,
+                grid,
                 batch_rows=batch_rows,
                 dimension_tile=dimension_tile,
                 n_threads=n_threads,

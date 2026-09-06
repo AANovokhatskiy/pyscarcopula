@@ -4,16 +4,32 @@ include README.md
 include ARCHITECTURE.md
 include pyproject.toml
 include tools/check_cpp_architecture.py
+include tools/check_python_ownership.py
+include tools/python_ownership_policy.py
+include tools/build_cpp_tests.py
+include tools/benchmark_timing.py
+include tools/benchmark_conditional_sampling.py
+include tools/run_native_benchmarks.py
+include tools/run_in_workspace.py
+include tools/prepare_wheel_container.py
+include benchmarks/native_performance_v3.json
 include tools/aggregate_release_validation.py
+include tools/check_repository_naming.py
 include tools/allocation_probe.c
 include tools/native_dependency_audit.py
 include tools/write_release_metadata.py
+include tools/validate_installed_wheel.py
+include tools/finalize_release_artifacts.py
 recursive-include tests *.py
+recursive-include tests/cpp *.cpp
 recursive-include tests/fixtures *.json
+include tests/conditional/support_matrix.json
+include .github/workflows/conditional-sampling.yml
 recursive-include docs *.md
 recursive-exclude data *.csv
 include data/crypto_prices.csv
-recursive-include pyscarcopula/_cpp *.cpp *.hpp
+recursive-include pyscarcopula/_cpp *.cpp *.hpp *.def
+recursive-include pyscarcopula/_cpp/build_support *.py
 
 # Exclude generated/cache files
 global-exclude __pycache__

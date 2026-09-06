@@ -1,76 +1,314 @@
-name: Build wheels
+name: Release validation release wheels
 
 on:
   push:
-    branches: [master]
+    branches: [master, dev]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build_wheels:
-    name: Build wheels on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  build_wheel:
+    name: wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        python:
+          - version: "3.10"
+            tag: cp310
+          - version: "3.11"
+            tag: cp311
+          - version: "3.12"
+            tag: cp312
+          - version: "3.13"
+            tag: cp313
+          - version: "3.14"
+            tag: cp314
+        platform:
+          - name: linux-gcc-x86_64
+            os: ubuntu-latest
+            arch: x86_64
+          - name: windows-msvc-amd64
+            os: windows-latest
+            arch: AMD64
+          - name: macos-appleclang-x86_64
+            os: macos-15-intel
+            arch: x86_64
+          - name: macos-appleclang-arm64
+            os: macos-15
+            arch: arm64
+    env:
+      RELEASE_CONFIGURATION: >-
+        wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
 
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python.version }}
 
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v3.4.1
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Create workspace artifact root
+        shell: bash
         env:
-          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"
+          RELEASE_ARTIFACT_ROOT: >-
+            ${{ github.workspace }}/build/ci/pyscarcopula-release/wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
+        run: |
+          mkdir -p "$RELEASE_ARTIFACT_ROOT"
+          echo "RELEASE_ARTIFACT_ROOT=$RELEASE_ARTIFACT_ROOT" >> "$GITHUB_ENV"
+
+      - name: Verify runner architecture
+        run: >-
+          python -c "import platform;
+          actual=platform.machine().lower();
+          expected='${{ matrix.platform.arch }}'.lower();
+          aliases={'amd64':'x86_64','aarch64':'arm64'};
+          assert aliases.get(actual,actual)==aliases.get(expected,expected),
+          (actual,expected)"
+
+      - name: Build and test one clean wheel target
+        uses: pypa/cibuildwheel@v3.4.1
+        with:
+          # The action's --output-dir argument overrides CIBW_OUTPUT_DIR.
+          output-dir: "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
+        env:
+          CIBW_BUILD: "${{ matrix.python.tag }}-*"
           CIBW_BUILD_VERBOSITY: "1"
           CIBW_SKIP: "*-musllinux_* *-win32 *-manylinux_i686"
-          CIBW_ARCHS_LINUX: "x86_64"
-          CIBW_ARCHS_WINDOWS: "AMD64"
-          CIBW_ARCHS_MACOS: "universal2"
-          CIBW_TEST_SKIP: "*-macosx_universal2:x86_64"
+          CIBW_ARCHS_LINUX: "${{ matrix.platform.arch }}"
+          CIBW_ARCHS_WINDOWS: "${{ matrix.platform.arch }}"
+          CIBW_ARCHS_MACOS: "${{ matrix.platform.arch }}"
+          CIBW_ENVIRONMENT: >-
+            PYSCA_CPP_STRICT=1 PYSCA_CPP_BUILD_JOBS=4
+          # Container paths differ from host runner paths. The project is /project.
+          CIBW_CONTAINER_ENGINE: >-
+            docker; create_args: --env TMPDIR=/project/build/ci/tmp
+          CIBW_ENVIRONMENT_LINUX: >-
+            PYSCA_CPP_STRICT=1 PYSCA_CPP_BUILD_JOBS=4
+            TMPDIR=/project/build/ci/tmp TEMP=/project/build/ci/tmp TMP=/project/build/ci/tmp
+            PIP_CACHE_DIR=/project/build/cache/pip
+            XDG_CACHE_HOME=/project/build/cache/xdg
+            PYTHONPYCACHEPREFIX=/project/build/cache/python
+            UV_CACHE_DIR=/project/build/cache/uv
+            NUMBA_CACHE_DIR=/project/build/cache/numba
+            VIRTUALENV_OVERRIDE_APP_DATA=/project/build/cache/virtualenv
+          CIBW_BEFORE_ALL_LINUX: >-
+            python "{project}/tools/prepare_wheel_container.py"
+          CIBW_BEFORE_BUILD: >-
+            python -m pip install
+            "tomli>=1.1; python_version < '3.11'" &&
+            python "{project}/tools/check_cpp_architecture.py" &&
+            python "{project}/tools/check_python_ownership.py"
           CIBW_BEFORE_TEST: >-
-            python -m pip install --prefer-binary
-            "numpy>=1.22"
-            "scipy>=1.9"
+            python -m pip install --only-binary=:all:
+            "numpy>=1.22" "scipy>=1.9"
+            "joblib>=1.0" "tqdm>=4.0"
           CIBW_TEST_COMMAND: >-
-            python -m pyscarcopula._native_smoke
+            python "{project}/tools/validate_installed_wheel.py"
+            --source-root "{project}"
+            --wheel "{wheel}"
+            --configuration
+            wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
+
+      - name: Validate wheel again in a fresh venv (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python -m venv "$PYSCA_WORKSPACE_TEMP/pyscarcopula-wheel-venv"
+          venv_python="$PYSCA_WORKSPACE_TEMP/pyscarcopula-wheel-venv/bin/python"
+          "$venv_python" -m pip install --upgrade pip
+          # Validate that runtime dependencies have wheels too (no LLVM builds).
+          "$venv_python" -m pip install --only-binary=:all: \
+            "$RELEASE_ARTIFACT_ROOT"/wheelhouse/*.whl
+          wheel=$(find "$RELEASE_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          cd "$PYSCA_WORKSPACE_TEMP"
+          "$venv_python" \
+            "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration "$RELEASE_CONFIGURATION" \
+            --output "$RELEASE_ARTIFACT_ROOT/wheel_validation.json"
+
+      - name: Validate wheel again in a fresh venv (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:PYSCA_WORKSPACE_TEMP "pyscarcopula-wheel-venv"
+          python -m venv $venv
+          $venvPython = Join-Path $venv "Scripts/python.exe"
+          & $venvPython -m pip install --upgrade pip
+          $wheelDir = Join-Path $env:RELEASE_ARTIFACT_ROOT "wheelhouse"
+          $wheel = (Get-ChildItem -LiteralPath $wheelDir -Filter *.whl -File -ErrorAction Stop).FullName
+          # Validate that runtime dependencies have wheels too (no LLVM builds).
+          & $venvPython -m pip install --only-binary=:all: $wheel
+          Set-Location $env:PYSCA_WORKSPACE_TEMP
+          $validator = Join-Path $env:GITHUB_WORKSPACE "tools/validate_installed_wheel.py"
+          $validation = Join-Path $env:RELEASE_ARTIFACT_ROOT "wheel_validation.json"
+          & $venvPython $validator --source-root $env:GITHUB_WORKSPACE --wheel $wheel --configuration $env:RELEASE_CONFIGURATION --output $validation
+
+      - name: Write source, binary and toolchain provenance
+        run: >-
+          python tools/write_release_metadata.py
+          --source-root "${{ github.workspace }}"
+          --configuration "${{ env.RELEASE_CONFIGURATION }}"
+          --wheel-dir "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.RELEASE_ARTIFACT_ROOT }}/wheel_validation.json"
+          --test-workers 4
+          --build-jobs 4
+          --output "${{ env.RELEASE_ARTIFACT_ROOT }}/provenance.json"
+
+      - name: Finalize append-only wheel evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.RELEASE_ARTIFACT_ROOT }}"
+          --producer "Release validation ${{ env.RELEASE_CONFIGURATION }}"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: wheels-${{ matrix.os }}
-          path: wheelhouse/*.whl
+          name: release-${{ env.RELEASE_CONFIGURATION }}
+          path: ${{ env.RELEASE_ARTIFACT_ROOT }}
+          if-no-files-found: error
 
   build_sdist:
-    name: Build sdist
+    name: Build and smoke-test sdist
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v6
-
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - name: Build sdist
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Build sdist in workspace
         run: |
           python -m pip install build twine
-          python -m build --sdist
-          twine check dist/*
-
-      - name: Install and smoke-test sdist
+          mkdir -p "$PYSCA_WORKSPACE_TEMP/pyscarcopula-sdist"
+          python -m build --sdist \
+            --outdir "$PYSCA_WORKSPACE_TEMP/pyscarcopula-sdist"
+          twine check "$PYSCA_WORKSPACE_TEMP"/pyscarcopula-sdist/*
+      - name: Install and smoke-test sdist outside source tree
+        working-directory: ${{ github.workspace }}/build/ci
         run: |
-          python -m pip install --force-reinstall dist/*.tar.gz
-          cd "$RUNNER_TEMP"
-          python -m pyscarcopula._native_smoke
-
+          python -m pip install --force-reinstall \
+            "$PYSCA_WORKSPACE_TEMP"/pyscarcopula-sdist/*.tar.gz
+          python -m pyscarcopula._native.smoke
+      - name: Collect conditional tests from the published source archive
+        working-directory: ${{ github.workspace }}/build/ci
+        run: |
+          python -m pip install pytest pytest-xdist pandas
+          mkdir -p "$PYSCA_WORKSPACE_TEMP/sdist-tests"
+          tar -xf "$PYSCA_WORKSPACE_TEMP"/pyscarcopula-sdist/*.tar.gz \
+            -C "$PYSCA_WORKSPACE_TEMP/sdist-tests" --strip-components=1
+          python -m pytest "$PYSCA_WORKSPACE_TEMP/sdist-tests/tests/conditional" \
+            --confcutdir="$PYSCA_WORKSPACE_TEMP/sdist-tests/tests" \
+            --import-mode=importlib --collect-only -q
+      - name: Finalize append-only sdist evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ github.workspace }}/build/ci/pyscarcopula-sdist"
+          --producer "Release validation source distribution"
       - uses: actions/upload-artifact@v7
         with:
-          name: sdist
-          path: dist/*.tar.gz
+          name: release-sdist
+          path: ${{ github.workspace }}/build/ci/pyscarcopula-sdist
+          if-no-files-found: error
+
+  minimum_build_dependencies:
+    name: Build with minimum setuptools and pybind11
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Build using the declared minimum build dependencies
+        env:
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip install "setuptools==77.0.3" "pybind11==3.0.0" wheel
+          python -m pip wheel --no-build-isolation --no-deps . \
+            --wheel-dir "$PYSCA_WORKSPACE_TEMP/minimum-wheel"
+      - name: Install and smoke-test the minimum-dependency wheel
+        working-directory: ${{ github.workspace }}/build/ci
+        run: |
+          python -m pip install "$PYSCA_WORKSPACE_TEMP"/minimum-wheel/*.whl
+          python -m pyscarcopula._native.smoke
+
+  report:
+    name: Aggregate complete wheel matrix
+    if: always()
+    needs: [build_wheel]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+      - name: Initialize report path
+        env:
+          RELEASE_REPORT_ROOT: ${{ github.workspace }}/build/ci/pyscarcopula-release-report
+        run: echo "RELEASE_REPORT_ROOT=$RELEASE_REPORT_ROOT" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-wheel-*
+          path: ${{ github.workspace }}/build/ci/pyscarcopula-release-downloaded
+      - name: Aggregate and reject incomplete CPython/platform matrix
+        run: |
+          python tools/aggregate_release_validation.py \
+            --source-root "$GITHUB_WORKSPACE" \
+            --artifacts "$PYSCA_WORKSPACE_TEMP/pyscarcopula-release-downloaded" \
+            --json-output "$RELEASE_REPORT_ROOT/platform_matrix.json" \
+            --markdown-output "$RELEASE_REPORT_ROOT/platform_matrix.md" \
+            --required-configuration wheel-linux-gcc-x86_64-cp310 \
+            --required-configuration wheel-linux-gcc-x86_64-cp311 \
+            --required-configuration wheel-linux-gcc-x86_64-cp312 \
+            --required-configuration wheel-linux-gcc-x86_64-cp313 \
+            --required-configuration wheel-linux-gcc-x86_64-cp314 \
+            --required-configuration wheel-windows-msvc-amd64-cp310 \
+            --required-configuration wheel-windows-msvc-amd64-cp311 \
+            --required-configuration wheel-windows-msvc-amd64-cp312 \
+            --required-configuration wheel-windows-msvc-amd64-cp313 \
+            --required-configuration wheel-windows-msvc-amd64-cp314 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp310 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp311 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp312 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp313 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp314 \
+            --required-configuration wheel-macos-appleclang-arm64-cp310 \
+            --required-configuration wheel-macos-appleclang-arm64-cp311 \
+            --required-configuration wheel-macos-appleclang-arm64-cp312 \
+            --required-configuration wheel-macos-appleclang-arm64-cp313 \
+            --required-configuration wheel-macos-appleclang-arm64-cp314
+      - name: Finalize platform-matrix evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.RELEASE_REPORT_ROOT }}"
+          --producer "Release validation complete wheel matrix"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-platform-matrix
+          path: ${{ env.RELEASE_REPORT_ROOT }}
+          if-no-files-found: error

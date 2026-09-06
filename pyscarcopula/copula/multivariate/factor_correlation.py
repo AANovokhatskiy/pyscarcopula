@@ -11,20 +11,20 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from pyscarcopula.numerical._arrays import validate_integer
+from pyscarcopula._native.threads import validate_n_threads
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_float64_scalar,
+    validate_float64_allocation,
+    validate_integer,
+)
 
 
 FACTOR_CORRELATION_FORMAT_VERSION = 1
 
 
 def _validated_n_threads(value):
-    if isinstance(value, (bool, np.bool_)) or not isinstance(
-            value, (int, np.integer)):
-        raise ValueError("n_threads must be an integer in [1, 256]")
-    value = int(value)
-    if value < 1 or value > 256:
-        raise ValueError("n_threads must be an integer in [1, 256]")
-    return value
+    return validate_n_threads(value)
 
 
 def _validated_budget(memory_budget_bytes, required, guidance):
@@ -36,6 +36,22 @@ def _validated_budget(memory_budget_bytes, required, guidance):
         raise TypeError("memory_budget_bytes must be an integer")
     if int(memory_budget_bytes) < required:
         raise MemoryError(f"operation requires {required} bytes; {guidance}")
+
+
+def _validate_dense_materialization(
+        dimension, *, max_dimension=2048, memory_budget_bytes=None):
+    """Guard the dense output allocation for factor and stored correlations."""
+    max_dimension = validate_integer(
+        max_dimension, "max_dimension", minimum=1)
+    if dimension > max_dimension:
+        raise MemoryError(
+            f"dense correlation is disabled for dimension "
+            f"{dimension}; increase max_dimension explicitly")
+    validate_float64_allocation(
+        (dimension, dimension),
+        name="dense correlation",
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
 
 def _metadata(factor: "FactorCorrelation") -> dict[str, Any]:
@@ -68,11 +84,15 @@ class FactorCorrelation:
             raise ValueError(
                 f"unsupported factor-correlation format version "
                 f"{self.format_version}")
-        if not np.isfinite(self.uniqueness_min) or not (
-                0.0 < self.uniqueness_min < 1.0):
+        uniqueness_min = as_float64_scalar(
+            self.uniqueness_min, name="uniqueness_min")
+        if not np.isfinite(uniqueness_min) or not (
+                0.0 < uniqueness_min < 1.0):
             raise ValueError(
                 "uniqueness_min must be finite and in (0, 1)")
 
+        # Validate before casting while retaining mmap ownership on borrowed data.
+        as_float64_array(self.loadings, name="loadings")
         convert = np.array if _copy_arrays else np.asanyarray
         loadings = convert(self.loadings, dtype=np.float64)
         if (
@@ -87,12 +107,18 @@ class FactorCorrelation:
         if not np.all(np.isfinite(loadings)):
             raise ValueError("loadings must contain only finite values")
 
-        uniqueness = 1.0 - np.einsum(
-            "ij,ij->i", loadings, loadings, optimize=False)
-        if np.any(uniqueness < self.uniqueness_min):
+        from pyscarcopula._native import multivariate as multivariate_native
+        try:
+            validated_loadings, uniqueness = (
+                multivariate_native.factor_correlation_from_loadings(
+                    loadings, self.uniqueness_min)
+            )
+        except ValueError as exc:
             raise ValueError(
                 "each loading row must satisfy "
-                "1 - squared_norm >= uniqueness_min")
+                "1 - squared_norm >= uniqueness_min") from exc
+        if _copy_arrays:
+            loadings = validated_loadings
         loadings.setflags(write=False)
         uniqueness.setflags(write=False)
         object.__setattr__(self, "loadings", loadings)
@@ -130,7 +156,7 @@ class FactorCorrelation:
             *,
             uniqueness_min: float = 1e-8) -> "FactorCorrelation":
         """Map arbitrary finite rows into the valid factor-correlation set."""
-        unconstrained = np.asarray(values, dtype=np.float64)
+        unconstrained = as_float64_array(values, name="values")
         if (
                 unconstrained.ndim != 2
                 or unconstrained.shape[0] < 2
@@ -140,49 +166,17 @@ class FactorCorrelation:
             raise ValueError(
                 "unconstrained values must have shape (d, k), "
                 "1 <= k < d, and be finite")
+        uniqueness_min = as_float64_scalar(
+            uniqueness_min, name="uniqueness_min")
         if not np.isfinite(uniqueness_min) or not (
                 0.0 < float(uniqueness_min) < 1.0):
             raise ValueError(
                 "uniqueness_min must be finite and in (0, 1)")
-        row_scale = np.max(np.abs(unconstrained), axis=1)
-        scaled = np.divide(
-            unconstrained,
-            row_scale[:, None],
-            out=np.zeros_like(unconstrained),
-            where=row_scale[:, None] > 0.0,
-        )
-        scaled_norms_squared = np.einsum(
-            "ij,ij->i", scaled, scaled, optimize=False)
-        inverse_scale = np.divide(
-            1.0,
-            row_scale,
-            out=np.zeros_like(row_scale),
-            where=row_scale > 0.0,
-        )
-        inverse_scale_squared = inverse_scale * inverse_scale
-        denominator = np.sqrt(
-            scaled_norms_squared + inverse_scale_squared)
-        loadings = np.divide(
-            scaled,
-            denominator[:, None],
-            out=np.zeros_like(scaled),
-            where=denominator[:, None] > 0.0,
-        )
-        max_norm = np.sqrt(np.nextafter(
-            1.0 - float(uniqueness_min), 0.0))
-        norms = np.sqrt(np.einsum(
-            "ij,ij->i", loadings, loadings, optimize=False))
-        scale = np.minimum(
-            1.0,
-            np.divide(
-                max_norm,
-                norms,
-                out=np.ones_like(norms),
-                where=norms > 0.0,
-            ),
-        )
+        from pyscarcopula._native import multivariate as multivariate_native
+        loadings = multivariate_native.factor_correlation_from_unconstrained(
+            unconstrained, uniqueness_min)
         return cls(
-            loadings=loadings * scale[:, None],
+            loadings=loadings,
             uniqueness_min=uniqueness_min,
             diagnostics={"source": "unconstrained_row_transform"},
         )
@@ -197,21 +191,14 @@ class FactorCorrelation:
             max_dimension: int = 2048,
             memory_budget_bytes: int | None = None) -> np.ndarray:
         """Explicitly materialize ``R`` for small diagnostic problems."""
-        max_dimension = validate_integer(
-            max_dimension, "max_dimension", minimum=1)
-        required = self.dimension * self.dimension * 8
-        if self.dimension > max_dimension:
-            raise MemoryError(
-                f"dense correlation is disabled for dimension "
-                f"{self.dimension}; increase max_dimension explicitly")
-        _validated_budget(
-            memory_budget_bytes,
-            required,
-            "increase memory_budget_bytes or use prepare()",
+        _validate_dense_materialization(
+            self.dimension,
+            max_dimension=max_dimension,
+            memory_budget_bytes=memory_budget_bytes,
         )
-        dense = self.loadings @ self.loadings.T
-        dense.flat[::self.dimension + 1] += self.uniqueness
-        return dense
+        from pyscarcopula._native import multivariate as multivariate_native
+        return multivariate_native.factor_correlation_to_dense(
+            self.loadings, self.uniqueness)
 
     def save_npz(self, path: str | Path) -> Path:
         """Write the compact factor representation."""
@@ -273,7 +260,7 @@ class PreparedFactorCorrelation:
     def __init__(self, factor: FactorCorrelation) -> None:
         if not isinstance(factor, FactorCorrelation):
             raise TypeError("factor must be a FactorCorrelation")
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         native = _cpp_extension.load()._FactorCorrelationOperator(
             factor.loadings,
@@ -323,7 +310,7 @@ class PreparedFactorCorrelation:
         return float(self._native.logdet)
 
     def _rows(self, values):
-        array = np.asarray(values, dtype=np.float64)
+        array = as_float64_array(values, name="values")
         squeeze = array.ndim == 1
         if squeeze:
             array = array[None, :]
@@ -427,8 +414,8 @@ class PreparedFactorCorrelation:
         factor distributions whose factor draws have a non-identity small
         covariance.
         """
-        factors = np.asarray(factor_draws, dtype=np.float64)
-        residuals = np.asarray(residual_draws, dtype=np.float64)
+        factors = as_float64_array(factor_draws, name="factor_draws")
+        residuals = as_float64_array(residual_draws, name="residual_draws")
         if (
                 factors.ndim != 2
                 or factors.shape[1] != self.rank):

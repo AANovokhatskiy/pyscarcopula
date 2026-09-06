@@ -374,7 +374,7 @@ def test_default_factor_sampling_does_not_initialize_native_pool():
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import StochasticStudentCopula\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "cop = StochasticStudentCopula("

@@ -64,8 +64,17 @@ copula parameter domain with smooth links:
 - equicorrelation Gaussian dependence uses a dimension-aware bounded link
   into $(-1/(d-1),1)$;
 - Student degrees of freedom use
-  $\nu_t=2+10^{-6}+\log(1+\exp(x_t))$ so the fitted copula has finite
-  variance.
+  $\nu_t=2+10^{-6}+\log(1+\exp(x_t))$ so the underlying Student distribution has finite
+  variance. Copula uniforms are bounded independently of this restriction.
+
+Softplus evaluation preserves the arithmetic used in version 0.20.1 so that
+numerical optimizer trajectories remain reproducible. It uses the linear
+tail above 20 and the exponential tail below -20; these approximations have
+absolute error at most $e^{-20}$ and small jumps at the thresholds. Its
+inverse uses $\log(y)$ below $10^{-8}$, with absolute latent error below
+$5\times10^{-9}$. The branches avoid exponential overflow. Replacing these
+expressions with algebraically equivalent formulas can change fitted GAS
+parameters through finite-difference rounding.
 
 Some bivariate copulas can also use the `xtanh` transform. It is a valid
 forward transform for fitting, but its positive-branch inverse is only an
@@ -110,9 +119,10 @@ s_t =
 \frac{\partial \log c(u_t;\Psi(g_t))}{\partial g_t}.
 $$
 
-Fisher scaling rescales this score by a curvature estimate. It combines
-finite-difference curvature, clipping, and floors inside the recursion.
-`scaling='unit'` avoids those nested numerical operations and is the baseline
+Fisher scaling rescales this analytical copula score by a finite-difference
+curvature estimate. It combines that curvature, clipping, and floors inside
+the recursion.
+`scaling='unit'` avoids the numerical curvature rescaling and is the baseline
 used by the fitting guide.
 
 The compiled GAS evaluator handles likelihood, score recursion, filtering,
@@ -164,6 +174,39 @@ trajectory averaging.
 
 Here $p_0$ is the stationary OU density,
 $N(\mu,\nu^2/(2\kappa))$.
+
+### Stochastic Student single-start initialization
+
+The default start retains the static degrees-of-freedom MLE as the latent
+mean and the existing target OU autocorrelation policy for kappa. It chooses
+one stationary scale from the local variance score, with no dynamic
+likelihood screening or multiple optimizer starts. Let
+$\ell_t(x)=\log c(u_t;\Psi(x))$, $s_t=\ell'_t(\mu)$,
+$h_t=\ell''_t(\mu)$, and $C_{ij}=\rho^{|i-j|}$. At zero stationary
+variance $v$, the marginal log-likelihood derivative is
+
+$$
+Q=\left.\partial_v\log L\right|_{v=0}
+ =\tfrac12\left(s^\top C s+\sum_t h_t\right).
+$$
+
+Three native row-density evaluations at the static mean and a symmetric
+finite-difference stencil supply these derivatives. A native O(T) recurrence
+computes Q and the Gaussian local-information proxy
+$F=\tfrac12 I^2\operatorname{tr}(C^2)$, where $I=T^{-1}\sum_t s_t^2$.
+The starting variance is $\max(F^{-1/2},Q/F)$, and its square root is
+bounded to [0.01, 2], as in the pair initializer's stationary-scale range.
+For zero information, the bounded interior scale is 2. The upper bound is a
+numerical starting safeguard, not an estimate or parameter-space restriction.
+The likelihood and subsequent optimizer remain unchanged.
+
+The $F^{-1/2}$ variance floor represents one local standard error. It avoids a
+vanishing gradient in log stationary scale even when the data do not support
+latent variation, and decreases with sample information. Q and F are
+initialization diagnostics, not a calibrated test of dynamics. On static data,
+the optimizer may need more iterations to return toward zero variance. The
+finite-difference approximation and Gaussian information proxy do not certify
+global optimality; an explicit user start still takes precedence.
 
 ### OU Backends
 
@@ -283,9 +326,14 @@ the central point is held fixed across setup finite differences, and the
 ordinary likelihood is independently recomputed at the final optimizer point
 before a fit can be reported as successful.
 
-The numerical boundary validates non-empty bivariate observations, finite
+The numerical boundary validates finite bivariate observations in `[0, 1]`, finite
 physical initialization (`kappa > 0`, `0 < m < 1`, `xi > 0`), and strict
-integer quadrature orders. Jacobi workspaces are preflighted before root
+integer quadrature orders. Fitting requires at least two observations to define
+`dt = 1 / (T - 1)`; a one-row prepared evaluator can condition an existing
+state without a transition. State atoms must be strictly increasing in
+`[0, 1]`, with finite nonnegative masses and a finite positive total.
+Conditioning and state sampling accept unnormalized masses and preserve their
+distribution under common positive scaling. Jacobi workspaces are preflighted before root
 construction and matrix allocation. A hard order cap prevents accidental
 multi-gigabyte quadratic requests; `memory_budget_bytes` can impose a smaller
 application-specific limit.
@@ -356,13 +404,14 @@ beta law. This path is an approximate sampling oracle only: likelihood,
 gradient, filtering, and prediction continue to use their configured
 transition backend.
 
-The optimized implementation keeps this recursion in a strictly sequential
-Numba kernel. `parallel=True` is forbidden because it would violate the causal
-state update. The kernel never owns an RNG: Python draws stationary beta and
-Gaussian values from the supplied `numpy.random.Generator`, passes Gaussian
-values in complete-interval chunks, and carries the final transformed state
-between chunks. Python and Numba executions must agree pathwise on identical
-innovations, including intervention counts.
+The implementation keeps this recursion in a strictly sequential native C++
+kernel; updates cannot run in parallel because each depends on the previous
+state. The kernel never owns an RNG: Python draws stationary beta and Gaussian
+values from the supplied `numpy.random.Generator`, passes Gaussian values in
+complete-interval chunks, and carries the final transformed state between
+chunks. Chunk partitions must agree pathwise on identical innovations,
+including intervention counts. Legacy `numba` and `python` engine labels are
+aliases for `native`, not separate execution paths.
 
 Stationary shapes below one are reported by
 `stationary_boundary_singular=True`. This is a diagnostic, not an accuracy
@@ -387,6 +436,65 @@ and projects to a valid SPD correlation when necessary. These plug-in
 correlations are counted in AIC/BIC because they are estimated from the same
 sample, even though they are absent from the optimizer vector.
 
+Each static fit recomputes data-derived correlations and factor initializations
+from its current observations. Only constructor-supplied `R`, `corr_base`, or
+`factor_loadings` are reused. Rejected MLE candidates are returned for inspection
+without replacing the accepted result or training data, including through
+`api.fit`. `api.log_likelihood(model, data, result)` evaluates the correlation
+and scalar parameter captured in `result`, even after the model is refitted.
+`api.sample` and `api.predict`, including `given` conditioning, likewise use
+the explicitly supplied static result. They reconstruct independent sampling
+state without changing the prototype; factor results remain compact. Reusing
+the same result and RNG seed therefore reproduces draws after a prototype refit.
+
+The public `mlog_likelihood(alpha, u, method="mle")` evaluates the current
+correlation without modifying fitted state. Gaussian accepts an empty `alpha`
+vector; Student accepts exactly one finite natural degrees-of-freedom value
+greater than two.
+Correlation optimizer coordinates belong to `fit` and are rejected by this
+scalar objective interface. `NumericalConfig.n_threads` reaches the native
+objective evaluator. Student also accepts `log_likelihood(u, parameter=df)`,
+consistent with `log_pdf_rows(u, parameter=df)`; omitting `parameter` uses fitted
+`df`. Both families reject unsupported `log_pdf_rows` keywords. Gaussian has no
+scalar parameter path, so `api.predictive_mean` raises `NotImplementedError`;
+Student returns its constant fitted `df` path.
+
+Student object `sample`, `sample_conditional`, and `predict` use the accepted
+typed result when one is attached, including its compact factor loadings.
+Changing or clearing the model's mutable `df` or `shape` does not replace that
+sampling state. Without a typed result, manually initialized `shape`/`df` or
+factor state remains usable. The `shape` setter accepts only real SPD
+correlation matrices of the model's dimension; invalid assignments leave the
+previous matrix unchanged. Likelihood operations retain the current-state
+semantics described above.
+
+For both static families, `to_correlation_matrix` enforces `max_dimension` and
+`memory_budget_bytes` before returning a dense copy or materializing a factor
+correlation. The memory limit covers the returned float64 matrix.
+
+Object `predict` (and Gaussian `predict_batches`) validates the same prediction
+options as `api.predict`, including rejecting active vine-only controls.
+Valid `current` and `next` horizons have the same static distribution.
+Gaussian `api.sample` and `api.predict` forward `memory_budget_bytes` to the
+object sampler for both unconditional and conditional draws: dense budgets
+cover output, while factor budgets also cover workspace. Static Student API
+sampling retains its output allocation guard. A non-default `factor_estimation`
+requires factor mode; prepared pair evaluators cannot be supplied to multivariate
+MLE fitting through `_prepared_evaluator`.
+
+Observation and loading preparation rejects complex values before float64
+conversion, including streamed equicorrelation statistics and factor
+initialization. A discarded imaginary component is not an accepted coercion.
+The shared `numerical._arrays.as_float64_array` and `as_float64_scalar`
+normalizers enforce this representation contract, including complex values
+stored in object arrays and values with zero imaginary parts. Scalar likelihood
+parameters accept real scalars and zero-dimensional arrays, but not vectors.
+Scalar normalization does not impose finiteness or model-specific bounds;
+the existing model/native validators and optimizer failure policies own those
+rules. Adapters must normalize user inputs before any `float()` or float64
+cast that could discard an imaginary component. Output conversion of values
+already returned by native code does not require input validation.
+
 `shrinkage` uses
 
 $$R(\alpha)=\alpha R_0 + (1-\alpha)I,\qquad 0<\alpha<1,$$
@@ -397,13 +505,15 @@ optimizes them. The latter is intended for small $d$. Factor mode represents
 
 $$R=D+BB^\top,\qquad D_{ii}=1-\lVert B_{i\cdot}\rVert^2,$$
 
-with identifiable count $dk-k(k-1)/2$. Two-stage factor fits count the
-estimated loadings as plug-in parameters. Joint static Student factor fitting
-optimizes `df` and identified loadings together; Gaussian factor fitting is
-two-stage.
+with generic correlation dimension $\min(dk-k(k-1)/2, d(d-1)/2)$.
+Two-stage factor fits count this dimension as plug-in parameters. Joint static
+Student factor fitting optimizes `df` and rotation-anchored loadings together;
+it requires $d \ge 2k+1$, a sufficient regime for generic identifiability.
+This does not guarantee identification at singular loading configurations.
+Gaussian factor fitting is two-stage.
 
 Consequently, with $q=d(d-1)/2$ and
-$f=dk-k(k-1)/2$, the effective counts are:
+$f=\min(dk-k(k-1)/2,q)$, the effective counts are:
 
 | Correlation policy | Gaussian | Student |
 |---|---:|---:|

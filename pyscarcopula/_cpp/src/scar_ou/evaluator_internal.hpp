@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scar/core/result.hpp"
 #include "scar/ou.hpp"
 
 #include <cstddef>
@@ -8,8 +9,13 @@
 
 namespace scar::evaluator_detail {
 
-const double* observation_data(const CopulaSpec& copula, ObservationView u);
-bool supported_ou_copula(const CopulaSpec& copula);
+const double* observation_data(
+    const PreparedDynamicEmission& emission,
+    ObservationView u);
+Result<std::size_t> rosenblatt_output_size(
+    ObservationView u,
+    int expected_dimension) noexcept;
+bool supported_ou_copula(const PreparedDynamicEmission& emission);
 bool valid_ou_params(const OuParams& params);
 bool finite_config_doubles(const OuNumericalConfig& config);
 bool valid_grid_config(
@@ -20,7 +26,7 @@ bool adaptive_grid_exceeds_limit(
     const OuParams& params,
     std::int64_t n_obs,
     const OuNumericalConfig& config);
-bool recoverable_numerical_status(int status);
+bool recoverable_numerical_status(Status status);
 bool auto_loglik_accepted(const LogLikResult& result);
 bool auto_grad_accepted(const GradLogLikResult& result);
 LogLikResult invalid_loglik(int status, OuBackend backend);

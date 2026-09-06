@@ -1,4 +1,4 @@
-"""Regressions found by the independent parallelization-plan audit."""
+"""Parallelization correctness and resource regressions."""
 
 import numpy as np
 import pytest
@@ -22,11 +22,8 @@ def _student_models():
     )
 
 
-def test_equicorr_conditional_never_requests_a_dense_matrix(monkeypatch):
-    def reject_dense(*args, **kwargs):
-        raise AssertionError("dense equicorrelation matrix requested")
-
-    monkeypatch.setattr(conditional, "equicorr_matrix", reject_dense)
+def test_equicorr_conditional_never_requests_a_dense_matrix():
+    assert not hasattr(conditional, "equicorr_matrix")
     model = EquicorrGaussianCopula(10_000)
     samples = model.sample_conditional(
         2,
@@ -56,7 +53,8 @@ def test_equicorr_dense_mle_result_stays_scalar_and_compact():
 def test_equicorr_failed_refit_preserves_previous_training_state():
     model = EquicorrGaussianCopula(3)
     u = np.random.default_rng(8103).uniform(0.05, 0.95, size=(30, 3))
-    result = model.fit(u, method="mle", maxiter=3)
+    result = model.fit(u, method="mle")
+    assert result.success
     previous_u = model._last_u
 
     with pytest.raises(ValueError, match="finite"):

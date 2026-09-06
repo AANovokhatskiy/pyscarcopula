@@ -1,12 +1,11 @@
 """Numerical kernel regression tests."""
+import warnings
+
 import numpy as np
 import pytest
 
-from pyscarcopula._utils import pobs
-from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.numerical.hermite_tm import standard_normal_hermite_rule
 from pyscarcopula.numerical.jacobi_tm import jacobi_rule
-from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
     as_pseudo_observation_array,
@@ -15,12 +14,8 @@ from pyscarcopula.numerical._arrays import (
     validate_sampling_n_threads,
 )
 from pyscarcopula.numerical.ou_kernels import (
-    calculate_dwt,
-    ou_init_state,
-    ou_sample_paths,
-    ou_sample_paths_exact,
-    ou_stationary_state_from_dwt,
     sample_ou_trajectory,
+    sample_ou_trajectory_batches,
 )
 
 
@@ -37,6 +32,22 @@ def test_array_normalization_rejects_complex_values_without_lossy_cast():
 
     with pytest.raises(TypeError, match="real values"):
         as_float64_array(values, name="observations")
+
+
+@pytest.mark.parametrize("scalar", [complex, np.complex64, np.complex128])
+@pytest.mark.parametrize("imaginary", [0.0, 1.0])
+def test_array_normalization_rejects_complex_object_scalars(scalar, imaginary):
+    values = np.array([scalar(0.5 + imaginary * 1j)], dtype=object)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match="real values"):
+            as_float64_array(values, name="observations")
+    assert not caught
+
+
+def test_array_normalization_preserves_real_object_coercion():
+    values = np.array([np.float32(0.5), 1, "0.25"], dtype=object)
+    np.testing.assert_array_equal(as_float64_array(values), [0.5, 1.0, 0.25])
 
 
 def test_pseudo_observation_validation_is_reusable_and_boundary_aware():
@@ -79,19 +90,6 @@ def test_sampling_memory_budget_preserves_error_message_and_boundaries():
         validate_sampling_memory_budget(63, 64, "reduce n")
 
 
-def test_ou_sample_paths_zero_aux_matches_exact_kernel():
-    T, n_tr = 30, 5
-    kappa, mu, nu = 1.4, 0.2, 0.9
-    dwt = calculate_dwt(T, n_tr, seed=7)
-    x0 = ou_init_state(mu, n_tr)
-    zeros = np.zeros(T)
-
-    exact = ou_sample_paths_exact(kappa, mu, nu, dwt, x0)
-    via_eis = ou_sample_paths(kappa, mu, nu, zeros, zeros, dwt, x0)
-
-    np.testing.assert_allclose(via_eis, exact, rtol=0.0, atol=0.0)
-
-
 @pytest.mark.parametrize("n", [1, 2, 17, 1000, 10001])
 def test_sample_ou_trajectory_preserves_scalar_rng_contract(n):
     kappa, mu, nu = 1.4, 0.2, 0.9
@@ -113,6 +111,21 @@ def test_sample_ou_trajectory_preserves_scalar_rng_contract(n):
 
     actual = sample_ou_trajectory(kappa, mu, nu, n, actual_rng)
 
+    # NumPy and native libm/FMA rounding can accumulate over 10,001 steps
+    # (about 6.2e-14 absolute on macOS arm64). RNG consumption remains exact.
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=1e-13)
+    np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
+
+
+@pytest.mark.parametrize("n,batch_rows", [(1, 1), (17, 1), (17, 7), (10001, 256)])
+def test_sample_ou_trajectory_batches_preserve_exact_path_and_rng(n, batch_rows):
+    expected_rng = np.random.default_rng(20260803)
+    actual_rng = np.random.default_rng(20260803)
+    expected = sample_ou_trajectory(1.4, 0.2, 0.9, n, expected_rng)
+    actual = np.concatenate(list(sample_ou_trajectory_batches(
+        1.4, 0.2, 0.9, n, actual_rng, batch_rows=batch_rows)))
+
+    # Both paths use the same native arithmetic: bitwise equality is required.
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
 
@@ -138,23 +151,76 @@ def test_sample_ou_trajectory_rejects_invalid_size(n, error):
             1.4, 0.2, 0.9, n, np.random.default_rng(20260724))
 
 
-def test_stationary_state_is_deterministic_from_dwt():
-    dwt = calculate_dwt(20, 10, seed=123)
+@pytest.mark.parametrize("n", [1, 17, 10001])
+def test_ou_sampling_uses_only_raw_normal_draws(monkeypatch, n):
+    class RawNormalRng:
+        def __init__(self):
+            self.calls = []
 
-    x0_a = ou_stationary_state_from_dwt(1.2, 0.5, 0.7, dwt)
-    x0_b = ou_stationary_state_from_dwt(1.2, 0.5, 0.7, dwt)
+        def standard_normal(self, size):
+            self.calls.append(size)
+            return np.zeros(size)
 
-    np.testing.assert_allclose(x0_a, x0_b, rtol=0.0, atol=0.0)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Python OU parameter arithmetic was called")
+
+    monkeypatch.setattr(np, "exp", forbidden)
+    monkeypatch.setattr(np, "sqrt", forbidden)
+    rng = RawNormalRng()
+    result = sample_ou_trajectory(1.4, 0.2, 0.9, n, rng)
+    np.testing.assert_array_equal(result, np.full(n, 0.2))
+    assert rng.calls == [n]
 
 
-def test_p_sampler_loglik_is_deterministic_for_fixed_dwt():
-    u = pobs(np.random.default_rng(1).standard_normal((40, 2)))
-    dwt = calculate_dwt(40, 300, seed=123)
-    cop = GumbelCopula(rotate=180)
+def test_ou_sampling_does_not_swallow_native_failure(monkeypatch):
+    from pyscarcopula._native import _extension
+    from pyscarcopula._native.errors import NativeUnsupported
 
-    vals = [
-        p_sampler_loglik(1.2, 0.5, 0.7, u, dwt, cop, True)
-        for _ in range(3)
-    ]
+    def unsupported(*args, **kwargs):
+        raise NativeUnsupported("sentinel OU sampling failure")
 
-    np.testing.assert_allclose(vals, vals[0], rtol=0.0, atol=0.0)
+    monkeypatch.setattr(_extension.load(), "ou_sample_trajectory", unsupported)
+    with pytest.raises(NativeUnsupported, match="sentinel OU sampling failure"):
+        sample_ou_trajectory(1.4, 0.2, 0.9, 3, np.random.default_rng(1))
+
+
+@pytest.mark.parametrize("params", [(-1., .2, .9), (0., .2, .9),
+                                    (1.4, np.nan, .9), (1.4, .2, -1.),
+                                    (1.4, .2, 1e300)])
+def test_invalid_ou_parameters_do_not_advance_rng(params):
+    rng, reference = np.random.default_rng(51), np.random.default_rng(51)
+    with pytest.raises(ValueError):
+        sample_ou_trajectory(*params, 17, rng)
+    np.testing.assert_array_equal(rng.random(8), reference.random(8))
+
+
+@pytest.mark.parametrize("quad_order,basis_order", [(8, 4), (48, 16), (80, 32)])
+def test_hermite_rule_matches_independent_scipy_rule(quad_order, basis_order):
+    from scipy.special import roots_hermitenorm
+
+    nodes, weights, basis = standard_normal_hermite_rule(quad_order, basis_order)
+    expected_nodes, expected_weights = roots_hermitenorm(quad_order)
+    np.testing.assert_allclose(nodes, expected_nodes, rtol=5e-13, atol=5e-14)
+    np.testing.assert_allclose(weights, expected_weights / np.sqrt(2 * np.pi),
+                               rtol=5e-12, atol=5e-15)
+    np.testing.assert_allclose(basis.T @ (weights[:, None] * basis),
+                               np.eye(basis_order), rtol=5e-12, atol=5e-12)
+
+
+def test_hermite_utilities_dispatch_to_production_native_owner(monkeypatch):
+    from pyscarcopula._native import _extension
+    from pyscarcopula._native.errors import NativeUnsupported
+    from pyscarcopula.numerical.hermite_tm import default_quad_order
+
+    standard_normal_hermite_rule.cache_clear()
+    module = _extension.load()
+
+    def unsupported(*args, **kwargs):
+        raise NativeUnsupported("sentinel Hermite failure")
+
+    monkeypatch.setattr(module, "ou_hermite_rule", unsupported)
+    monkeypatch.setattr(module, "ou_default_quad_order", unsupported)
+    with pytest.raises(NativeUnsupported, match="sentinel Hermite failure"):
+        standard_normal_hermite_rule(24, 8)
+    with pytest.raises(NativeUnsupported, match="sentinel Hermite failure"):
+        default_quad_order(8)

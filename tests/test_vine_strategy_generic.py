@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 
 from pyscarcopula import api
-from pyscarcopula._types import LatentProcessParams, LatentResult
+from pyscarcopula._native.errors import NativeUnsupported
+from pyscarcopula._types import LatentProcessParams, LatentResult, MLEResult
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.strategy import _base as strategy_base
 from pyscarcopula.vine._edge_adapter import _strategy_kwargs
-from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 
 
@@ -129,10 +129,9 @@ def test_api_uses_registered_generic_strategy(generic_strategy):
     assert generic_strategy['predict'] == 1
 
 
-@pytest.mark.parametrize("vine_cls", [CVineCopula, RVineCopula])
-def test_api_fit_dispatches_to_vine_object_fit(vine_cls):
+def test_api_fit_dispatches_to_vine_object_fit():
     u = _data()
-    vine = vine_cls(
+    vine = RVineCopula(
         candidates=[BivariateGaussianCopula],
         allow_rotations=False,
     )
@@ -149,10 +148,9 @@ def test_api_fit_dispatches_to_vine_object_fit(vine_cls):
     assert np.isfinite(result.log_likelihood)
 
 
-@pytest.mark.parametrize("vine_cls", [CVineCopula, RVineCopula])
 @pytest.mark.parametrize("method", ["mle", "mLe", "MLE"])
-def test_vine_fit_normalizes_method_once(vine_cls, method):
-    vine = vine_cls(
+def test_vine_fit_normalizes_method_once(method):
+    vine = RVineCopula(
         candidates=[BivariateGaussianCopula],
         allow_rotations=False,
     ).fit(
@@ -163,11 +161,9 @@ def test_vine_fit_normalizes_method_once(vine_cls, method):
 
     assert vine.method == "MLE"
     assert vine.fit_result.method == "MLE"
-    edge_results = (
-        [edge.fit_result for tree in vine.edges for edge in tree]
-        if isinstance(vine, CVineCopula)
-        else [edge.fit_result for edge in vine.pair_copulas.values()]
-    )
+    edge_results = [
+        edge.fit_result for edge in vine.pair_copulas.values()
+    ]
     assert all(result.method == "MLE" for result in edge_results)
 
 
@@ -208,14 +204,18 @@ def test_rvine_uses_registered_generic_strategy_for_edge_runtime(
     )
     assert all(edge.param is None for edge in vine.pair_copulas.values())
 
+    fit_mixture_h_calls = generic_strategy['mixture_h']
     samples = vine.sample(7, rng=np.random.default_rng(1))
     predicted = vine.predict(8, u=u, rng=np.random.default_rng(2))
-    ll = vine.log_likelihood(u)
+    with pytest.raises(
+            NativeUnsupported,
+            match="does not support edge .*LatentResult"):
+        vine.log_likelihood(u)
 
     assert samples.shape == (7, 3)
     assert predicted.shape == (8, 3)
-    assert np.isfinite(ll)
     assert generic_strategy['fit'] == 3
+    assert generic_strategy['mixture_h'] == fit_mixture_h_calls
     assert len(GenericFakeStrategy.initial_mle_results) == 3
     assert all(
         result.method == 'MLE'
@@ -224,7 +224,25 @@ def test_rvine_uses_registered_generic_strategy_for_edge_runtime(
     assert generic_strategy['mixture_h'] > 0
     assert generic_strategy['model_sample_params'] == 3
     assert generic_strategy['predictive_params'] == 3
-    assert generic_strategy['log_likelihood'] == 3
+    assert generic_strategy['log_likelihood'] == 0
+
+
+def test_rvine_preserves_custom_prediction_for_static_result(
+        generic_strategy, monkeypatch):
+    def fit(self, copula, u, **kwargs):
+        return MLEResult(
+            log_likelihood=12.5, method=METHOD, copula_name=copula.name,
+            success=True, copula_param=0.2)
+
+    monkeypatch.setattr(GenericFakeStrategy, 'fit', fit)
+    vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+        _data(d=2), method=METHOD, copulas=_fixed_gaussian_edges(2))
+    generic_strategy.clear()
+    predicted = vine.predict(8, rng=np.random.default_rng(2))
+
+    assert predicted.shape == (8, 2)
+    assert generic_strategy['predictive_params'] == 1
+    assert generic_strategy['model_sample_params'] == 0
 
 
 def test_rvine_prefers_strategy_mixture_h_pair(
@@ -247,48 +265,16 @@ def test_rvine_prefers_strategy_mixture_h_pair(
     assert generic_strategy['mixture_h'] == 0
 
     generic_strategy.clear()
-    vine.log_likelihood(u)
-    assert generic_strategy['mixture_h_pair'] == 2
+    with pytest.raises(
+            NativeUnsupported,
+            match="does not support edge .*LatentResult"):
+        vine.log_likelihood(u)
+    assert generic_strategy['mixture_h_pair'] == 0
     assert generic_strategy['mixture_h'] == 0
 
 
-def test_cvine_uses_registered_generic_strategy_for_edge_runtime(
-        generic_strategy):
-    u = _data()
-    vine = CVineCopula(
-        candidates=[BivariateGaussianCopula],
-        allow_rotations=False,
-    ).fit(u, method=METHOD, copulas=_fixed_gaussian_edges(3))
-
-    assert all(
-        edge.fit_result.method == METHOD
-        for tree in vine.edges
-        for edge in tree
-    )
-    assert all(edge.param is None for tree in vine.edges for edge in tree)
-
-    samples = vine.sample(7, rng=np.random.default_rng(3))
-    predicted = vine.predict(8, u=u, rng=np.random.default_rng(4))
-    ll = vine.log_likelihood(u)
-
-    assert samples.shape == (7, 3)
-    assert predicted.shape == (8, 3)
-    assert np.isfinite(ll)
-    assert generic_strategy['fit'] == 3
-    assert len(GenericFakeStrategy.initial_mle_results) == 3
-    assert all(
-        result.method == 'MLE'
-        for result in GenericFakeStrategy.initial_mle_results
-    )
-    assert generic_strategy['mixture_h'] > 0
-    assert generic_strategy['model_sample_params'] == 3
-    assert generic_strategy['predictive_params'] == 3
-    assert generic_strategy['log_likelihood'] == 3
-
-
-@pytest.mark.parametrize("vine_cls", [CVineCopula, RVineCopula])
 def test_dynamic_vine_runs_one_mle_per_edge(
-        generic_strategy, monkeypatch, vine_cls):
+        generic_strategy, monkeypatch):
     from pyscarcopula.strategy.mle import MLEStrategy
 
     original_fit = MLEStrategy.fit
@@ -300,7 +286,7 @@ def test_dynamic_vine_runs_one_mle_per_edge(
         return original_fit(self, copula, u, **kwargs)
 
     monkeypatch.setattr(MLEStrategy, 'fit', counted_fit)
-    vine_cls(
+    RVineCopula(
         candidates=[BivariateGaussianCopula],
         allow_rotations=False,
     ).fit(_data(), method=METHOD, copulas=_fixed_gaussian_edges(3))

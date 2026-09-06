@@ -5,9 +5,20 @@ Adding a method means adding a strategy module and registering it.
 """
 
 from __future__ import annotations
+from functools import lru_cache
+import inspect
 from typing import Protocol, runtime_checkable
 import numpy as np
-from pyscarcopula.numerical._arrays import as_pseudo_observation_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
+)
+from pyscarcopula._native.registry import (
+    native_id_for,
+    query_capability,
+    registry_entry_for,
+    strategy_support,
+)
 
 from pyscarcopula._types import (
     FitResult,
@@ -15,13 +26,31 @@ from pyscarcopula._types import (
     DEFAULT_CONFIG,
     PredictiveState,
 )
-from pyscarcopula.copula.base import CopulaCapabilities
 
 
 def reject_legacy_tol(kwargs):
     """Reject the removed SciPy-style ``tol`` alias consistently."""
     if 'tol' in kwargs:
         raise TypeError("tol is not supported; use gtol")
+
+
+def reject_unknown_mle_kwargs(kwargs, *, allowed=()):
+    """Reject unsupported MLE keywords while retaining common fit options."""
+    reject_legacy_tol(kwargs)
+    unexpected = sorted(set(kwargs).difference(allowed))
+    if unexpected:
+        raise TypeError(
+            f"unexpected MLE keyword argument(s): {unexpected}")
+
+
+def reject_unknown_strategy_kwargs(method, kwargs):
+    """Reject leftover constructor or fit keywords for one strategy."""
+    reject_legacy_tol(kwargs)
+    unexpected = sorted(kwargs)
+    if unexpected:
+        raise TypeError(
+            f"unexpected {str(method).upper()} keyword argument(s): "
+            f"{unexpected}")
 
 
 def lbfgsb_overrides(
@@ -52,22 +81,55 @@ def lbfgsb_options(optimizer_config, **overrides):
     return optimizer_config.options(**overrides)
 
 
-def get_copula_capabilities(copula) -> CopulaCapabilities | None:
-    """Return an explicit capability descriptor, or None for legacy objects."""
-    descriptor = getattr(copula, "capabilities", None)
-    if isinstance(descriptor, CopulaCapabilities):
-        return descriptor
-    descriptor = getattr(copula, "_capabilities", None)
-    if isinstance(descriptor, CopulaCapabilities):
-        return descriptor
-    return None
+_PAIR_NATIVE_IDS = frozenset({
+    "Independent",
+    "Clayton",
+    "Frank",
+    "Gumbel",
+    "Joe",
+    "BivariateGaussian",
+})
+_MULTIVARIATE_NATIVE_IDS = frozenset({
+    "Gaussian",
+    "Student",
+    "EquicorrGaussian",
+    "StochasticStudent",
+})
+
+
+def is_pair_copula(copula) -> bool:
+    """Whether an exact registered model is a built-in pair copula."""
+    return native_id_for(copula) in _PAIR_NATIVE_IDS
+
+
+def has_dynamic_scalar_parameter(copula) -> bool:
+    """Query native transform support for the retained dynamic families."""
+    return any(
+        query_capability(
+            copula,
+            "parameter_transform_bounds_initialization",
+            dynamics,
+        ).supported
+        for dynamics in ("GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI")
+    )
+
+
+def supports_conditional_sampling(copula) -> bool:
+    """Query the native conditional-sampling capability."""
+    return bool(query_capability(
+        copula, "conditional_sampling_transform").supported)
 
 
 def copula_dimension(copula, u=None) -> int | None:
-    """Resolve declared dimension, using data only when it is still unknown."""
-    capabilities = get_copula_capabilities(copula)
-    if capabilities is not None and capabilities.dimension is not None:
-        return capabilities.dimension
+    """Resolve the dimension of an exact registered built-in model."""
+    native_id = native_id_for(copula)
+    if native_id in _PAIR_NATIVE_IDS:
+        return 2
+    dimension = getattr(copula, "dimension", None)
+    if dimension is None:
+        dimension = getattr(copula, "d", None)
+    if dimension is not None:
+        return int(dimension)
     if u is not None:
         array = np.asarray(u)
         if array.ndim == 2:
@@ -75,15 +137,13 @@ def copula_dimension(copula, u=None) -> int | None:
     return None
 
 
-def validate_copula_data(copula, u):
-    """Validate 2D data against an explicit, known copula dimension."""
-    array = as_pseudo_observation_array(u)
+def _validate_copula_data_shape(copula, array):
+    """Validate observation layout against an explicit copula dimension."""
     if array.ndim != 2:
         raise ValueError(f"copula data must be 2D, got shape {array.shape}")
     if array.shape[0] == 0:
         raise ValueError("copula data must contain at least one observation")
-    capabilities = get_copula_capabilities(copula)
-    dimension = None if capabilities is None else capabilities.dimension
+    dimension = copula_dimension(copula)
     if dimension is not None and array.shape[1] != dimension:
         raise ValueError(
             f"{type(copula).__name__} expects {dimension} columns, "
@@ -91,10 +151,26 @@ def validate_copula_data(copula, u):
     return array
 
 
+def validate_raw_copula_data(copula, data):
+    """Validate finite real raw observations before a rank transform."""
+    registry_entry_for(copula)
+    array = as_float64_array(data, name="data")
+    _validate_copula_data_shape(copula, array)
+    if not np.all(np.isfinite(array)):
+        raise ValueError("data must contain only finite values")
+    return array
+
+
+def validate_copula_data(copula, u):
+    """Validate 2D pseudo-observations for an exact copula dimension."""
+    registry_entry_for(copula)
+    array = as_pseudo_observation_array(u)
+    return _validate_copula_data_shape(copula, array)
+
+
 def is_multivariate_copula(copula) -> bool:
-    """Whether an explicitly declared copula lacks the pair-copula contract."""
-    capabilities = get_copula_capabilities(copula)
-    return capabilities is not None and not capabilities.supports_pair_ops
+    """Whether an exact registered model is a non-vine multivariate copula."""
+    return native_id_for(copula) in _MULTIVARIATE_NATIVE_IDS
 
 
 def _uses_data_estimated_correlation(copula) -> bool:
@@ -128,22 +204,11 @@ def _allows_gas_static_correlation(copula, method) -> bool:
 
 def ensure_strategy_supported(copula, method):
     """Reject incompatible built-in strategy selections deterministically."""
-    capabilities = get_copula_capabilities(copula)
-    if capabilities is None:
-        return
-    normalized = str(method).upper()
-    dynamic_methods = {
-        "GAS",
-        "SCAR-TM-OU",
-        "SCAR-TM-JACOBI",
-        "SCAR-P-OU",
-        "SCAR-M-OU",
-    }
+    registry_entry_for(copula)
+    normalized = validate_strategy_method(str(method))
     joint_factor_dynamic_methods = {
         "GAS",
         "SCAR-TM-OU",
-        "SCAR-P-OU",
-        "SCAR-M-OU",
     }
     if (
             normalized in joint_factor_dynamic_methods
@@ -155,12 +220,19 @@ def ensure_strategy_supported(copula, method):
             "factor_estimation='joint' is currently supported only for "
             "static MLE; dynamic GAS/SCAR joint loading estimation is "
             "not implemented")
-    if (
-            normalized in dynamic_methods
-            and not capabilities.has_dynamic_scalar_parameter):
-        raise TypeError(f"{type(copula).__name__} does not support {normalized}")
-    if normalized == "GAS" and not capabilities.supports_gas:
-        raise TypeError(f"{type(copula).__name__} does not support GAS")
+    native_support = strategy_support(copula, normalized)
+    if native_support is not None and not native_support.supported:
+        if normalized == "GAS":
+            raise TypeError(f"{type(copula).__name__} does not support GAS")
+        if normalized == "SCAR-TM-OU":
+            raise TypeError(
+                f"{type(copula).__name__} does not support SCAR-TM-OU")
+        if normalized == "SCAR-TM-JACOBI":
+            raise TypeError(
+                f"{type(copula).__name__} does not support pair "
+                "Jacobi dynamics")
+        raise TypeError(
+            f"{type(copula).__name__} does not support {normalized}")
     if (
             normalized == "GAS"
             and getattr(copula, "_corr_mode", None) == "cholesky"
@@ -168,15 +240,6 @@ def ensure_strategy_supported(copula, method):
         raise NotImplementedError(
             "GAS joint static correlation currently supports only "
             "corr_mode='shrinkage'")
-    if normalized == "SCAR-TM-OU" and not capabilities.supports_scar_ou:
-        raise TypeError(f"{type(copula).__name__} does not support SCAR-TM-OU")
-    if (
-            normalized in {"SCAR-P-OU", "SCAR-M-OU"}
-            and not capabilities.supports_scar_mc):
-        raise TypeError(f"{type(copula).__name__} does not support {normalized}")
-    if normalized == "SCAR-TM-JACOBI" and not capabilities.supports_pair_ops:
-        raise TypeError(
-            f"{type(copula).__name__} does not support pair Jacobi dynamics")
     if (
             normalized not in {"MLE", "SCAR-TM-OU"}
             and not _allows_gas_static_correlation(copula, normalized)
@@ -213,7 +276,7 @@ class FitStrategy(Protocol):
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations
 
         Returns
@@ -241,9 +304,9 @@ class FitStrategy(Protocol):
                       result: FitResult) -> np.ndarray:
         """Second Rosenblatt residual for GoF.
 
-        MLE:  e2 = h(u2, u1, r_mle)
-        SCAR: e2 = E[h(u2, u1, Psi(x_k)) | u_{1:k-1}] (mixture)
-        GAS:  e2 = h(u2, u1, Psi(g_t))
+        MLE:  e2 = h_{2|1}(u2 | u1; r_mle)
+        SCAR: e2 = E[h_{2|1}(u2 | u1; Psi(x_k)) | u_{1:k-1}]
+        GAS:  e2 = h_{2|1}(u2 | u1; Psi(g_t))
         """
         ...
 
@@ -251,9 +314,9 @@ class FitStrategy(Protocol):
                   result: FitResult) -> np.ndarray:
         """h-function for vine pseudo-observations.
 
-        MLE:  h(u2, u1; theta_mle), constant parameter
-        SCAR: E[h(u2, u1; Psi(x)) | data], mixture over predictive state
-        GAS:  h(u2, u1; Psi(g_t)), along the GAS-filtered path
+        MLE:  h_{2|1}(u2 | u1; theta_mle), constant parameter
+        SCAR: E[h_{2|1}(u2 | u1; Psi(x)) | data], predictive mixture
+        GAS:  h_{2|1}(u2 | u1; Psi(g_t)), along the GAS-filtered path
 
         This is the key function that propagates pseudo-obs through
         the vine tree. Different methods produce different pseudo-obs,
@@ -282,7 +345,7 @@ class FitStrategy(Protocol):
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations
         alpha : (n_params,) raw parameters
 
@@ -307,7 +370,7 @@ class FitStrategy(Protocol):
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2)
             Not used by all methods, but needed for GAS initialization.
         result : FitResult from fit()
@@ -334,7 +397,7 @@ class FitStrategy(Protocol):
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations (conditioning data)
         result : FitResult from fit()
         n : int
@@ -387,6 +450,162 @@ class FitStrategy(Protocol):
 _REGISTRY: dict[str, type] = {}
 
 
+def _explicit_keyword_names(callable_object, *, excluded):
+    """Return explicit keyword parameters, excluding variadic ``**kwargs``."""
+    return frozenset(
+        name
+        for name, parameter in inspect.signature(
+            callable_object).parameters.items()
+        if name not in excluded
+        and parameter.kind in {
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+    )
+
+
+def _accepts_var_keywords(callable_object):
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in inspect.signature(
+            callable_object).parameters.values()
+    )
+
+
+@lru_cache(maxsize=None)
+def _strategy_keyword_contract(method: str):
+    """Return constructor and fit keyword names for a registered strategy."""
+    normalized = validate_strategy_method(method)
+    cls = _REGISTRY[normalized]
+    constructor_names = set(_explicit_keyword_names(
+        cls.__init__, excluded={"self", "config"}))
+    constructor_names.update(getattr(
+        cls, "_constructor_keyword_aliases", ()))
+    fit_names = _explicit_keyword_names(
+        cls.fit, excluded={"self", "copula", "u"})
+    return (
+        frozenset(constructor_names),
+        fit_names,
+        _accepts_var_keywords(cls.__init__),
+        _accepts_var_keywords(cls.fit),
+        bool(getattr(cls, "_strict_keyword_contract", False)),
+    )
+
+
+def partition_strategy_fit_kwargs(
+        method: str,
+        kwargs,
+        *,
+        reject_unknown: bool = True):
+    """Partition public fit keywords into constructor and fit options.
+
+    Explicit strategy signatures are the source of truth. Compatibility
+    aliases handled inside a constructor can be declared through
+    ``_constructor_keyword_aliases`` on the strategy class.
+    """
+    normalized = validate_strategy_method(method)
+    if reject_unknown:
+        reject_legacy_tol(kwargs)
+    (
+        constructor_names,
+        fit_names,
+        constructor_var_kwargs,
+        fit_var_kwargs,
+        strict_contract,
+    ) = _strategy_keyword_contract(normalized)
+    recognized = constructor_names.union(fit_names)
+    unexpected = sorted(set(kwargs).difference(recognized))
+    variadic_contract = constructor_var_kwargs or fit_var_kwargs
+    if (
+            reject_unknown
+            and unexpected
+            and (strict_contract or not variadic_contract)):
+        raise TypeError(
+            f"unexpected {normalized} keyword argument(s): {unexpected}")
+    constructor_kwargs = {
+        name: value
+        for name, value in kwargs.items()
+        if name in constructor_names
+        or (
+            not strict_contract
+            and constructor_var_kwargs
+            and name not in recognized
+        )
+    }
+    fit_kwargs = {
+        name: value
+        for name, value in kwargs.items()
+        if name in fit_names
+        or (
+            not strict_contract
+            and fit_var_kwargs
+            and name not in recognized
+        )
+    }
+    return constructor_kwargs, fit_kwargs
+
+
+def reject_unknown_operation_kwargs(strategy, operation: str, kwargs):
+    """Validate direct built-in operations without accepting constructor keys.
+
+    The aliases are also used by the public router. Custom strategies retain
+    their variadic extension contract unless they opt into strict validation.
+    """
+    if not getattr(strategy, '_strict_keyword_contract', False):
+        return
+    reject_legacy_tol(kwargs)
+    allowed = getattr(strategy, '_operation_keyword_aliases', {}).get(
+        operation, ())
+    unexpected = sorted(set(kwargs).difference(allowed))
+    if unexpected:
+        raise TypeError(
+            f"unexpected {type(strategy).__name__} keyword argument(s) "
+            f"for {operation}: {unexpected}")
+
+
+def partition_strategy_operation_kwargs(method: str, operation: str, kwargs):
+    """Separate constructor options from one operation's keyword contract.
+
+    Fit options are not an operation contract: for example, ``alpha0`` and
+    ``maxiter`` must never be accepted by a likelihood call. Built-in methods
+    with delegated ``**kwargs`` declare the additional names they consume in
+    ``_operation_keyword_aliases``. Custom variadic strategies retain their
+    existing extension contract.
+    """
+    normalized = validate_strategy_method(method)
+    reject_legacy_tol(kwargs)
+    cls = _REGISTRY[normalized]
+    constructor_names, _, constructor_variadic, _, strict = (
+        _strategy_keyword_contract(normalized))
+    function = getattr(cls, operation)
+    operation_names = set(_explicit_keyword_names(
+        function,
+        excluded={"self", "strategy", "copula", "u", "result", "n",
+                  "alpha", "gamma", "config"},
+    ))
+    operation_names.update(getattr(
+        cls, "_operation_keyword_aliases", {}).get(operation, ()))
+    recognized = constructor_names.union(operation_names)
+    operation_variadic = _accepts_var_keywords(function)
+    unexpected = sorted(set(kwargs).difference(recognized))
+    if unexpected and (strict or not (
+            constructor_variadic or operation_variadic)):
+        raise TypeError(
+            f"unexpected {normalized} keyword argument(s) for "
+            f"{operation}: {unexpected}")
+    constructor_kwargs = {
+        name: value for name, value in kwargs.items()
+        if name in constructor_names
+        or (not strict and constructor_variadic and name not in recognized)
+    }
+    operation_kwargs = {
+        name: value for name, value in kwargs.items()
+        if name in operation_names
+        or (not strict and operation_variadic and name not in recognized)
+    }
+    return constructor_kwargs, operation_kwargs
+
+
 def register_strategy(method_name: str):
     """Decorator to register a strategy class for a method name.
 
@@ -397,6 +616,7 @@ def register_strategy(method_name: str):
     """
     def decorator(cls):
         _REGISTRY[method_name.upper()] = cls
+        _strategy_keyword_contract.cache_clear()
         return cls
     return decorator
 
@@ -411,8 +631,7 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
     Parameters
     ----------
     method : str
-        'mle', 'scar-tm-ou', 'scar-tm-jacobi', 'scar-p-ou',
-        'scar-m-ou', 'gas'
+        'mle', 'scar-tm-ou', 'scar-tm-jacobi', or 'gas'
     config : NumericalConfig or None
     **kwargs : forwarded to strategy constructor
 
@@ -424,20 +643,7 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
     ------
     ValueError if method is unknown
     """
-    m = method.upper()
-
-    # Lazy registration: import strategies if requested method is missing.
-    # Using `m not in _REGISTRY` instead of `not _REGISTRY` to avoid a
-    # race condition: if one strategy module is imported early (e.g. GAS
-    # init triggers MLE import), _REGISTRY is non-empty but incomplete,
-    # and other methods like SCAR-M-OU would not be found.
-    if m not in _REGISTRY:
-        _import_all_strategies()
-
-    if m not in _REGISTRY:
-        available = sorted(_REGISTRY.keys())
-        raise ValueError(
-            f"Unknown method '{method}'. Available: {available}")
+    m = validate_strategy_method(method)
 
     cls = _REGISTRY[m]
     cfg = config or DEFAULT_CONFIG
@@ -447,7 +653,13 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
 def get_strategy_for_result(result: FitResult,
                             config: NumericalConfig | None = None,
                             **kwargs) -> FitStrategy:
-    """Instantiate the strategy matching an existing FitResult."""
+    """Restore saved settings and apply validated constructor overrides.
+
+    Callers must route operation-specific options to that operation, not to
+    this constructor factory. Only saved metadata is filtered for relevance.
+    """
+    explicit_kwargs, _ = partition_strategy_operation_kwargs(
+        result.method, "__init__", kwargs)
     result_kwargs = {}
     method = result.method.upper()
 
@@ -459,6 +671,10 @@ def get_strategy_for_result(result: FitResult,
             result_kwargs[name] = value
 
     if method == 'SCAR-TM-OU':
+        saved_budget = getattr(result, 'diagnostics', {}).get(
+            'corr_gradient_block_bytes')
+        if saved_budget is not None:
+            result_kwargs['corr_gradient_block_bytes'] = saved_budget
         transition_method = getattr(result, 'transition_method', None)
         if transition_method is None:
             result_kwargs['transition_method'] = 'matrix'
@@ -510,7 +726,7 @@ def get_strategy_for_result(result: FitResult,
             'lamperti_eps': getattr(
                 result, 'lamperti_eps', 1e-10),
             'lamperti_engine': getattr(
-                result, 'lamperti_engine', 'numba'),
+                result, 'lamperti_engine', 'native'),
             'lamperti_chunk_observations': getattr(
                 result, 'lamperti_chunk_observations', 4096),
         })
@@ -519,8 +735,25 @@ def get_strategy_for_result(result: FitResult,
         if memory_budget_bytes is not None:
             result_kwargs['memory_budget_bytes'] = memory_budget_bytes
 
-    result_kwargs.update(kwargs)
-    return get_strategy(result.method, config=config, **result_kwargs)
+    constructor_kwargs, _ = partition_strategy_fit_kwargs(
+        result.method,
+        result_kwargs,
+        reject_unknown=False,
+    )
+    constructor_kwargs.update(explicit_kwargs)
+    return get_strategy(
+        result.method,
+        config=config,
+        **constructor_kwargs,
+    )
+
+
+def get_ou_strategy_for_result(result: FitResult, **kwargs) -> FitStrategy:
+    """Restore an OU result without interpreting another process's parameters."""
+    if (str(getattr(result, "method", "")).upper() != "SCAR-TM-OU"
+            or getattr(getattr(result, "params", None), "process_type", None) != "ou"):
+        raise ValueError("This operation requires a fitted SCAR-TM-OU result")
+    return get_strategy_for_result(result, **kwargs)
 
 
 def _import_all_strategies():
@@ -531,8 +764,19 @@ def _import_all_strategies():
     from pyscarcopula.strategy import mle       # noqa: F401
     from pyscarcopula.strategy import scar_tm   # noqa: F401
     from pyscarcopula.strategy import scar_jacobi  # noqa: F401
-    from pyscarcopula.strategy import scar_mc   # noqa: F401
     from pyscarcopula.strategy import gas       # noqa: F401
+
+
+def validate_strategy_method(method: str) -> str:
+    """Return the canonical registered name or reject it before execution."""
+    normalized = method.upper()
+    if normalized not in _REGISTRY:
+        _import_all_strategies()
+    if normalized not in _REGISTRY:
+        available = sorted(_REGISTRY)
+        raise ValueError(
+            f"Unknown method '{method}'. Available: {available}")
+    return normalized
 
 
 def list_methods() -> list[str]:

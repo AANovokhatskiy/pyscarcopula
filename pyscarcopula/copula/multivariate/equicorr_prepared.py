@@ -11,6 +11,10 @@ from typing import Any, Mapping
 import numpy as np
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
+from pyscarcopula._native import validation as native_validation
+from pyscarcopula.numerical._arrays import (
+    as_float64_array, as_float64_scalar, validate_integer,
+)
 
 
 EQUICORR_PREPARED_FORMAT_VERSION = 1
@@ -51,43 +55,33 @@ class EquicorrPreparedData:
             raise ValueError(
                 f"unsupported prepared-data format version "
                 f"{self.format_version}")
-        if isinstance(self.n_obs, bool) or int(self.n_obs) < 1:
-            raise ValueError("n_obs must be a positive integer")
-        if isinstance(self.dimension, bool) or int(self.dimension) < 2:
-            raise ValueError("dimension must be an integer >= 2")
-        if not np.isfinite(self.clipping_epsilon) or not (
-                0.0 < self.clipping_epsilon < 0.5):
-            raise ValueError("clipping_epsilon must be finite and in (0, 0.5)")
-
+        n_obs = validate_integer(self.n_obs, "n_obs", minimum=1)
+        dimension = validate_integer(self.dimension, "dimension", minimum=2)
+        clipping_epsilon = as_float64_scalar(
+            self.clipping_epsilon, name="clipping_epsilon")
+        # Borrowed mmap arrays keep their subclass and zero-copy storage.
+        as_float64_array(self.sum_z, name="sum_z")
+        as_float64_array(self.sum_z2, name="sum_z2")
         convert = np.array if _copy_arrays else np.asanyarray
         sum_z = convert(self.sum_z, dtype=np.float64)
         sum_z2 = convert(self.sum_z2, dtype=np.float64)
-        expected = (int(self.n_obs),)
+        expected = (n_obs,)
         if sum_z.shape != expected or sum_z2.shape != expected:
             raise ValueError(
                 f"sum_z and sum_z2 must have shape {expected}")
-        if not np.all(np.isfinite(sum_z)) or not np.all(np.isfinite(sum_z2)):
-            raise ValueError("prepared statistics must contain finite values")
-        if np.any(sum_z2 < 0.0):
-            raise ValueError("sum_z2 must be non-negative")
-        abs_sum_z = np.abs(sum_z)
-        cauchy_bound = (
-            np.sqrt(float(self.dimension)) * np.sqrt(sum_z2))
-        tolerance = (
-            64.0 * np.finfo(np.float64).eps
-            * np.maximum(1.0, np.maximum(abs_sum_z, cauchy_bound))
+        native_validation.validate_equicorr_prepared(
+            sum_z,
+            sum_z2,
+            dimension,
+            clipping_epsilon,
         )
-        if np.any(abs_sum_z > cauchy_bound + tolerance):
-            raise ValueError(
-                "prepared statistics violate sum_z**2 <= "
-                "dimension*sum_z2")
 
         sum_z.setflags(write=False)
         sum_z2.setflags(write=False)
         object.__setattr__(self, "sum_z", sum_z)
         object.__setattr__(self, "sum_z2", sum_z2)
-        object.__setattr__(self, "n_obs", int(self.n_obs))
-        object.__setattr__(self, "dimension", int(self.dimension))
+        object.__setattr__(self, "n_obs", n_obs)
+        object.__setattr__(self, "dimension", dimension)
         object.__setattr__(
             self, "diagnostics",
             MappingProxyType(dict(self.diagnostics)))

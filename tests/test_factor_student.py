@@ -9,6 +9,7 @@ import sys
 
 import numpy as np
 import pytest
+from scipy.stats import chi2
 
 from pyscarcopula import (
     FactorCorrelation,
@@ -16,7 +17,15 @@ from pyscarcopula import (
     FactorStudentEvaluator,
     FactorStudentGridEvaluation,
 )
-from pyscarcopula.numerical import static_likelihood
+from pyscarcopula.copula.multivariate.factor_student import (
+    _raise_native_status,
+)
+from pyscarcopula.copula.multivariate.factor_estimation import (
+    FactorLoadingParameterization,
+)
+from pyscarcopula._native import multivariate as multivariate_native
+from pyscarcopula._native import static as static_likelihood
+from pyscarcopula._native.errors import NativeError, NativeUnsupported
 
 
 def _problem(dimension=10, rank=3, rows=24, seed=1201):
@@ -26,6 +35,23 @@ def _problem(dimension=10, rank=3, rows=24, seed=1201):
     observations = rng.uniform(
         0.01, 0.99, size=(rows, dimension))
     return factor, observations
+
+
+def test_factor_student_sampler_transforms_raw_uniform_radial_draws():
+    factor = FactorCorrelation(np.array([[0.2], [-0.1], [0.3]])).prepare()
+    df = np.array([4.5, 9.0])
+    factor_draws = np.array([[0.4], [-0.7]])
+    residual_draws = np.array([[0.2, -0.3, 0.8], [-0.5, 0.6, 0.1]])
+    radial_uniforms = np.array([0.2, 0.85])
+
+    from_uniforms = multivariate_native.factor_student_sample_from_normal_uniforms(
+        factor, df, factor_draws, residual_draws, radial_uniforms)
+    from_quantiles = multivariate_native.factor_student_sample_from_draws(
+        factor, df, factor_draws, residual_draws,
+        chi2.ppf(radial_uniforms, df))
+
+    np.testing.assert_allclose(
+        from_uniforms, from_quantiles, rtol=5e-12, atol=5e-13)
 
 
 @pytest.mark.parametrize("df", [2.01, 4.5, 30.0])
@@ -147,6 +173,50 @@ def test_evaluator_owns_read_only_observations_and_optimizer_contract():
         gradient, [-result.dlog_likelihood_ddf])
 
 
+def test_parameterized_penalized_objective_matches_composed_native_results():
+    factor, observations = _problem(
+        dimension=7, rank=2, rows=31, seed=1206)
+    parameterization, parameters = (
+        FactorLoadingParameterization.from_loadings(
+            factor.loadings, uniqueness_min=1e-8))
+    evaluator = FactorStudentEvaluator(factor, observations)
+    penalty = 2.5e-5
+    df = 6.25
+
+    result = evaluator.penalized_parameterized_objective_and_gradient(
+        df,
+        parameters,
+        parameterization,
+        penalty=penalty,
+        condition_max=1e12,
+        n_threads=4,
+    )
+    joint = FactorStudentEvaluator(
+        FactorCorrelation(result.loadings), observations
+    ).joint_likelihood_and_gradient(df, n_threads=4)
+    expected_loading_gradient = (
+        -joint.dlog_likelihood_dloadings
+        + 2.0 * penalty * result.loadings
+    )
+    expected_gradient = np.concatenate((
+        np.asarray([-joint.dlog_likelihood_ddf]),
+        parameterization.pullback(parameters, expected_loading_gradient),
+    ))
+
+    assert result.objective == pytest.approx(
+        -joint.log_likelihood
+        + penalty * float(np.sum(result.loadings ** 2)),
+        rel=2e-13,
+        abs=2e-13,
+    )
+    assert result.log_likelihood == pytest.approx(
+        joint.log_likelihood, rel=0.0, abs=0.0)
+    np.testing.assert_allclose(
+        result.gradient, expected_gradient, rtol=2e-13, atol=2e-13)
+    assert result.gradient.flags.writeable is False
+    assert result.loadings.flags.writeable is False
+
+
 def test_large_dimension_uses_linear_worker_workspace():
     dimension = 100_000
     rank = 4
@@ -205,7 +275,7 @@ def test_default_evaluation_does_not_initialize_parallel_runtime():
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import FactorCorrelation, FactorStudentEvaluator\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "factor = FactorCorrelation(np.full((1024, 4), 0.01))\n"
@@ -276,6 +346,26 @@ def test_tiled_grid_cell_parallelism_is_thread_exact():
     assert parallel.diagnostics["parallel_blocks"] == 4
 
 
+@pytest.mark.parametrize("rows,dimension_tile", [(8, 7), (1, 4)])
+def test_repeated_grid_parameters_reuse_exact_quantiles(rows, dimension_tile):
+    factor, observations = _problem(
+        dimension=40, rank=4, rows=rows, seed=12116)
+    evaluator = FactorStudentEvaluator(factor, observations)
+    grid = np.array([2.000001, 2.000001, 2.000001, 7., 7., 12.])
+    unique, index = np.unique(grid, return_inverse=True)
+    reference = evaluator.evaluate_grid(unique, dimension_tile=dimension_tile)
+    sequential = evaluator.evaluate_grid(grid, dimension_tile=dimension_tile)
+    parallel = evaluator.evaluate_grid(
+        grid, dimension_tile=dimension_tile, n_threads=4)
+    for result in (sequential, parallel):
+        np.testing.assert_array_equal(result.log_pdf, reference.log_pdf[:, index])
+        np.testing.assert_array_equal(result.dlog_ddf, reference.dlog_ddf[:, index])
+        assert result.diagnostics["ppf_exact_values"] < (
+            rows * len(grid) * factor.dimension)
+    assert sequential.diagnostics["ppf_exact_values"] == (
+        rows * len(unique) * factor.dimension)
+
+
 def test_tiled_grid_dimension_parallelism_is_thread_exact():
     factor, observations = _problem(
         dimension=128, rank=4, rows=1, seed=1212)
@@ -323,6 +413,69 @@ def test_grid_density_gradient_and_row_batches():
     )
 
 
+def test_stochastic_grid_owns_softplus_transform_and_pullback():
+    factor, observations = _problem(rows=9, seed=12135)
+    evaluator = FactorStudentEvaluator(factor, observations)
+    raw = np.array([-2.0, 0.25, 4.0])
+    offset = 2.000001
+    df = offset + np.logaddexp(0.0, raw)
+    expected_density, expected_df_gradient = (
+        evaluator.pdf_and_grad_on_grid(df, dimension_tile=3))
+    expected = expected_df_gradient / (1.0 + np.exp(-raw))[None, :]
+
+    density, gradient = evaluator.stochastic_pdf_and_gradient_grid(
+        raw, offset=offset, dimension_tile=3)
+    np.testing.assert_allclose(
+        density, expected_density, rtol=2e-15, atol=2e-15)
+    np.testing.assert_allclose(
+        gradient, expected, rtol=2e-15, atol=2e-15)
+
+
+def test_grid_budget_accounts_for_each_public_output_lifetime():
+    factor, observations = _problem(
+        dimension=40, rank=4, rows=128, seed=12136)
+    evaluator = FactorStudentEvaluator(factor, observations)
+    grid = np.linspace(3.0, 17.0, 8)
+
+    log_required = evaluator._grid_peak_bytes(
+        128, 8, 16, 4, result_kind="log")
+    density_required = evaluator._grid_peak_bytes(
+        128, 8, 16, 4, result_kind="density")
+    stochastic_required = evaluator._grid_peak_bytes(
+        128, 8, 16, 4, result_kind="stochastic")
+    assert log_required == 32 * 1024 + 896
+    assert density_required == 48 * 1024
+    assert stochastic_required == 64 * 1024
+
+    with pytest.raises(MemoryError, match="evaluate_grid_batches"):
+        evaluator.evaluate_grid(
+            grid, dimension_tile=16, n_threads=4,
+            memory_budget_bytes=log_required - 1)
+    logged = evaluator.evaluate_grid(
+        grid, dimension_tile=16, n_threads=4,
+        memory_budget_bytes=log_required)
+    assert logged.diagnostics["peak_bytes_required"] == log_required
+
+    with pytest.raises(MemoryError, match="pdf_and_grad_on_grid_batches"):
+        evaluator.pdf_and_grad_on_grid(
+            grid, dimension_tile=16, n_threads=4,
+            memory_budget_bytes=density_required - 1)
+    density, gradient = evaluator.pdf_and_grad_on_grid(
+        grid, dimension_tile=16, n_threads=4,
+        memory_budget_bytes=density_required)
+    assert density.shape == gradient.shape == (128, 8)
+
+    raw_grid = np.linspace(-2.0, 2.0, 8)
+    with pytest.raises(MemoryError, match="reduce the grid"):
+        evaluator.stochastic_pdf_and_gradient_grid(
+            raw_grid, offset=2.1, dimension_tile=16, n_threads=4,
+            memory_budget_bytes=stochastic_required - 1)
+    density, gradient = evaluator.stochastic_pdf_and_gradient_grid(
+        raw_grid, offset=2.1, dimension_tile=16, n_threads=4,
+        memory_budget_bytes=stochastic_required)
+    assert density.shape == gradient.shape == (128, 8)
+
+
 def test_grid_memory_budget_covers_output_and_native_workspace():
     factor, observations = _problem(rows=7, seed=1214)
     evaluator = FactorStudentEvaluator(factor, observations)
@@ -353,6 +506,26 @@ def test_grid_memory_budget_covers_output_and_native_workspace():
             n_threads=4,
             memory_budget_bytes=batch_required - 1,
         ))
+
+    density_batch_required = evaluator._grid_peak_bytes(
+        3, len(grid), 4, 4, result_kind="density")
+    with pytest.raises(MemoryError, match="reduce batch_rows"):
+        list(evaluator.pdf_and_grad_on_grid_batches(
+            grid,
+            batch_rows=3,
+            dimension_tile=4,
+            n_threads=4,
+            memory_budget_bytes=density_batch_required - 1,
+        ))
+    density_blocks = list(evaluator.pdf_and_grad_on_grid_batches(
+        grid,
+        batch_rows=3,
+        dimension_tile=4,
+        n_threads=4,
+        memory_budget_bytes=density_batch_required,
+    ))
+    assert [density.shape for density, _ in density_blocks] == [
+        (3, 4), (3, 4), (1, 4)]
 
 
 def test_large_dimension_grid_has_no_full_ppf_cache():
@@ -390,3 +563,24 @@ def test_invalid_grid_contract_is_rejected(grid, kwargs):
     evaluator = FactorStudentEvaluator(factor, observations)
     with pytest.raises((TypeError, ValueError)):
         evaluator.evaluate_grid(grid, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [
+        (2, ValueError),
+        (3, NativeUnsupported),
+        (7, FloatingPointError),
+        (1, NativeError),
+    ],
+)
+def test_native_factor_status_is_translated_by_python_adapter(status, error):
+    with pytest.raises(error, match=rf"status={status} .*index=4"):
+        _raise_native_status(
+            {"status": status, "failure_index": 4},
+            "contract test",
+        )
+
+
+def test_native_factor_success_status_is_accepted():
+    _raise_native_status({"status": 0}, "contract test")

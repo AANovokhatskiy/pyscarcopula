@@ -2,6 +2,8 @@ import numpy as np
 import pytest
 
 from pyscarcopula import GumbelCopula
+from pyscarcopula._native import jacobi as jacobi_native
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.numerical import jacobi_tm
 from pyscarcopula.numerical.jacobi_tm import (
     DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
@@ -52,11 +54,11 @@ def test_jacobi_rule_returns_orthonormal_basis():
     )
 
 
-def test_jacobi_rule_rejects_hard_cap_before_roots(monkeypatch):
+def test_jacobi_rule_rejects_hard_cap_before_native_rule(monkeypatch):
     monkeypatch.setattr(
-        jacobi_tm,
-        "roots_jacobi",
-        lambda *args, **kwargs: pytest.fail("roots_jacobi must not be called"),
+        jacobi_tm.jacobi_native,
+        "jacobi_rule",
+        lambda *args, **kwargs: pytest.fail("native rule must not be called"),
     )
     with pytest.raises(ValueError, match=f"<= {MAX_JACOBI_ORDER}"):
         jacobi_rule(
@@ -67,11 +69,11 @@ def test_jacobi_rule_rejects_hard_cap_before_roots(monkeypatch):
         )
 
 
-def test_jacobi_rule_checks_memory_budget_before_roots(monkeypatch):
+def test_jacobi_rule_checks_memory_budget_before_native_rule(monkeypatch):
     monkeypatch.setattr(
-        jacobi_tm,
-        "roots_jacobi",
-        lambda *args, **kwargs: pytest.fail("roots_jacobi must not be called"),
+        jacobi_tm.jacobi_native,
+        "jacobi_rule",
+        lambda *args, **kwargs: pytest.fail("native rule must not be called"),
     )
     with pytest.raises(MemoryError, match="memory_budget_bytes"):
         jacobi_rule(
@@ -133,7 +135,7 @@ def test_jacobi_grid_sampler_one_draw_is_stationary_grid_atom():
         1.2,
         0.4,
         0.25,
-        n_obs=1,
+        n_obs=2,
         basis_order=4,
         quad_order=24,
         transition_method="local_fixed",
@@ -188,34 +190,36 @@ def test_jacobi_grid_sampler_is_seed_reproducible_and_uses_grid_atoms():
     assert np.all((first > 0.0) & (first < 1.0))
 
 
-def test_jacobi_grid_sampler_matches_row_probabilities(monkeypatch):
-    tau = np.array([0.2, 0.8], dtype=np.float64)
-    stationary = np.array([1.0, 0.0], dtype=np.float64)
-    target = np.array([0.25, 0.75], dtype=np.float64)
-    transition = np.vstack([target, target])
-
-    def fixed_transition(*args, **kwargs):
-        diagnostics = {"transition_method": "local_fixed"}
-        return tau.copy(), stationary.copy(), transition.copy(), diagnostics
-
-    monkeypatch.setattr(
-        jacobi_tm, "jacobi_transition_matrix", fixed_transition)
+def test_jacobi_grid_sampler_matches_native_fixed_draw_contract():
+    n = 200
+    public_rng = np.random.default_rng(14)
+    fixed_rng = np.random.default_rng(14)
     path = sample_jacobi_grid_trajectory(
         1.2,
         0.4,
         0.25,
-        40_000,
-        rng=np.random.default_rng(14),
-        basis_order=1,
-        quad_order=2,
+        n,
+        rng=public_rng,
+        basis_order=4,
+        quad_order=20,
         transition_method="local_fixed",
     )
-    observed = np.array([
-        np.mean(path[1:] == tau[0]),
-        np.mean(path[1:] == tau[1]),
-    ])
+    uniforms = fixed_rng.random(n)
+    expected, diagnostics = jacobi_native.sample_grid_trajectory_fixed_draws(
+        1.2,
+        0.4,
+        0.25,
+        uniforms,
+        basis_order=4,
+        quad_order=20,
+        gh_order=5,
+        method="local_fixed",
+        storage="dense",
+    )
 
-    np.testing.assert_allclose(observed, target, atol=0.01)
+    np.testing.assert_array_equal(path, expected)
+    assert diagnostics["draws_used"] == n
+    np.testing.assert_array_equal(public_rng.random(8), fixed_rng.random(8))
 
 
 def test_jacobi_grid_sampler_spectral_coeff_uses_safe_auto_matrix():
@@ -237,6 +241,84 @@ def test_jacobi_grid_sampler_spectral_coeff_uses_safe_auto_matrix():
     assert diagnostics["transition_method"] in {"local", "spectral_matrix"}
 
 
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [("local-fixed", "local_fixed"), ("spectral-matrix", "spectral_matrix")],
+)
+def test_jacobi_grid_sampler_normalizes_method_alias_before_rng(
+        alias, canonical):
+    alias_rng = np.random.default_rng(151)
+    canonical_rng = np.random.default_rng(151)
+    alias_path = sample_jacobi_grid_trajectory(
+        1.5,
+        0.4,
+        0.35,
+        5,
+        rng=alias_rng,
+        basis_order=1,
+        quad_order=24,
+        transition_method=alias,
+    )
+    canonical_path = sample_jacobi_grid_trajectory(
+        1.5,
+        0.4,
+        0.35,
+        5,
+        rng=canonical_rng,
+        basis_order=1,
+        quad_order=24,
+        transition_method=canonical,
+    )
+
+    np.testing.assert_array_equal(alias_path, canonical_path)
+    np.testing.assert_array_equal(
+        alias_rng.random(8), canonical_rng.random(8))
+
+
+def test_jacobi_grid_sampler_invalid_method_precedes_rng_draw():
+    rng = np.random.default_rng(152)
+    with pytest.raises(ValueError, match="transition_method"):
+        sample_jacobi_grid_trajectory(
+            1.2,
+            0.4,
+            0.25,
+            12,
+            rng=rng,
+            basis_order=4,
+            quad_order=24,
+            transition_method="invalid",
+        )
+    np.testing.assert_array_equal(
+        rng.random(8), np.random.default_rng(152).random(8))
+
+
+def test_irrelevant_sparse_storage_flag_preserves_dense_sampling():
+    dense = sample_jacobi_grid_trajectory(
+        1.2,
+        0.4,
+        0.25,
+        12,
+        rng=np.random.default_rng(153),
+        basis_order=4,
+        quad_order=24,
+        transition_method="auto",
+        transition_storage="dense",
+    )
+    flagged = sample_jacobi_grid_trajectory(
+        1.2,
+        0.4,
+        0.25,
+        12,
+        rng=np.random.default_rng(153),
+        basis_order=4,
+        quad_order=24,
+        transition_method="auto",
+        transition_storage="sparse",
+    )
+
+    np.testing.assert_array_equal(flagged, dense)
+
+
 def test_jacobi_grid_sampler_memory_guard_precedes_rng_draw():
     rng = np.random.default_rng(16)
     with pytest.raises(MemoryError, match="memory_budget_bytes"):
@@ -256,12 +338,39 @@ def test_jacobi_grid_sampler_memory_guard_precedes_rng_draw():
     )
 
 
+def test_fixed_draw_boundary_peak_is_included_before_rng_draw():
+    n = 1_000
+    native_only_budget = jacobi_native.estimate_sampling_workspace(
+        n=n,
+        quad_order=2,
+        basis_order=1,
+        gh_order=1,
+        memory_budget_bytes=DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
+    )
+    rng = np.random.default_rng(161)
+    with pytest.raises(MemoryError, match="memory_budget_bytes"):
+        sample_jacobi_grid_trajectory(
+            1.2,
+            0.4,
+            0.25,
+            n,
+            rng=rng,
+            basis_order=1,
+            quad_order=2,
+            gh_order=1,
+            transition_method="local_fixed",
+            memory_budget_bytes=native_only_budget,
+        )
+    np.testing.assert_array_equal(
+        rng.random(8), np.random.default_rng(161).random(8))
+
+
 def test_jacobi_spectral_transition_matrix_is_row_stochastic():
     tau, weights, transition, diagnostics = jacobi_spectral_transition_matrix(
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=0.25,
+        n_obs=5,
         basis_order=8,
         quad_order=32,
         return_diagnostics=True,
@@ -276,17 +385,17 @@ def test_jacobi_spectral_transition_matrix_is_row_stochastic():
 
 
 def test_jacobi_spectral_transition_preserves_conditional_first_moment():
-    kappa, m, dt = 1.2, 0.4, 1.0
+    kappa, m, n_obs = 1.2, 0.4, 2
     tau, _, transition = jacobi_transition_matrix(
         kappa=kappa,
         m=m,
         xi=0.25,
-        dt=dt,
+        n_obs=n_obs,
         basis_order=24,
         quad_order=64,
         transition_method="spectral_matrix",
     )
-    expected = m + (tau - m) * np.exp(-kappa * dt)
+    expected = m + (tau - m) * np.exp(-kappa / (n_obs - 1))
 
     np.testing.assert_allclose(
         transition @ tau, expected, rtol=1e-12, atol=1e-12)
@@ -297,7 +406,7 @@ def test_jacobi_spectral_transition_order_one_is_stationary_kernel():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=0.25,
+        n_obs=5,
         basis_order=1,
         quad_order=24,
     )
@@ -311,7 +420,7 @@ def test_jacobi_local_transition_matrix_is_nonnegative_and_stochastic():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=1e-3,
+        n_obs=1001,
         quad_order=40,
         gh_order=5,
         return_diagnostics=True,
@@ -331,7 +440,7 @@ def test_jacobi_local_transition_is_local_for_small_dt():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=1e-6,
+        n_obs=1_000_001,
         quad_order=40,
         gh_order=5,
     )
@@ -345,7 +454,7 @@ def test_jacobi_transition_matrix_auto_falls_back_on_truncated_negativity():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=1e-6,
+        n_obs=1_000_001,
         basis_order=6,
         quad_order=40,
         transition_method="auto",
@@ -416,37 +525,35 @@ def test_jacobi_transition_matrix_respects_soft_negative_mass_tol():
         np.sum(soft_transition, axis=1), 1.0, rtol=1e-12, atol=1e-12)
 
 
-def test_jacobi_loglik_unit_emission_is_zero():
+def test_jacobi_loglik_rejects_custom_python_emission():
     u = np.array([[0.2, 0.3], [0.4, 0.7], [0.8, 0.6]])
 
-    ll = jacobi_loglik(
-        kappa=1.5,
-        m=0.4,
-        xi=0.35,
-        u=u,
-        copula=UnitEmissionCopula(),
-        basis_order=6,
-        quad_order=32,
-    )
+    with pytest.raises(NativeUnsupported):
+        jacobi_loglik(
+            kappa=1.5,
+            m=0.4,
+            xi=0.35,
+            u=u,
+            copula=UnitEmissionCopula(),
+            basis_order=6,
+            quad_order=32,
+        )
 
-    np.testing.assert_allclose(ll, 0.0, rtol=0.0, atol=1e-12)
 
-
-def test_jacobi_matrix_loglik_unit_emission_is_zero():
+def test_jacobi_matrix_loglik_rejects_custom_python_emission():
     u = np.array([[0.2, 0.3], [0.4, 0.7], [0.8, 0.6]])
 
-    ll = jacobi_matrix_loglik(
-        kappa=1.5,
-        m=0.4,
-        xi=0.35,
-        u=u,
-        copula=UnitEmissionCopula(),
-        basis_order=6,
-        quad_order=32,
-        transition_method="local",
-    )
-
-    np.testing.assert_allclose(ll, 0.0, rtol=0.0, atol=1e-12)
+    with pytest.raises(NativeUnsupported):
+        jacobi_matrix_loglik(
+            kappa=1.5,
+            m=0.4,
+            xi=0.35,
+            u=u,
+            copula=UnitEmissionCopula(),
+            basis_order=6,
+            quad_order=32,
+            transition_method="local",
+        )
 
 
 def test_jacobi_fixed_grid_gradient_matches_finite_difference():
@@ -502,7 +609,13 @@ def test_jacobi_moving_grid_gradient_matches_finite_difference(
         [0.76, 0.81],
     ], dtype=np.float64)
     copula = GumbelCopula()
-    alpha = np.array([1.2, 0.42, 0.7], dtype=np.float64)
+    alpha = np.asarray(
+        {
+            "local": [1.2, 0.42, 0.7],
+            "spectral_matrix": [10.0, 0.5, 0.1],
+        }[transition_method],
+        dtype=np.float64,
+    )
     kwargs = {
         "basis_order": 3,
         "quad_order": 24,
@@ -548,14 +661,12 @@ def test_jacobi_spectral_gradient_rejects_signed_transition_like_value_path():
         "clip_negative": False,
     }
 
-    value = jacobi_matrix_neg_loglik(
-        0.08, 0.15, 0.3, u, GumbelCopula(), **kwargs)
-    gradient_value, gradient = jacobi_matrix_neg_loglik_with_grad(
-        0.08, 0.15, 0.3, u, GumbelCopula(), **kwargs)
-
-    assert value == pytest.approx(1e10)
-    assert gradient_value == pytest.approx(value)
-    np.testing.assert_array_equal(gradient, np.zeros(3))
+    with pytest.raises(FloatingPointError):
+        jacobi_matrix_neg_loglik(
+            0.08, 0.15, 0.3, u, GumbelCopula(), **kwargs)
+    with pytest.raises(FloatingPointError):
+        jacobi_matrix_neg_loglik_with_grad(
+            0.08, 0.15, 0.3, u, GumbelCopula(), **kwargs)
 
 
 def test_jacobi_explicit_spectral_rejects_material_negative_mass():
@@ -573,17 +684,7 @@ def test_jacobi_explicit_spectral_rejects_material_negative_mass():
         )
 
 
-def test_jacobi_auto_gradient_freezes_selected_backend(monkeypatch):
-    from pyscarcopula.numerical import jacobi_tm
-
-    original = jacobi_tm.jacobi_transition_matrix
-    requested_methods = []
-
-    def recorded(*args, **kwargs):
-        requested_methods.append(kwargs.get("transition_method"))
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(jacobi_tm, "jacobi_transition_matrix", recorded)
+def test_jacobi_auto_gradient_freezes_selected_backend_in_native_evaluator():
     u = np.array([
         [0.18, 0.31],
         [0.34, 0.42],
@@ -592,21 +693,20 @@ def test_jacobi_auto_gradient_freezes_selected_backend(monkeypatch):
         [0.22, 0.89],
     ], dtype=np.float64)
 
-    value, gradient = jacobi_matrix_neg_loglik_with_grad(
-        0.08,
-        0.15,
-        0.3,
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
         u,
         GumbelCopula(),
         basis_order=8,
         quad_order=48,
         transition_method="auto",
     )
+    state = evaluator.filter(0.08, 0.15, 0.3)
+    value, gradient = evaluator.neg_loglik_with_grad(0.08, 0.15, 0.3)
 
     assert np.isfinite(value)
     assert np.all(np.isfinite(gradient))
-    assert requested_methods[0] == "auto"
-    assert set(requested_methods[1:]) == {"local"}
+    assert state["diagnostics"]["transition_method_requested"] == "auto"
+    assert state["diagnostics"]["transition_method"] == "local"
 
 
 def test_jacobi_basis_order_one_matches_stationary_mixture():

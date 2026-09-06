@@ -26,6 +26,7 @@ to this API internally but require copula.fit() to have been called.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any, TypeAlias
 
 import numpy as np
@@ -35,15 +36,18 @@ from pyscarcopula._types import (
     NumericalConfig,
     PredictConfig,
 )
-from pyscarcopula.copula._protocol import CommonCopulaProtocol
+from pyscarcopula._native.registry import registry_entry_for
 from pyscarcopula._utils import pobs as _pobs
 from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.strategy._base import (
     ensure_strategy_supported,
-    get_copula_capabilities,
     get_strategy,
     get_strategy_for_result,
+    is_multivariate_copula,
+    partition_strategy_fit_kwargs,
+    partition_strategy_operation_kwargs,
     validate_copula_data,
+    validate_raw_copula_data,
 )
 
 
@@ -60,6 +64,16 @@ def _reject_public_posterior_cache(kwargs: dict[str, Any]) -> None:
         raise TypeError(
             "posterior_cache is an internal runtime cache and is not "
             "accepted by the top-level API")
+
+
+def _reject_vine_postfit_config(
+    config: NumericalConfig | None,
+    operation: str,
+) -> None:
+    """Reject a configuration that VineCopula post-fit methods cannot use."""
+    if config is not None:
+        raise TypeError(
+            f"config is not supported for VineCopula {operation}")
 
 
 def _prepared_equicorr_or_none(copula, data):
@@ -83,7 +97,7 @@ def _prepared_equicorr_or_none(copula, data):
 
 
 def fit(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     method: str = 'scar-tm-ou',
     to_pobs: bool = False,
@@ -94,16 +108,16 @@ def fit(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
-        Copula instance to fit. The fitted result and training data are also
-        stored on the instance for its stateful convenience methods.
+    copula : object
+        Exact registered built-in copula to fit. The fitted result and training
+        data are also stored on the instance for its stateful convenience
+        methods.
     data : array_like of shape (n_observations, n_dimensions)
         Raw observations or pseudo-observations. Bivariate strategies require
         two columns; multivariate and vine models determine their own width.
     method : str
         Estimation strategy name, such as ``"mle"``, ``"scar-tm-ou"``,
-        ``"scar-tm-jacobi"``, ``"scar-p-ou"``, ``"scar-m-ou"``, or
-        ``"gas"``.
+        ``"scar-tm-jacobi"``, or ``"gas"``.
     to_pobs : bool
         If true, rank-transform each data column before fitting.
     config : NumericalConfig or None
@@ -126,7 +140,8 @@ def fit(
         If the requested strategy/model combination is recognized but not
         implemented.
     """
-    if _is_vine_copula(copula):
+    registry_entry_for(copula)
+    if _is_generic_vine(copula):
         fitted = copula.fit(
             data,
             method=method,
@@ -151,33 +166,57 @@ def fit(
                 "MLE, GAS, and SCAR-TM-OU strategies")
         u = data
     else:
-        u = _as_float64_array_no_copy(data)
         if to_pobs:
+            u = validate_raw_copula_data(copula, data)
             u = _pobs(u)
+        else:
+            u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
+    constructor_kwargs, fit_kwargs = partition_strategy_fit_kwargs(
+        method,
+        kwargs,
+    )
     ensure_strategy_supported(copula, method)
-    strategy = get_strategy(method, config=config, **kwargs)
-    result = strategy.fit(copula, u, **kwargs)
-    # Mirror the state synchronization of copula.fit() so convenience
-    # methods (predict/sample without explicit data or result) see the
-    # strategy result rather than a stale intermediate (e.g. MLE) one.
-    copula.fit_result = result
-    if prepared_input:
-        copula._last_prepared = u
-        copula._last_u = None
-    else:
-        copula._last_u = u
-        if hasattr(copula, "_last_prepared"):
-            copula._last_prepared = None
-    if (
-            getattr(result, "params", None) is not None
-            and hasattr(copula, "_last_latent_result")):
-        copula._last_latent_result = result
-    return result
+    strategy = get_strategy(
+        method,
+        config=config,
+        **constructor_kwargs,
+    )
+    multivariate = is_multivariate_copula(copula)
+    multivariate_mle = multivariate and method.upper() == "MLE"
+    transaction = copula._fit_transaction() if multivariate else nullcontext()
+    with transaction:
+        # A fit owns its training snapshot before any native call releases
+        # the GIL. Immutable prepared statistics already own their buffers.
+        if not prepared_input:
+            u = u.copy()
+        if multivariate and not multivariate_mle:
+            copula._prepare_dynamic_fit(u)
+        result = strategy.fit(copula, u, **fit_kwargs)
+        if multivariate_mle and not result.success:
+            # Static MLE publishes only independently accepted candidates.
+            return result
+        if multivariate and not multivariate_mle:
+            result = copula._finalize_dynamic_fit(result)
+        # Keep the returned dynamic candidate (including its success flag),
+        # never an intermediate MLE used to initialize the optimizer.
+        copula.fit_result = result
+        if prepared_input:
+            copula._last_prepared = u
+            copula._last_u = None
+        else:
+            copula._last_u = u
+            if hasattr(copula, "_last_prepared"):
+                copula._last_prepared = None
+        if (
+                getattr(result, "params", None) is not None
+                and hasattr(copula, "_last_latent_result")):
+            copula._last_latent_result = result
+        return result
 
 
 def log_likelihood(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     config: NumericalConfig | None = None,
@@ -187,14 +226,15 @@ def log_likelihood(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Copula associated with ``result``.
     data : array_like of shape (n_observations, n_dimensions)
         Pseudo-observations at which to evaluate the fitted model.
     result : FitResult
         Result returned by :func:`fit`.
     config : NumericalConfig or None
-        Numerical and optimizer settings.
+        Numerical and optimizer settings. VineCopula post-fit dispatch does
+        not support this argument and accepts only ``None``.
     **kwargs
         Forwarded to the strategy constructor when applicable.
 
@@ -203,7 +243,9 @@ def log_likelihood(
     float
         Total log-likelihood over all observations.
     """
-    if _is_vine_copula(copula):
+    registry_entry_for(copula)
+    if _is_generic_vine(copula):
+        _reject_vine_postfit_config(config, "log_likelihood")
         return float(copula.log_likelihood(data, **kwargs))
 
     prepared = _prepared_equicorr_or_none(copula, data)
@@ -212,12 +254,15 @@ def log_likelihood(
         validate_copula_data(copula, u)
     else:
         u = prepared
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
-    return strategy.log_likelihood(copula, u, result)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "log_likelihood", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
+    return strategy.log_likelihood(copula, u, result, **operation_kwargs)
 
 
 def predictive_mean(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     config: NumericalConfig | None = None,
@@ -232,7 +277,7 @@ def predictive_mean(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Fitted copula family.
     data : array_like of shape (n_observations, n_dimensions)
         Prediction history in pseudo-observation space.
@@ -246,6 +291,7 @@ def predictive_mean(
     ndarray
         Predictive parameter path of shape ``(n_observations,)``.
     """
+    registry_entry_for(copula)
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
         u = _as_float64_array_no_copy(data)
@@ -253,12 +299,15 @@ def predictive_mean(
     else:
         u = prepared
     _reject_public_posterior_cache(kwargs)
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
-    return strategy.predictive_mean(copula, u, result)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "predictive_mean", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
+    return strategy.predictive_mean(copula, u, result, **operation_kwargs)
 
 
 def mixture_h(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     config: NumericalConfig | None = None,
@@ -266,13 +315,16 @@ def mixture_h(
 ) -> FloatArray:
     """h-function for vine pseudo-observation propagation.
 
-    MLE:  h(u2, u1; theta_mle)
-    SCAR: E[h(u2, u1; Psi(x_k)) | u_{1:k-1}] using predictive weights
-    GAS:  h(u2, u1; Psi(g_t))
+    MLE:  h_{2|1}(u2 | u1; theta_mle)
+    SCAR: E[h_{2|1}(u2 | u1; Psi(x_k)) | u_{1:k-1}] using predictive weights
+    GAS:  h_{2|1}(u2 | u1; Psi(g_t))
+
+    The conditional direction uses the original copula's variable order,
+    including for asymmetric 90/270-degree rotations.
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Fitted bivariate copula family.
     data : array_like of shape (n_observations, 2)
         Pair pseudo-observations.
@@ -291,34 +343,26 @@ def mixture_h(
     NotImplementedError
         If ``copula`` does not provide pair-copula h-functions.
     """
+    registry_entry_for(copula)
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
         u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
     else:
         u = prepared
-    capabilities = get_copula_capabilities(copula)
-    if capabilities is not None and not capabilities.supports_pair_ops:
+    if is_multivariate_copula(copula):
         raise NotImplementedError(
             f"{type(copula).__name__} does not expose pair h-functions")
     _reject_public_posterior_cache(kwargs)
-    runtime_names = ('state_cache', 'current_cache_key', 'next_cache_key')
-    strategy_kwargs = {
-        name: value
-        for name, value in kwargs.items()
-        if name not in runtime_names
-    }
-    strategy = get_strategy_for_result(result, config=config, **strategy_kwargs)
-    runtime_kwargs = {
-        name: kwargs[name]
-        for name in runtime_names
-        if name in kwargs
-    }
-    return strategy.mixture_h(copula, u, result, **runtime_kwargs)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "mixture_h", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
+    return strategy.mixture_h(copula, u, result, **operation_kwargs)
 
 
 def sample(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     n: int,
@@ -337,7 +381,7 @@ def sample(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Fitted copula family or vine model.
     data : array_like of shape (n_observations, n_dimensions)
         Used by non-vine strategies where model reproduction requires fitted
@@ -348,25 +392,34 @@ def sample(
         internally.
     n : int
         Number of observations to generate.
+    config : NumericalConfig or None
+        Numerical and optimizer settings. VineCopula post-fit dispatch does
+        not support this argument and accepts only ``None``.
 
     Returns
     -------
     ndarray
         Simulated pseudo-observations of shape ``(n, n_dimensions)``.
     """
+    registry_entry_for(copula)
     if _is_generic_vine(copula):
-        return copula.sample(n, **kwargs)
-    if _is_legacy_cvine(copula):
+        _reject_vine_postfit_config(config, "sample")
         return copula.sample(n, **kwargs)
 
+    if "n_threads" in kwargs:
+        from pyscarcopula._native.threads import validate_n_threads
+        kwargs["n_threads"] = validate_n_threads(kwargs["n_threads"])
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
         u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
     else:
         u = prepared
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
-    return strategy.sample(copula, u, result, n, **kwargs)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "sample", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
+    return strategy.sample(copula, u, result, n, **operation_kwargs)
 
 
 def _resolve_predict_config(
@@ -411,8 +464,24 @@ def _resolve_predict_config(
     return out
 
 
+def _validate_non_vine_predict_config(pcfg: PredictConfig, explicit_options=()):
+    """Reject vine-only prediction controls at API and model entry points."""
+    unsupported = set(explicit_options).union(
+        name for name, active in (
+            ('dynamic_conditioning', pcfg.dynamic_conditioning != 'ignore'),
+            ('return_diagnostics', bool(pcfg.return_diagnostics)),
+            ('mcmc_steps', pcfg.mcmc_steps is not None),
+            ('mcmc_burnin', pcfg.mcmc_burnin is not None),
+        ) if active
+    )
+    if unsupported:
+        raise TypeError(
+            f"prediction option(s) supported only by vine models: "
+            f"{sorted(unsupported)}")
+
+
 def predict(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     n: int,
@@ -440,11 +509,11 @@ def predict(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Fitted copula family or vine model.
     data : array_like
         Pseudo-observations used as prediction history.
-        Passed to both C-vines and R-vines as their canonical ``u`` history.
+        Passed to regular-vine runtimes as their canonical ``u`` history.
     result : FitResult
         Ignored for vine copulas, which hold fitted edge state internally.
     given : dict[int, float] or None
@@ -454,10 +523,14 @@ def predict(
     n : int
         Number of samples.
     config : NumericalConfig or None
-        Numerical and optimizer settings.
+        Numerical and optimizer settings. VineCopula post-fit dispatch does
+        not support this argument and accepts only ``None``.
     predict_config : PredictConfig or None
         Bundled prediction options. Explicit non-default arguments override
         corresponding fields in this object.
+        ``dynamic_conditioning``, ``return_diagnostics``, ``mcmc_steps`` and
+        ``mcmc_burnin`` are vine-only options. Non-vine models reject these
+        direct keywords and non-default values in ``predict_config``.
     **kwargs
         Strategy- or vine-specific prediction options.
 
@@ -468,41 +541,34 @@ def predict(
         diagnostics are requested by a supporting vine model, returns the
         samples together with a diagnostics mapping.
     """
+    _reject_public_posterior_cache(kwargs)
+    vine_option_names = {
+        'dynamic_conditioning', 'return_diagnostics',
+        'mcmc_steps', 'mcmc_burnin',
+    }
+    explicit_vine_options = vine_option_names.intersection(kwargs)
     pcfg = _resolve_predict_config(predict_config, given, horizon, kwargs)
+    registry_entry_for(copula)
     if _is_generic_vine(copula):
+        _reject_vine_postfit_config(config, "predict")
         return copula.predict(
             n, u=data, predict_config=pcfg, **kwargs)
-    if _is_legacy_cvine(copula):
-        unsupported = []
-        if pcfg.dynamic_conditioning != 'ignore':
-            unsupported.append('dynamic_conditioning')
-        if pcfg.return_diagnostics:
-            unsupported.append('return_diagnostics')
-        if pcfg.mcmc_steps is not None:
-            unsupported.append('mcmc_steps')
-        if pcfg.mcmc_burnin is not None:
-            unsupported.append('mcmc_burnin')
-        if unsupported:
-            names = ', '.join(unsupported)
-            raise TypeError(
-                "legacy CVineCopula.predict does not support: "
-                f"{names}")
-        return copula.predict(
-            n,
-            u=data,
-            given=pcfg.given,
-            horizon=pcfg.horizon,
-            predictive_r_mode=pcfg.predictive_r_mode,
-            **kwargs,
-        )
 
+    _validate_non_vine_predict_config(pcfg, explicit_vine_options)
+
+    if "n_threads" in kwargs:
+        from pyscarcopula._native.threads import validate_n_threads
+        kwargs["n_threads"] = validate_n_threads(kwargs["n_threads"])
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
         u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
     else:
         u = prepared
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "predict", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
     return strategy.predict(
         copula,
         u,
@@ -511,12 +577,8 @@ def predict(
         given=pcfg.given,
         horizon=pcfg.horizon,
         predictive_r_mode=pcfg.predictive_r_mode,
-        **kwargs,
+        **operation_kwargs,
     )
-
-
-def _is_vine_copula(obj: object) -> bool:
-    return _is_generic_vine(obj) or _is_legacy_cvine(obj)
 
 
 def _is_generic_vine(obj: object) -> bool:
@@ -525,13 +587,3 @@ def _is_generic_vine(obj: object) -> bool:
     except ImportError:
         return False
     return isinstance(obj, VineCopula)
-
-
-def _is_legacy_cvine(obj: object) -> bool:
-    try:
-        from pyscarcopula.vine.cvine import CVineCopula
-    except ImportError:
-        return False
-    if isinstance(obj, CVineCopula):
-        return True
-    return False

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
+import json
 from pathlib import Path
 import re
 
@@ -18,9 +19,22 @@ DOC_FILES = (
     ROOT / "ARCHITECTURE.md",
     *sorted((ROOT / "docs").rglob("*.md")),
 )
-MIGRATION_NOTES = ROOT / "docs/release-notes/native-core-migration.md"
 WORKFLOW_FILES = sorted((ROOT / ".github/workflows").glob("*.yml"))
 OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
+
+
+def test_jacobi_docs_describe_native_gradient_sampling_and_singleton_contract():
+    estimation = (ROOT / "docs/guide/estimation-methods.md").read_text(encoding="utf-8")
+    backends = (ROOT / "docs/reference/scar-jacobi.md").read_text(encoding="utf-8")
+    mathematics = (ROOT / "docs/guide/mathematical-contracts.md").read_text(encoding="utf-8")
+    for guide in (estimation, backends):
+        assert "gradient_kind='native_finite_difference'" in guide
+        assert "one-row prepared evaluator" in guide or "one observation" in guide
+        assert "explicitly rejects `analytical_grad=True`" not in guide
+        assert "Not available with `spectral_coeff`" not in guide
+    for guide in (estimation, mathematics):
+        assert "Numba kernel" not in guide
+        assert "separate execution paths" in guide or "separate production implementations" in guide
 
 
 def _python_blocks(path):
@@ -49,8 +63,6 @@ def test_documented_python_blocks_compile_import_and_bind_public_calls():
             filename = f"{path}:{index}"
             compile(source, filename=filename, mode="exec")
             tree = ast.parse(source, filename=filename)
-            if path == MIGRATION_NOTES and "# Removed" in source:
-                continue
             imports = [
                 node for node in tree.body
                 if isinstance(node, (ast.Import, ast.ImportFrom))
@@ -104,45 +116,6 @@ def test_mkdocstrings_targets_are_importable():
             assert _resolve_documented_object(target) is not None
 
 
-def test_obsolete_namespace_is_confined_to_migration_notes():
-    obsolete = "pyscarcopula.copula.experimental"
-    for path in DOC_FILES:
-        if path == MIGRATION_NOTES:
-            continue
-        assert obsolete not in path.read_text(encoding="utf-8")
-
-
-def test_removed_native_backend_examples_do_not_return():
-    forbidden = re.compile(r"\bbackend\s*=")
-    for path in DOC_FILES:
-        if path == MIGRATION_NOTES:
-            continue
-        assert forbidden.search(path.read_text(encoding="utf-8")) is None
-
-
-def test_removed_public_aliases_do_not_return_to_docs_or_examples():
-    forbidden = (
-        "u_train=",
-        "LatentResult.alpha",
-        "pyscarcopula.numerical.auto_tm",
-        "pyscarcopula.numerical.tm_gradient",
-        "spectral_basis_order='adaptive'",
-        'spectral_basis_order="adaptive"',
-    )
-    for path in DOC_FILES:
-        if path == MIGRATION_NOTES:
-            continue
-        text = path.read_text(encoding="utf-8")
-        for value in forbidden:
-            assert value not in text, (
-                f"{path.relative_to(ROOT)} contains removed API {value!r}"
-            )
-
-    for path in sorted((ROOT / "examples").glob("*.ipynb")):
-        text = path.read_text(encoding="utf-8")
-        assert "u_train=" not in text
-
-
 def test_workflows_reference_existing_test_files():
     pattern = re.compile(r"tests/[A-Za-z0-9_./-]+\.py")
     for path in WORKFLOW_FILES:
@@ -152,90 +125,45 @@ def test_workflows_reference_existing_test_files():
             )
 
 
-def test_removed_experimental_namespace_is_physically_absent():
-    assert not (ROOT / "pyscarcopula/copula/experimental").exists()
-
-
-def test_tmgrid_remains_an_independent_manual_reference_api():
-    from pyscarcopula.numerical import TMGrid
-    from pyscarcopula.numerical.tm_grid import TMGrid as DirectTMGrid
-
-    assert TMGrid is DirectTMGrid
-
-    source = (
-        ROOT / "pyscarcopula/numerical/tm_grid.py"
-    ).read_text(encoding="utf-8")
-    assert "_cpp_extension" not in source
-    assert "_cpp_scar_ou" not in source
-    assert "deprecated" not in source.lower()
-
-    forbidden_import = "pyscarcopula.numerical.tm_grid import TMGrid"
-    numerical_root = ROOT / "pyscarcopula"
-    for path in numerical_root.rglob("*.py"):
-        relative = path.relative_to(ROOT).as_posix()
-        if relative in {
-                "pyscarcopula/numerical/tm_grid.py",
-                "pyscarcopula/numerical/__init__.py"}:
-            continue
-        assert forbidden_import not in path.read_text(encoding="utf-8"), (
-            f"production module imports TMGrid: {relative}"
-        )
-
-    docs = (
-        ROOT / "docs/guide/numerical-backends.md"
-    ).read_text(encoding="utf-8")
-    assert "Manual Python reference grid" in docs
-    assert (
-        "not a wrapper around the compiled SCAR evaluator"
-        in " ".join(docs.split())
-    )
-
-
-def test_public_docs_exclude_development_plans_and_phase_reports():
-    forbidden = (
-        "phase-8",
-        "phase 8",
-        "phase-9",
-        "release gate",
-        "release-gate",
-        "future work",
-        "not implemented",
-        "proposed api",
-    )
-    for path in DOC_FILES:
-        text = path.read_text(encoding="utf-8").lower()
-        for phrase in forbidden:
-            assert phrase not in text, (
-                f"{path.relative_to(ROOT)} contains development artifact "
-                f"{phrase!r}"
-            )
-
-    assert not (ROOT / "docs/validation").exists()
-    nav = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
-    assert "validation/" not in nav
-
-
-def test_notebooks_do_not_import_private_pyscarcopula_modules():
+def test_notebooks_only_import_the_approved_private_pobs_helper():
+    approved_private_import = "from pyscarcopula._utils import pobs"
     for path in sorted((ROOT / "examples").glob("*.ipynb")):
-        text = path.read_text(encoding="utf-8")
-        assert "from pyscarcopula._" not in text
-        assert "import pyscarcopula._" not in text
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        code = "\n".join(
+            "".join(cell.get("source", ()))
+            for cell in notebook.get("cells", ())
+            if cell.get("cell_type") == "code"
+        )
+        private_imports = {
+            line.strip()
+            for line in code.splitlines()
+            if line.strip().startswith((
+                "from pyscarcopula._",
+                "import pyscarcopula._",
+            ))
+        }
+        assert private_imports <= {approved_private_import}, (
+            f"{path.relative_to(ROOT)} imports an unapproved private helper: "
+            f"{sorted(private_imports - {approved_private_import})}"
+        )
+        if re.search(r"\bpobs\(", code):
+            assert approved_private_import in private_imports
+            assert "def pobs(" not in code
 
 
 def test_vinecopula_is_the_discoverable_canonical_vine_api():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    api = (ROOT / "docs/api/vine.md").read_text(encoding="utf-8")
     for public_surface in (
             "VineCopula()",
             "VineCopula.cvine(",
             "VineCopula.dvine(",
             "RVineMatrix.from_trees(",
             "natural_order_matrix"):
-        assert public_surface in readme
+        assert public_surface in api
 
-    api = (ROOT / "docs/api/vine.md").read_text(encoding="utf-8")
     assert api.index("## VineCopula") < api.index("## RVineCopula")
     assert "RVineCopula is VineCopula" in api
-    assert "legacy" in api.lower()
+    assert "compatibility name" in api.lower()
 
 
 def test_complete_public_documentation_examples_execute():
@@ -244,6 +172,7 @@ def test_complete_public_documentation_examples_execute():
             "docs/index.md",
             "docs/api/copulas.md",
             "docs/api/persistence.md",
+            "docs/api/static-models.md",
             "docs/guide/performance.md"):
         path = ROOT / relative_path
         namespace = {"__name__": "__documentation_example__"}
@@ -259,6 +188,10 @@ def test_complete_public_documentation_examples_execute():
         == (200,)
     )
     assert namespaces["docs/api/persistence.md"]["samples"].shape == (20, 2)
+    static = namespaces["docs/api/static-models.md"]
+    assert static["conditional"].shape == (10_000, 5)
+    np.testing.assert_array_equal(static["conditional"][:, 0], 0.25)
+    assert static["student_result"].correlation_matrix is None
     assert np.isfinite(
         namespaces["docs/guide/performance.md"]["result"].log_likelihood)
 
@@ -270,9 +203,9 @@ def test_quick_start_executes_as_one_workflow():
         exec(compile(source, filename=str(path), mode="exec"), namespace)
 
     assert namespace["u"].shape == (400, 2)
-    assert namespace["u_pred"].shape == (100_000, 2)
-    assert namespace["u_cond"].shape == (20_000, 2)
-    assert namespace["v"].shape == (2_000, 2)
+    assert namespace["u_pred"].shape == (500, 2)
+    assert namespace["u_cond"].shape == (500, 2)
+    assert namespace["v"].shape == (500, 2)
 
 
 def test_bivariate_guide_executes_as_one_workflow():
@@ -291,14 +224,14 @@ def test_bivariate_guide_executes_as_one_workflow():
     for source in _python_blocks(path):
         exec(compile(source, filename=str(path), mode="exec"), namespace)
 
-    assert namespace["u_pred"].shape == (100_000, 2)
-    assert namespace["u_cond"].shape == (20_000, 2)
-    assert namespace["u_current"].shape == (20_000, 2)
-    assert namespace["r_t"].shape == (80,)
+    assert namespace["u_pred"].shape == (500, 2)
+    assert namespace["u_cond"].shape == (500, 2)
+    assert namespace["u_current"].shape == (500, 2)
+    assert namespace["r_t"].shape == (120,)
 
 
 def test_factor_api_intro_example_executes():
-    path = ROOT / "docs/api/multivariate_models.md"
+    path = ROOT / "docs/api/factor.md"
     source = next(
         block for block in _python_blocks(path)
         if "FactorStudentEvaluator(operator, u).evaluate" in block
@@ -384,14 +317,14 @@ def test_documented_dynamic_predictive_mean_examples_execute():
 
 
 def test_documented_prediction_defaults_match_runtime():
-    from pyscarcopula import CVineCopula, VineCopula
+    from pyscarcopula import VineCopula
     from pyscarcopula.api import predict
 
-    for callable_ in (predict, CVineCopula.predict, VineCopula.predict):
+    for callable_ in (predict, VineCopula.predict):
         parameters = inspect.signature(callable_).parameters
         assert parameters["horizon"].default == "next"
 
-    for callable_ in (CVineCopula.predict, VineCopula.predict):
+    for callable_ in (VineCopula.predict,):
         parameters = inspect.signature(callable_).parameters
         assert parameters["predictive_r_mode"].default is None
 
@@ -444,7 +377,6 @@ def test_documented_public_imports():
     from pyscarcopula import (
         BivariateCopula,
         CopulaBase,
-        CopulaCapabilities,
         EquicorrGaussianCopula,
         MultivariateCopula,
         StochasticStudentCopula,
@@ -461,7 +393,6 @@ def test_documented_public_imports():
     assert StochasticStudentCopula is NamespacedStudent
     assert issubclass(BivariateCopula, CopulaBase)
     assert issubclass(MultivariateCopula, CopulaBase)
-    assert CopulaCapabilities().supports_gas is False
 
 
 def test_top_level_api_exposes_docstrings_and_complete_annotations():
@@ -491,10 +422,10 @@ def test_distribution_declares_pep561_typing_marker():
 
 
 def test_documented_vine_signatures_match_runtime():
-    from pyscarcopula import CVineCopula, RVineCopula, VineCopula
+    from pyscarcopula import RVineCopula, VineCopula
 
     assert RVineCopula is VineCopula
-    for cls in (CVineCopula, VineCopula):
+    for cls in (VineCopula,):
         sample_parameters = inspect.signature(cls.sample).parameters
         assert "n" in sample_parameters
         assert "u" in sample_parameters
@@ -520,8 +451,8 @@ def test_gradient_matrix_matches_diagnostic_vocabulary():
     expected_rows = (
         "| MLE | Built-in supported model | Analytical "
         "| `not_applicable` | `analytical` |",
-        "| GAS | Any supported scaling | Numerical finite differences "
-        "| `native` | `numerical_optimizer` |",
+        "| GAS | Any supported scaling | Native finite differences "
+        "| `native` | `native_finite_difference` |",
         "| SCAR-TM-OU | `analytical_grad=True` | Analytical native Jacobian "
         "| `not_applicable` | `analytical` |",
         "| SCAR-TM-JACOBI | `local_fixed`, analytical gradient "
@@ -578,3 +509,67 @@ def test_representative_documented_workflows_execute():
     assert vine.sample(5, rng=np.random.default_rng(1)).shape == (5, 3)
     assert vine.predict(
         5, u=u_vine, rng=np.random.default_rng(2)).shape == (5, 3)
+
+
+def test_small_factor_walkthrough_executes_in_order(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = ROOT / "docs/guide/factor-models.md"
+    namespace = {"__name__": "__documentation_example__"}
+    for source in _python_blocks(path):
+        # Explicitly separate large-output recipe is outside the small walkthrough.
+        if "large_d, large_k" in source:
+            continue
+        exec(compile(source, filename=str(path), mode="exec"), namespace)
+    assert namespace["u"].shape == (80, 20)
+    assert namespace["conditional"].shape == (128, 20)
+    np.testing.assert_array_equal(namespace["conditional"][:, 0], 0.25)
+    np.testing.assert_array_equal(namespace["conditional"][:, 3], 0.80)
+    np.testing.assert_array_equal(namespace["portable"].loadings, namespace["mapped"].loadings)
+
+
+def test_result_types_in_bivariate_workflow():
+    from pyscarcopula import GumbelCopula
+    from pyscarcopula._types import GASResult, LatentResult, MLEResult
+
+    u = GumbelCopula().sample_at_parameter(40, np.full(40, 1.8), rng=np.random.default_rng(9))
+    model = GumbelCopula()
+    for method, result_type, names in (
+        ("mle", MLEResult, None),
+        ("gas", GASResult, ("omega", "gamma", "beta")),
+        ("scar-tm-ou", LatentResult, ("kappa", "mu", "nu")),
+        ("scar-tm-jacobi", LatentResult, ("kappa", "m", "xi")),
+    ):
+        result = model.fit(u, method=method)
+        assert isinstance(result, result_type)
+        assert np.isfinite(result.log_likelihood)
+        if names:
+            assert tuple(result.params.names) == names
+
+
+def test_documented_joint_factor_example_uses_identifiable_rank():
+    from pyscarcopula import NumericalConfig, StochasticStudentCopula
+
+    path = ROOT / "docs/guide/multivariate_models.md"
+    namespace = dict(np=np, NumericalConfig=NumericalConfig,
+                     StochasticStudentCopula=StochasticStudentCopula)
+    blocks = _python_blocks(path)
+    data = next(block for block in blocks if 'size=(200, 5)' in block)
+    joint = next(block for block in blocks if 'joint = StochasticStudentCopula(' in block)
+    for source in (data, joint):
+        exec(compile(source, filename=str(path), mode="exec"), namespace)
+    assert namespace["joint"].d >= 2 * namespace["joint"].factor_rank + 1
+    assert np.isfinite(namespace["joint_result"].log_likelihood)
+    assert namespace["joint_result"].correlation_matrix is None
+
+
+def test_documented_archimedean_vine_transform_example_executes():
+    from pyscarcopula import VineCopula
+
+    path = ROOT / "docs/guide/transforms.md"
+    source = next(block for block in _python_blocks(path) if 'bounded_vine =' in block)
+    namespace = dict(VineCopula=VineCopula,
+                     u=np.random.default_rng(41).uniform(0.05, 0.95, (40, 3)))
+    exec(compile(source, filename=str(path), mode="exec"), namespace)
+    draws = namespace["bounded_vine"].sample(10, rng=np.random.default_rng(42))
+    assert draws.shape == (10, 3)
+    assert np.all((draws > 0) & (draws < 1))

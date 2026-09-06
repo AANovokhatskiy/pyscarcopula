@@ -289,50 +289,6 @@ def test_gas_current_and_next_point_states_are_not_interchanged(family):
     assert float(current.r[0]) != pytest.approx(float(following.r[0]), abs=1e-8)
 
 
-@pytest.mark.validation
-@pytest.mark.parametrize("method", ["SCAR-P-OU", "SCAR-M-OU"])
-def test_stochastic_student_mc_methods_match_documented_stationary_mixture(method):
-    model = StochasticStudentCopula(DIMENSION, R=CORRELATION)
-    result = LatentResult(
-        log_likelihood=0.0,
-        method=method,
-        copula_name=model.name,
-        success=True,
-        params=ou_params(2.0, 0.4, 2.3),
-        n_tr=16,
-        M_iterations=1 if method == "SCAR-M-OU" else None,
-    )
-    oracle = ScalarScarOuReference(
-        2.0,
-        0.4,
-        2.3,
-        24,
-        student_df_parameter_from_state,
-        lambda row, df: student_copula_log_density(row, df, CORRELATION),
-        n_nodes=501,
-        range_sigma=8.0,
-    )
-    history = np.random.default_rng(20261018).uniform(
-        0.08, 0.92, size=(24, DIMENSION)
-    )
-    sample = api_predict(
-        model,
-        history,
-        result,
-        14_000,
-        given=POINT_GIVEN,
-        rng=np.random.default_rng(20261019),
-    )
-    pit = oracle.mixture_cdf(
-        sample[:, 2],
-        oracle.stationary,
-        lambda values, parameter: student_conditional_cdf(
-            values, parameter, CORRELATION, POINT_GIVEN
-        ),
-    )
-    assert_uniform_pit(pit, numerical_floor=0.007)
-
-
 def test_factor_student_component_does_not_need_dense_materialization(monkeypatch):
     model = StochasticStudentCopula(
         DIMENSION,

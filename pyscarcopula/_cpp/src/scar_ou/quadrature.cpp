@@ -1,5 +1,6 @@
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
+#include "scar/scar_ou/quadrature.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -75,6 +76,36 @@ bool hermite_rule_invariants_hold(
         }
     }
     return max_orthogonality_error <= orthogonality_tol;
+}
+
+void fill_hermite_basis(
+    const std::vector<double>& z,
+    int quad_order,
+    int basis_order,
+    std::vector<double>& basis) {
+
+    // Callers validate Q*M before allocating. Keep the recurrence identical
+    // for newly computed and reused quadrature nodes.
+    basis.assign(
+        static_cast<std::size_t>(quad_order)
+            * static_cast<std::size_t>(basis_order), 0.0);
+    for (int q = 0; q < quad_order; ++q) {
+        const std::size_t base =
+            static_cast<std::size_t>(q)
+            * static_cast<std::size_t>(basis_order);
+        basis[base] = 1.0;
+        if (basis_order > 1) {
+            basis[base + 1] = z[static_cast<std::size_t>(q)];
+        }
+        for (int n = 1; n < basis_order - 1; ++n) {
+            basis[base + static_cast<std::size_t>(n + 1)] =
+                (z[static_cast<std::size_t>(q)]
+                    * basis[base + static_cast<std::size_t>(n)]
+                 - std::sqrt(static_cast<double>(n))
+                    * basis[base + static_cast<std::size_t>(n - 1)])
+                / std::sqrt(static_cast<double>(n + 1));
+        }
+    }
 }
 
 bool tridiagonal_ql(
@@ -221,25 +252,7 @@ bool standard_normal_hermite_rule_golub_welsch(
         }
     }
 
-    basis.assign(basis_elements, 0.0);
-    for (int q = 0; q < quad_order; ++q) {
-        const std::size_t base =
-            static_cast<std::size_t>(q)
-            * static_cast<std::size_t>(basis_order);
-        basis[base] = 1.0;
-        if (basis_order > 1) {
-            basis[base + 1] =
-                z[static_cast<std::size_t>(q)];
-        }
-        for (int n = 1; n < basis_order - 1; ++n) {
-            basis[base + static_cast<std::size_t>(n + 1)] =
-                (z[static_cast<std::size_t>(q)]
-                    * basis[base + static_cast<std::size_t>(n)]
-                 - std::sqrt(static_cast<double>(n))
-                    * basis[base + static_cast<std::size_t>(n - 1)])
-                / std::sqrt(static_cast<double>(n + 1));
-        }
-    }
+    fill_hermite_basis(z, quad_order, basis_order, basis);
     return hermite_rule_invariants_hold(
         z, weights, basis, quad_order, basis_order);
 }
@@ -377,6 +390,21 @@ bool load_cached_hermite_rule(
     weights = rule->weights;
     basis = rule->basis;
     return true;
+}
+
+std::shared_ptr<const CachedHermiteRule> find_cached_hermite_nodes(
+    int quad_order) {
+
+    std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
+    const auto& cache = hermite_rule_cache();
+    // Reuse only storage already covered by the existing entry/byte limits.
+    // Exact-key hit/miss statistics and LRU policy remain unchanged.
+    for (const auto& entry : cache.entries) {
+        if ((entry.first >> 32) == static_cast<std::uint32_t>(quad_order)) {
+            return entry.second.rule;
+        }
+    }
+    return {};
 }
 
 bool load_cached_hermite_rule(
@@ -541,24 +569,28 @@ bool standard_normal_hermite_rule_uncached(
         weights[static_cast<std::size_t>(right)] = normal_weight;
     }
 
-    for (int q = 0; q < quad_order; ++q) {
-        const std::size_t base =
-            static_cast<std::size_t>(q)
-            * static_cast<std::size_t>(basis_order);
-        basis[base] = 1.0;
-        if (basis_order > 1) {
-            basis[base + 1] = z[static_cast<std::size_t>(q)];
-        }
-        for (int n = 1; n < basis_order - 1; ++n) {
-            basis[base + static_cast<std::size_t>(n + 1)] =
-                (z[static_cast<std::size_t>(q)]
-                    * basis[base + static_cast<std::size_t>(n)]
-                 - std::sqrt(static_cast<double>(n))
-                    * basis[base + static_cast<std::size_t>(n - 1)])
-                / std::sqrt(static_cast<double>(n + 1));
-        }
-    }
+    fill_hermite_basis(z, quad_order, basis_order, basis);
+    return hermite_rule_invariants_hold(
+        z, weights, basis, quad_order, basis_order);
+}
 
+bool build_hermite_rule(
+    int quad_order,
+    int basis_order,
+    std::vector<double>& z,
+    std::vector<double>& weights,
+    std::vector<double>& basis) {
+
+    const auto cached = find_cached_hermite_nodes(quad_order);
+    if (!cached) {
+        return standard_normal_hermite_rule_uncached(
+            quad_order, basis_order, z, weights, basis);
+    }
+    // Nodes/weights depend on Q alone in both Newton and Golub-Welsch paths.
+    // The shared owner remains valid if another thread evicts the donor rule.
+    z = cached->z;
+    weights = cached->weights;
+    fill_hermite_basis(z, quad_order, basis_order, basis);
     return hermite_rule_invariants_hold(
         z, weights, basis, quad_order, basis_order);
 }
@@ -621,7 +653,7 @@ bool standard_normal_hermite_rule(
     if (load_cached_hermite_rule(quad_order, basis_order, z, weights, basis)) {
         return true;
     }
-    if (!standard_normal_hermite_rule_uncached(
+    if (!build_hermite_rule(
             quad_order, basis_order, z, weights, basis)) {
         return false;
     }
@@ -646,7 +678,7 @@ bool standard_normal_hermite_rule_with_weighted_basis(
             quad_order, basis_order, z, weights, basis, weighted_basis)) {
         return true;
     }
-    if (!standard_normal_hermite_rule_uncached(
+    if (!build_hermite_rule(
             quad_order, basis_order, z, weights, basis)) {
         return false;
     }
@@ -923,3 +955,33 @@ void local_gh_predict_matvec(
 }
 
 }  // namespace scar_internal
+
+namespace scar {
+
+Result<OuHermiteRule> ou_hermite_rule(int quad_order, int basis_order) {
+    Result<OuHermiteRule> result;
+    if (basis_order <= 0 || quad_order < basis_order
+        || static_cast<std::size_t>(quad_order) > scar_internal::kMaxSpectralOrder) {
+        result.status = Status::InvalidParameter;
+        return result;
+    }
+    auto& rule = result.value;
+    if (!scar_internal::standard_normal_hermite_rule(
+            quad_order, basis_order, rule.nodes, rule.weights, rule.basis)) {
+        result.status = Status::NumericalFailure;
+        result.value = {};
+        return result;
+    }
+    rule.quad_order = quad_order;
+    rule.basis_order = basis_order;
+    return result;
+}
+
+Result<int> ou_default_quad_order(int basis_order) {
+    if (basis_order <= 0 || basis_order > (std::numeric_limits<int>::max() - 16) / 2) {
+        return {0, Status::InvalidParameter, {}};
+    }
+    return success(std::max(2 * basis_order + 16, 48));
+}
+
+}  // namespace scar

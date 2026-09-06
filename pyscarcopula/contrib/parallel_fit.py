@@ -12,15 +12,15 @@ from dataclasses import dataclass
 import multiprocessing as mp
 from typing import Any, Mapping, Sequence
 
-import numpy as np
-
 from pyscarcopula._parallel import (
     create_worker_model,
     get_copula_constructor,
     resolve_parallelism as _resolve_parallelism,
     validate_n_jobs as _validate_n_jobs,
+    validate_model_fit_kwargs,
     with_n_threads as _with_n_threads,
 )
+from pyscarcopula.numerical._arrays import as_float64_array
 
 
 @dataclass(frozen=True)
@@ -84,12 +84,15 @@ def fit_independent(
     rule and can therefore carry task-specific initial points or optimizer
     settings.  Only constructor-level structural model parameters are copied;
     transient caches and previous fit state are intentionally excluded.
+    Nonreal data and unknown or wrong-method fit keywords are rejected before
+    any task executes. Failed optimizer results remain available in the batch;
+    inspect their ``success`` flags before using a fitted model.
 
     When ``n_jobs > 1``, omitted ``n_threads`` resolves to ``1``.  Passing an
     explicit larger value opts into nested process/thread parallelism and is
     recorded in ``batch.diagnostics``.
     """
-    data_values = [np.asarray(data, dtype=np.float64) for data in datasets]
+    data_values = [as_float64_array(data, name="data") for data in datasets]
     n_tasks = len(data_values)
     if n_tasks == 0:
         raise ValueError("datasets must contain at least one task")
@@ -110,6 +113,7 @@ def fit_independent(
     tasks = []
     for copula, data, kwargs in zip(
             copula_values, data_values, kwargs_values):
+        validate_model_fit_kwargs(copula, method, kwargs)
         copula_class, constructor_kwargs = get_copula_constructor(copula)
         tasks.append((
             copula_class, constructor_kwargs, data, method, kwargs))

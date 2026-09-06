@@ -5,7 +5,7 @@ import pandas as pd
 from pyscarcopula._utils import pobs
 from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
-    IndependentCopula, CVineCopula, GaussianCopula, StudentCopula,
+    IndependentCopula, GaussianCopula, StudentCopula,
     BivariateGaussianCopula,
 )
 

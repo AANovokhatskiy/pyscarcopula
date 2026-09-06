@@ -1,7 +1,6 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
-#include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
@@ -23,14 +22,17 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
 
     const OuNumericalConfig config = with_default_quad_order(raw_config);
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_loglik(SCAR_INVALID_TRANSFORM, OuBackend::Spectral);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_loglik(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
     std::size_t spectral_elements = 0;
-    if (n_obs <= 0
+    if (n_obs < 2
         || !scar_internal::valid_spectral_dimensions(
             config.spectral_quad_order,
             config.spectral_basis_order,
@@ -57,7 +59,7 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
     }
 
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     const double dt = n_obs > 1 ? 1.0 / static_cast<double>(n_obs - 1) : 1.0;
     const double rho = std::exp(-params.kappa * dt);
 
@@ -75,8 +77,7 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
     }
     std::vector<double> r_grid;
     std::vector<double> dpsi_grid;
-    scar_internal::copula_prepare_grid_transform(
-        copula, x_grid, r_grid, dpsi_grid);
+    emission.prepare_grid_transform(x_grid, r_grid, dpsi_grid);
 
     std::vector<double> coeff(
         static_cast<std::size_t>(config.spectral_basis_order), 0.0);
@@ -89,8 +90,7 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
 
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
         double emission_log_scale = 0.0;
-        scar_internal::copula_pdf_row_precomputed_flat(
-            copula,
+        emission.fill_density_row(
             observation_values,
             t,
             r_grid,
@@ -124,8 +124,7 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
     }
 
     double emission_log_scale = 0.0;
-    scar_internal::copula_pdf_row_precomputed_flat(
-        copula,
+    emission.fill_density_row(
         observation_values,
         0,
         r_grid,
@@ -145,14 +144,10 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
     if (!std::isfinite(likelihood_scaled) || likelihood_scaled <= 0.0) {
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
     }
-    return {
-        std::log(likelihood_scaled) + log_scale,
-        OuBackend::Spectral,
-        SCAR_OK,
-        -1,
-        {},
-        SCAR_FALLBACK_NONE,
-    };
+    LogLikResult out;
+    out.log_likelihood = std::log(likelihood_scaled) + log_scale;
+    out.backend = OuBackend::Spectral;
+    return out;
 }
 
 LogLikResult ScarOuEvaluator::loglik_local_gh(
@@ -162,7 +157,10 @@ LogLikResult ScarOuEvaluator::loglik_local_gh(
     const OuNumericalConfig& config) const {
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_loglik(SCAR_INVALID_TRANSFORM, OuBackend::LocalGh);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
@@ -205,11 +203,11 @@ LogLikResult ScarOuEvaluator::loglik_local_gh(
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::LocalGh);
     }
 
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     std::vector<double> r_grid;
     std::vector<double> dpsi_grid;
-    scar_internal::copula_prepare_grid_transform(
-        copula, grid.x_grid, r_grid, dpsi_grid);
+    emission.prepare_grid_transform(
+        grid.x_grid, r_grid, dpsi_grid);
     std::vector<double> msg(static_cast<std::size_t>(grid.K), 1.0);
     std::vector<double> v(static_cast<std::size_t>(grid.K), 0.0);
     std::vector<double> next_msg(static_cast<std::size_t>(grid.K), 0.0);
@@ -217,8 +215,7 @@ LogLikResult ScarOuEvaluator::loglik_local_gh(
     double log_scale = 0.0;
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
         double emission_log_scale = 0.0;
-        scar_internal::copula_pdf_row_precomputed_flat(
-            copula,
+        emission.fill_density_row(
             observation_values,
             t,
             r_grid,
@@ -254,8 +251,7 @@ LogLikResult ScarOuEvaluator::loglik_local_gh(
     }
 
     double emission_log_scale = 0.0;
-    scar_internal::copula_pdf_row_precomputed_flat(
-        copula,
+    emission.fill_density_row(
         observation_values,
         0,
         r_grid,
@@ -270,14 +266,13 @@ LogLikResult ScarOuEvaluator::loglik_local_gh(
     if (!std::isfinite(result) || result <= 0.0) {
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::LocalGh);
     }
-    return {
-        std::log(result) + log_scale,
-        OuBackend::LocalGh,
-        SCAR_OK,
-        -1,
-        {},
-        SCAR_FALLBACK_NONE,
-    };
+    LogLikResult out;
+    out.log_likelihood = std::log(result) + log_scale;
+    out.backend = OuBackend::LocalGh;
+    out.K_requested = grid.K_requested;
+    out.K_effective = grid.K;
+    out.grid_was_capped = grid.adaptive_was_capped;
+    return out;
 }
 
 LogLikResult ScarOuEvaluator::loglik_matrix(
@@ -287,7 +282,10 @@ LogLikResult ScarOuEvaluator::loglik_matrix(
     const OuNumericalConfig& config) const {
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_loglik(SCAR_INVALID_TRANSFORM, OuBackend::Matrix);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
@@ -325,9 +323,9 @@ LogLikResult ScarOuEvaluator::loglik_matrix(
         return invalid_loglik(SCAR_INVALID_SIZE, OuBackend::Matrix);
     }
     double value = -std::numeric_limits<double>::infinity();
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::matrix_backward_loglik(
-            copula,
+            emission,
             grid,
             transition,
             observation_values,
@@ -335,14 +333,13 @@ LogLikResult ScarOuEvaluator::loglik_matrix(
             value)) {
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Matrix);
     }
-    return {
-        value,
-        OuBackend::Matrix,
-        SCAR_OK,
-        -1,
-        {},
-        SCAR_FALLBACK_NONE,
-    };
+    LogLikResult out;
+    out.log_likelihood = value;
+    out.backend = OuBackend::Matrix;
+    out.K_requested = grid.K_requested;
+    out.K_effective = grid.K;
+    out.grid_was_capped = grid.adaptive_was_capped;
+    return out;
 }
 
 }  // namespace scar

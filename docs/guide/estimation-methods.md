@@ -11,6 +11,30 @@ see [Mathematical Contracts](mathematical-contracts.md).
 Each estimation method supports a defined set of model families. Unsupported
 combinations fail before optimization starts.
 
+## Model and method compatibility
+
+| Model / correlation policy | MLE | GAS | SCAR-TM-OU | SCAR-TM-JACOBI |
+|---|---|---|---|---|
+| Gumbel, Clayton, Frank, Joe, bivariate Gaussian | Yes | Yes | Yes | Yes |
+| Static Gaussian: fixed, shrinkage, cholesky, factor two-stage | Yes | No | No | No |
+| Static Student: fixed, shrinkage, cholesky, factor two-stage or joint | Yes | No | No | No |
+| Equicorrelation Gaussian | Yes | Yes | Yes | No |
+| Stochastic Student: fixed, shrinkage, factor two-stage | Yes | Yes | Yes | No |
+| Stochastic Student: cholesky | Yes | No | Yes | No |
+| Stochastic Student: factor joint | Yes | No | No | No |
+| VineCopula: supported pair families on each active edge | Yes | Yes | Yes | Yes |
+
+Independence has no fitted dependence parameter; independent vine edges stay
+constant instead of running a dynamic optimizer. Jacobi evolves positive
+family-scale tau; rotations determine the corresponding observed direction.
+Gaussian and Frank use their positive-dependence branch for Jacobi.
+For factor joint fits, `d >= 2*k + 1` is required. Unknown Python subclasses
+cannot acquire native support through inheritance.
+
+Start with MLE, inspect the result, then select dynamics. Vine family
+selection uses an MLE baseline before any dynamic edge refit. See
+[Vine Copulas](vine.md#truncation) for truncation and dynamic-failure policies.
+
 ## Method Summary
 
 | Method | Key | State | Main use |
@@ -20,9 +44,11 @@ combinations fail before optimization starts.
 | SCAR-TM-OU | `'scar-tm-ou'` | OU latent state mapped to bivariate dependence or Student degrees of freedom | Deterministic stochastic-latent likelihood |
 | SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Jacobi diffusion for Kendall's tau | Bounded tau dynamics with deterministic filtering |
 
-All dynamic methods return a `LatentResult` with `params`,
-`log_likelihood`, optimizer status, and enough metadata for `predict`,
-`predictive_mean`, and GoF utilities. Model sampling is available where the
+GAS returns `GASResult`; SCAR methods return `LatentResult`. Both contain
+`params`, `log_likelihood`, optimizer status, and fitted settings for
+`predict`, `predictive_mean`, and GoF. See
+[Configuration and Results](../api/configuration.md#fit-results) for result
+types and their common and method-specific fields. Model sampling is available where the
 strategy implements a path simulator. SCAR-TM-JACOBI supports both
 unconditional `sample` and conditional or unconditional `predict`.
 Its default unconditional sampler is the likelihood-consistent
@@ -38,12 +64,13 @@ outer optimizer and the corresponding diagnostics.
 | Method | Configuration | Optimizer gradient | `model_score` | `gradient_kind` |
 |--------|---------------|--------------------|---------------|-----------------|
 | MLE | Built-in supported model | Analytical | `not_applicable` | `analytical` |
-| GAS | Any supported scaling | Numerical finite differences | `native` | `numerical_optimizer` |
+| GAS | Any supported scaling | Native finite differences | `native` | `native_finite_difference` |
 | SCAR-TM-OU | `analytical_grad=True` | Analytical native Jacobian | `not_applicable` | `analytical` |
 | SCAR-TM-OU | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
 | SCAR-TM-JACOBI | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
 | SCAR-TM-JACOBI | `local_fixed`, analytical gradient | Model-provided | `not_applicable` | `analytical` |
 | SCAR-TM-JACOBI | `local`, `spectral_matrix`, or `auto`, analytical gradient | Model-provided | `not_applicable` | `semi_analytical` |
+| SCAR-TM-JACOBI | `spectral_coeff`, `analytical_grad=True` | Native finite differences | `not_applicable` | `native_finite_difference` |
 
 For joint Stochastic Student SCAR-TM-OU fits, the analytical-gradient path
 includes OU and static-correlation derivatives. Result diagnostics report the
@@ -141,16 +168,25 @@ GAS uses the compiled evaluator for likelihood, score recursion, state
 updates, prediction, and the bivariate Rosenblatt path for supported built-in
 copulas. Unsupported copulas and missing compiled support fail immediately.
 
-Use `scaling='unit'` as the numerical baseline. `scaling='fisher'` uses
-nested finite differences and clipping/floor thresholds; its fitted optimum
-can be sensitive to optimizer finite-difference steps.
+Use `scaling='unit'` as the numerical baseline. `scaling='fisher'` uses the
+analytical copula score as its numerator and a finite-difference curvature
+estimate with clipping/floor thresholds; its fitted optimum can be sensitive
+to optimizer finite-difference steps.
 
 The GAS copula score and filtering recursion are model calculations.
 They are not the optimizer Jacobian with respect to
-`(omega, gamma, beta)`. GAS passes objective values to L-BFGS-B, which
-therefore computes that outer gradient numerically. Result
-diagnostics distinguish these concepts with `model_score='native'` and
-`optimizer_gradient='numerical'`.
+`(omega, gamma, beta)`. The compiled evaluator computes that outer gradient
+with two-point finite differences matching SciPy's forward-step and bound
+adjustment conventions, and returns the objective and gradient through
+one L-BFGS-B callback. Result diagnostics distinguish these concepts with
+`model_score='native'`, `optimizer_gradient='native'`, and
+`gradient_kind='native_finite_difference'`. `maxfun` and `nfev` use scalar
+objective budget units, including numerical-gradient probes: four units
+per native provider call, or five for joint GAS/shrinkage fitting. These equal
+the scalar evaluation counts when the finite-difference call completes.
+A numerical failure can abort the native call earlier while still charging
+the full budget units, so `nfev` is not a physical likelihood-call counter.
+An explicit `finite_diff_rel_step` takes precedence over the absolute `eps` step.
 
 ## SCAR-TM-OU
 
@@ -292,7 +328,13 @@ derivatives are analytical. For `local`, `spectral_matrix`, and either backend
 selected by `auto`, setup arrays are differentiated by finite differences and
 the filtering recursion is differentiated analytically; these modes are
 therefore semi-analytical. `spectral_coeff` is a coefficient-space comparison
-backend and explicitly rejects `analytical_grad=True`.
+backend. With `analytical_grad=True`, it supplies a complete native central
+finite-difference objective gradient and reports
+`gradient_kind='native_finite_difference'`; it is not an analytical derivative.
+
+Jacobi fitting requires at least two observations because its transition time
+step is `dt = 1 / (T - 1)`. A one-row prepared evaluator remains valid for
+conditioning an existing state, which does not construct a transition.
 
 `LatentResult.diagnostics` reports `gradient_requested`, `gradient_used`,
 `gradient_kind`, `setup_derivative`, `filter_derivative`, and the transition
@@ -314,9 +356,10 @@ likelihood. An experimental `sampling_method='lamperti_euler'` instead
 simulates a continuous tau path with substepped Euler--Maruyama in the
 Lamperti coordinate. It is useful as an independent discretization comparison
 but does not change the fitting backend and is not an exact diffusion sampler.
-Its Numba kernel is strictly sequential and consumes Gaussian innovations
-created by the caller's NumPy generator in bounded chunks. The Python engine
-remains available as a pathwise reference implementation.
+Its mandatory native C++ kernel is strictly sequential and consumes Gaussian
+innovations created by the caller's NumPy generator in bounded chunks. Legacy
+`lamperti_engine='numba'` and `'python'` labels normalize to `'native'`; they
+do not select separate production implementations.
 
 For an explicit moving-grid local transition,
 `transition_storage='sparse'` selects the `O(K * gh_order)` sparse filtering
@@ -344,6 +387,24 @@ produces very narrow one-step Jacobi transitions. In this regime the local
 transition produces a nonnegative row-normalized matrix. Change
 `basis_order` only when comparing the spectral approximation against the local
 backend; otherwise leave backend selection to `transition_method='auto'`.
+
+## Fit options and initialization
+
+Built-in strategies separate constructor settings from arguments to each
+operation. For example, `K` configures SCAR-TM-OU numerical evaluation, while
+`alpha0`, `initial_mle_result`, and `maxiter` belong to fitting; passing those
+fit arguments to `mlog_likelihood` or a post-fit likelihood call raises
+`TypeError`. Unknown keywords also raise `TypeError` instead of being ignored.
+Sampling and prediction arguments such as `rng` and `given` are routed to the
+sampler, separately from numerical constructor overrides.
+
+For automatic SCAR-TM-OU initialization, `config.mle_optimizer` controls the
+internal static MLE even when `smart_init=True`. The resulting static estimate
+is reused by the initialization heuristics and their fallbacks. Supplying
+`initial_mle_result` avoids that static fit; an explicit `alpha0` bypasses
+automatic initialization entirely. If the internal MLE raises with
+`smart_init=True`, initialization uses the constant fallback and records the
+error in its diagnostics. With `smart_init=False`, the MLE error propagates.
 
 ## Sampling, Prediction, and Diagnostics
 

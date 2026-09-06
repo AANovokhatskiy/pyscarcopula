@@ -1,7 +1,6 @@
 """Contracts for shared static multivariate MLE orchestration."""
 
 from types import SimpleNamespace
-import inspect
 
 import numpy as np
 import pytest
@@ -13,6 +12,7 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
+from pyscarcopula._native import NativeUnsupported
 from pyscarcopula.strategy import multivariate_mle
 from pyscarcopula.strategy.multivariate_mle import (
     StaticMLEEvaluation,
@@ -30,28 +30,88 @@ def _problem(evaluate):
     )
 
 
-def test_evaluator_failure_supplies_nonzero_optimizer_gradient(monkeypatch):
-    captured = {}
+@pytest.mark.parametrize('size,representation', [
+    (0, 'complex'), (2, 'complex'), (2, 'object'), (2, 'nested')])
+@pytest.mark.parametrize('imaginary', [0., .2])
+def test_complex_initial_point_rejected_before_objective_or_optimizer(
+        monkeypatch, size, representation, imaginary):
+    values = np.full(size, 1. + imaginary * 1j)
+    if representation == 'object':
+        values = values.astype(object)
+    elif representation == 'nested':
+        outer = np.empty(size, dtype=object)
+        for index, value in enumerate(values):
+            outer[index] = np.array(value)
+        values = outer
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('complex initial point reached computation')
+
+    monkeypatch.setattr(multivariate_mle, 'minimize', unexpected)
+    problem = StaticMLEProblem('test', values, ((None, None),) * size, unexpected)
+    with pytest.raises(TypeError, match='initial_parameters.*real'):
+        run_static_multivariate_mle(problem, optimizer_options={}, fail_value=1e10)
+
+
+def test_nested_real_initial_point_remains_supported():
+    values = np.empty(2, dtype=object)
+    values[0], values[1] = np.array(.7), np.array(-.4)
+    values.setflags(write=False)
+    problem = StaticMLEProblem(
+        'quadratic', values, ((None, None),) * 2,
+        lambda x: StaticMLEEvaluation(float(x @ x), 2 * x))
+    outcome = run_static_multivariate_mle(problem, optimizer_options={}, fail_value=1e10)
+    assert outcome.accepted
+    np.testing.assert_allclose(outcome.parameters, [0., 0.], atol=1e-12)
+    assert values[0].item() == .7 and values[1].item() == -.4
+    assert not values.flags.writeable
+
+
+@pytest.mark.parametrize('dtype', [np.float32, np.float64, object])
+def test_real_initial_point_preserves_caller_storage(dtype):
+    storage = np.array([1., 9., -1., 9.], dtype=dtype)
+    values = storage[::2]
+    values.setflags(write=False)
+    before = storage.copy()
+    problem = StaticMLEProblem(
+        'quadratic', values, ((None, None),) * 2,
+        lambda x: StaticMLEEvaluation(float(x @ x), 2 * x))
+    outcome = run_static_multivariate_mle(
+        problem, optimizer_options={}, fail_value=1e10)
+    assert outcome.accepted
+    np.testing.assert_allclose(outcome.parameters, [0., 0.], atol=1e-12)
+    np.testing.assert_array_equal(storage, before)
+
+
+@pytest.mark.parametrize('dimension', [0, 1])
+@pytest.mark.parametrize('options,key', [
+    ({'optimizer_typo': 3}, 'optimizer_typo'),
+    ({'gtol': np.nan}, 'gtol'),
+    ({'maxiter': 0}, 'maxiter'),
+    ({'eps': np.complex128(1e-5 + .2j)}, 'eps'),
+])
+def test_invalid_options_rejected_before_initial_evaluation(dimension, options, key):
+    calls = []
 
     def evaluate(parameters):
-        raise ValueError("synthetic numerical failure")
+        calls.append(parameters)
+        return StaticMLEEvaluation(float(np.sum(parameters ** 2)), 2 * parameters)
 
-    def fake_minimize(fun, x0, **kwargs):
-        value, gradient = fun(x0)
-        captured["value"] = value
-        captured["gradient"] = gradient
-        return SimpleNamespace(
-            x=x0.copy(), fun=value, success=True, nfev=1, message="ok")
+    problem = StaticMLEProblem('test', np.zeros(dimension),
+                               ((None, None),) * dimension, evaluate)
+    with pytest.raises((TypeError, ValueError), match=key):
+        run_static_multivariate_mle(problem, optimizer_options=options, fail_value=1e10)
+    assert calls == []
 
-    monkeypatch.setattr(multivariate_mle, "minimize", fake_minimize)
-    outcome = run_static_multivariate_mle(
-        _problem(evaluate), optimizer_options={"gtol": 1e-4},
-        fail_value=1e10)
 
-    assert captured["value"] == 1e10
-    assert np.linalg.norm(captured["gradient"]) > 0.0
-    assert outcome.accepted is False
-    assert outcome.evaluation is None
+def test_typed_evaluator_failure_propagates_without_python_gradient():
+    def evaluate(parameters):
+        raise NativeUnsupported("synthetic typed evaluator failure")
+
+    with pytest.raises(NativeUnsupported, match="typed evaluator failure"):
+        run_static_multivariate_mle(
+            _problem(evaluate), optimizer_options={"gtol": 1e-4},
+            fail_value=1e10)
 
 
 def test_unexpected_objective_error_propagates():
@@ -200,11 +260,3 @@ def test_models_report_shared_static_strategy(model):
         "shared_multivariate")
     assert result.diagnostics["final_validation_passed"] is True
     assert result.diagnostics["objective_match"] is True
-
-
-def test_model_modules_do_not_own_scipy_optimizer_loops():
-    from pyscarcopula.copula.multivariate import gaussian, student
-    from pyscarcopula.copula.multivariate import stochastic_student
-
-    for module in (gaussian, student, stochastic_student):
-        assert "minimize(" not in inspect.getsource(module)

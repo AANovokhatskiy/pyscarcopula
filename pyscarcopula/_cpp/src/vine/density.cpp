@@ -1,6 +1,10 @@
 #include "scar/rvine.hpp"
 
+#include "density_internal.hpp"
+
+#include "scar/core/threading.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/numerical_validation.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,7 +25,7 @@ int prepare_density_plan_request(
     std::vector<PreparedEdge>& prepared_edges,
     std::size_t& value_count,
     std::int64_t& failure_row) {
-    if (n_threads <= 0 || observation_rows < 0
+    if (!scar_internal::valid_thread_count(n_threads) || observation_rows < 0
         || observation_columns != plan.dimension
         || parameters.n_rows != observation_rows
         || !validate_density_plan(plan, edges.size())) {
@@ -43,11 +47,11 @@ int prepare_density_plan_request(
     if (prepare_status != SCAR_OK) {
         return prepare_status;
     }
-    for (std::size_t index = 0; index < value_count; ++index) {
-        if (!std::isfinite(observations[index])) {
-            failure_row = static_cast<std::int64_t>(index / dimension);
-            return SCAR_INVALID_PARAMETER;
-        }
+    const auto validation = validate_pseudo_observations(observations);
+    if (!validation.is_ok()) {
+        failure_row = validation.failure.index / plan.dimension;
+        // Preserve the vine boundary's input-error status for NaN/Inf too.
+        return SCAR_INVALID_PARAMETER;
     }
     return SCAR_OK;
 }
@@ -61,6 +65,7 @@ int evaluate_density_plan_rows(
     std::int64_t observation_columns,
     double* log_pdf,
     double* residuals,
+    double* node_values,
     bool tolerate_non_finite,
     std::vector<double>& node_workspace,
     std::int64_t& failure_row,
@@ -197,6 +202,13 @@ int evaluate_density_plan_rows(
                     residual_row[column] = clip_open_unit(value);
                 }
             }
+            if (node_values != nullptr) {
+                std::copy(
+                    node_workspace.begin(),
+                    node_workspace.end(),
+                    node_values + row * static_cast<std::size_t>(
+                        plan.node_count));
+            }
         }
     }
     return SCAR_OK;
@@ -228,9 +240,9 @@ DensityResult log_pdf_rows(
         n_threads,
         prepared_edges,
         value_count,
-        out.failure_row);
+        out.failure.row);
     if (request_status != SCAR_OK) {
-        out.status = request_status;
+        out.status = status_from_int(request_status);
         return out;
     }
 
@@ -247,15 +259,16 @@ DensityResult log_pdf_rows(
         observation_columns,
         out.log_pdf.data(),
         nullptr,
+        nullptr,
         false,
         node_workspace,
-        out.failure_row,
-        out.failure_edge,
-        out.failure_operation,
+        out.failure.row,
+        out.failure.edge,
+        out.failure.operation,
         non_finite_rows,
         out.diagnostics);
     if (status != SCAR_OK) {
-        out.status = status;
+        out.status = status_from_int(status);
     }
     return out;
 }

@@ -1,13 +1,18 @@
 """Regression values for deterministic SCAR-TM-OU calculations."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
+from scipy.special import ndtr
 
 from pyscarcopula.copula.clayton import ClaytonCopula
+from pyscarcopula.copula.gumbel import GumbelCopula
+from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
@@ -45,9 +50,75 @@ def _assert_close(actual, expected):
     np.testing.assert_allclose(actual, expected, rtol=2e-7, atol=2e-8)
 
 
-@pytest.mark.skipif(
-    not _cpp_scar_ou.available(), reason="requires bundled C++ extension"
+@pytest.mark.parametrize(
+    ("copula", "expected", "legacy_negative", "legacy_gradient"),
+    [
+        (
+            GumbelCopula(),
+            [-1.1229412496364802e-07, 0.2327475254639345,
+             0.00015166635329468494],
+            0.1495257769103261,
+            [1.825326483267322e-07, 0.2327475254143381,
+             0.00015166589262193968],
+        ),
+        (
+            JoeCopula(),
+            [-4.929566429418846e-08, 0.11272315530737549,
+             6.858418218949013e-05],
+            0.078448685578641,
+            [2.455314537472119e-07, 0.11272315528480627,
+             6.858395682600099e-05],
+        ),
+    ],
 )
+def test_bivariate_scar_sparse_and_dense_match_their_references(
+        copula, expected, legacy_negative, legacy_gradient):
+    observations = np.random.default_rng(20260831).uniform(
+        0.01, 0.99, size=(64, 2))
+    config = AutoTMConfig(
+        transition_method="matrix",
+        K=300,
+        max_K=300,
+        adaptive=False,
+        grid_range=5.0,
+        grid_method="dense",
+    )
+
+    negative, gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        100.0, -3.25, 0.14, observations, copula, config)
+
+    # Dense and five-sigma sparse are distinct numerical contracts. Keep
+    # the dense references and the released 0.20.1 sparse references separate.
+    np.testing.assert_allclose(gradient, expected, rtol=2e-11, atol=1e-14)
+    sparse_config = replace(config, grid_method="sparse")
+    sparse_negative, sparse_gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        100.0, -3.25, 0.14, observations, copula, sparse_config)
+    assert sparse_negative == pytest.approx(legacy_negative, rel=0, abs=2e-13)
+    np.testing.assert_allclose(
+        sparse_gradient, legacy_gradient, rtol=2e-11, atol=1e-14)
+    assert _cpp_scar_ou.neg_loglik(
+        100.0, -3.25, 0.14, observations, copula,
+        sparse_config) == pytest.approx(sparse_negative, rel=0, abs=2e-13)
+
+    # Check the derivative against the independent scalar dense likelihood,
+    # using a five-point stencil in physical units to control cancellation.
+    parameters = np.array([100.0, -3.25, 0.14])
+    differences = []
+    for coordinate, step in enumerate((.05, .001, .001)):
+        direction = np.eye(3)[coordinate] * step
+        values = [_cpp_scar_ou.neg_loglik(
+            *(parameters + offset * direction), observations, copula,
+            config) for offset in (-2, -1, 1, 2)]
+        differences.append((values[0] - 8 * values[1]
+                            + 8 * values[2] - values[3]) / (12 * step))
+    np.testing.assert_allclose(gradient, differences, rtol=2e-5, atol=2e-11)
+
+    # Retain the old likelihood comparison at the scale of its discarded
+    # five-sigma tail. This bound applies to these fixed regression data;
+    # it is not a universal likelihood-error bound for arbitrary emissions.
+    assert 0 < legacy_negative - negative < 2 * len(observations) * ndtr(-5)
+
+
 def test_bivariate_scar_matrix_matches_regression_values():
     observations = np.array(
         [
@@ -155,9 +226,6 @@ def test_bivariate_scar_matrix_matches_regression_values():
     )
 
 
-@pytest.mark.skipif(
-    not _cpp_scar_ou.available(), reason="requires bundled C++ extension"
-)
 def test_multivariate_student_scar_matrix_matches_regression_values():
     observations = np.array(
         [

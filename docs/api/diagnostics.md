@@ -16,24 +16,62 @@ calculation follows the fitted strategy:
 - SCAR-TM integrates conditional h-functions over the predictive latent-state
   distribution.
 
+An explicit static Gaussian or Student `fit_result` also supplies correlation
+state (dense or factor) and Student degrees of freedom, taking precedence over
+state attached to the model without changing that model. GAS diagnostics keep
+the fitted `scaling` and `score_eps`. Dynamic multivariate SCAR diagnostics
+require an OU result and preserve its grid settings and `auto_small_kdt`;
+`K` and `grid_range` on the GoF call override the corresponding grid sizes.
+
 Bootstrap calibration, when requested, simulates from the fitted model and
 recomputes the statistic on generated samples. For stochastic latent-state
 models this means resampling both the latent path and the copula observations,
 not only perturbing the observed pseudo-observations.
 
+`bootstrap_fit_kwargs` accepts the selected model's normal fit options,
+including strategy constructor settings such as GAS `scaling` or OU `K`.
+These settings control bootstrap refitting. For bivariate,
+`EquicorrGaussianCopula`, and `StochasticStudentCopula` GAS refits, the fitted
+`score_eps` is retained even when a new `gamma0` is supplied.
+For these models, an explicit `score_eps` takes priority over an explicit
+`config.gas_score_eps`, which takes priority over the fitted score step.
+Passing `score_eps=None` selects the config or fitted default.
+GAS Vine refits do not restore fitted score steps from individual edges.
+Set `bootstrap_fit_kwargs={'score_eps': value}` to use one chosen step for
+all refitted GAS edges; otherwise they use an explicit `config.gas_score_eps`
+or the library default.
+Unknown or misplaced keys are rejected before bootstrap random streams or
+workers are created, including when `bootstrap_refit=False`. In that mode,
+valid fit-only options have no effect. Samplers that support native threads
+receive the resolved `config.n_threads`, including static Student and
+Equicorr models; parallel bootstrap uses one native thread per worker.
+The dictionary cannot override `to_pobs`: generated bootstrap samples are
+already pseudo-observations.
+
 Fitted `VineCopula` models follow the same parametric-bootstrap contract. A
 replication simulates from the captured fitted R-vine, optionally refits a
-worker-owned vine with the same structure and fitting settings, applies the
-R-vine Rosenblatt transform, and recomputes the Cramer-von Mises statistic.
-Static exact built-in edges use the native Rosenblatt runtime; unsupported or
-dynamic edges use the preserved Python transform without changing the result
-schema or random-stream policy.
+worker-owned vine with the same structure and requested fitting settings,
+applies the R-vine Rosenblatt transform, and recomputes the Cramer-von Mises
+statistic.
+Supported static and dynamic exact built-in edges use the mandatory native
+Rosenblatt traversal. Unknown edge types raise `NativeUnsupported`; there is
+no Python numerical fallback. Dynamic traversals preserve each edge
+strategy and its fitted settings, with explicit OU grid overrides applied
+only to OU edges.
 
 The returned `BootstrapGoFResult` exposes `statistic`, the calibrated
 `pvalue`, `bootstrap_statistics`, `n_bootstrap`, and
 `bootstrap_diagnostics`. Parallel execution metadata is available as
 `n_jobs_requested`, resolved `n_jobs`, `n_threads`, and `backend`; reproducible
 execution policy is recorded in `rng_policy` and `worker_model_ownership`.
+An unsuccessful or nonfinite refit is retried once on the same simulated
+sample, using its finite endpoint as the next initial point when available.
+The retry retains the requested optimizer budget. If it also fails,
+calibration raises an error identifying the replication and optimizer message;
+an unsuccessful fit never contributes a statistic to the calibrated p-value.
+Successful results retain both attempt records in `bootstrap_refit_attempts`
+and expose `bootstrap_refit_retries`. Retrying does not draw replacement data
+or consume another simulation seed.
 
 Common fit diagnostics to inspect before interpreting GoF results include:
 
@@ -42,6 +80,10 @@ Common fit diagnostics to inspect before interpreting GoF results include:
 - SCAR-TM-OU transition attempts and fallback counters such as
   `fallback_spectral_to_matrix`, `fallback_matrix_to_local`,
   `matrix_failures`, and `matrix_capped`;
+- grid resolution fields `last_K_requested`, `last_K_effective`,
+  `last_grid_was_capped`, and `grid_capped_evaluations`. These distinguish
+  an actual adaptive grid cap from a matrix-to-local fallback; explicit
+  matrix evaluation can use a capped grid without taking any fallback;
 - SCAR-TM-JACOBI fields such as `transition_method`, `transition_storage`,
   `stationarity_correction`, `gradient_kind`, `setup_derivative`,
   `filter_derivative`, and spectral negative-mass indicators. Sparse
@@ -88,10 +130,6 @@ between optimizer and approximation convergence, see
 
 ::: pyscarcopula.stattests.gof_test
 
-::: pyscarcopula.stattests.vine_gof_test
-
 ::: pyscarcopula.stattests.rvine_gof_test
-
-::: pyscarcopula.stattests.vine_rosenblatt_transform
 
 ::: pyscarcopula.stattests.rvine_rosenblatt_transform

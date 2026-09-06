@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -24,9 +23,8 @@ from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
 from pyscarcopula.copula.multivariate import stochastic_student
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
-from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.tm_functions import tm_loglik
 from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy.gas import GASStrategy
@@ -41,50 +39,6 @@ def _R(d=3, rho=0.35):
     R = np.full((d, d), rho, dtype=np.float64)
     np.fill_diagonal(R, 1.0)
     return R
-
-
-def _posterior_state_weights_tm_oracle(
-        model, u, latent_params, config):
-    grid = TMGrid(
-        *latent_params,
-        len(u),
-        K=config.K,
-        grid_range=config.grid_range,
-        grid_method=config.grid_method,
-        adaptive=config.adaptive,
-        pts_per_sigma=config.pts_per_sigma,
-        transition_method=config.transition_method,
-        max_K=config.max_K,
-        r_gh=config.r_gh,
-        gh_order=config.gh_order,
-    )
-    emissions = grid.copula_grid(u, model)
-    backward = np.ones((len(u), grid.K), dtype=np.float64)
-    for t in range(len(u) - 2, -1, -1):
-        backward[t] = grid.matvec(
-            emissions[t + 1] * backward[t + 1])
-        scale = np.max(np.abs(backward[t]))
-        if scale > 0.0:
-            backward[t] /= scale
-
-    weights = np.empty((len(u), grid.K), dtype=np.float64)
-    predictive = grid.p0.copy()
-    for t in range(len(u)):
-        raw = predictive * emissions[t] * backward[t] * grid.trap_w
-        raw = np.where(
-            np.isfinite(raw) & (raw > 0.0), raw, 0.0)
-        total = np.sum(raw)
-        weights[t] = (
-            raw / total
-            if total > 0.0
-            else np.full(grid.K, 1.0 / grid.K)
-        )
-        if t < len(u) - 1:
-            predictive = grid.advance_forward_phi(
-                predictive, emissions[t])
-            if predictive is None:
-                predictive = np.ones(grid.K, dtype=np.float64)
-    return grid.z + grid.mu, weights
 
 
 @pytest.mark.parametrize("corr_mode", ["shrinkage", "cholesky"])
@@ -490,7 +444,7 @@ def test_kendall_initialization_is_used_when_no_corr_is_supplied(corr_mode):
         ("cholesky", np.array([0.1, -0.2, 0.3])),
     ],
 )
-def test_internal_corr_trial_skips_projection_and_uses_one_cholesky(
+def test_internal_corr_trial_uses_native_dense_preparation(
         corr_mode, corr_params, monkeypatch):
     R0 = _R()
     model = StochasticStudentCopula(
@@ -504,24 +458,30 @@ def test_internal_corr_trial_skips_projection_and_uses_one_cholesky(
         if corr_mode == "shrinkage"
         else unpack_cholesky_corr(corr_params, model.d)
     )
-    original_cholesky = np.linalg.cholesky
-    cholesky_calls = 0
-
     def fail_eigh(*args, **kwargs):
         raise AssertionError("correlation trial must not run SPD projection")
 
-    def counting_cholesky(*args, **kwargs):
-        nonlocal cholesky_calls
-        cholesky_calls += 1
-        return original_cholesky(*args, **kwargs)
+    def fail_cholesky(*args, **kwargs):
+        raise AssertionError("correlation trial must not run Python Cholesky")
 
     monkeypatch.setattr(np.linalg, "eigh", fail_eigh)
-    monkeypatch.setattr(np.linalg, "cholesky", counting_cholesky)
+    monkeypatch.setattr(np.linalg, "cholesky", fail_cholesky)
 
     model._set_corr_from_params(corr_params)
 
-    assert cholesky_calls == 1
     np.testing.assert_allclose(model.R, expected, atol=1e-12, rtol=1e-12)
+    np.testing.assert_allclose(
+        model._L_inv @ expected @ model._L_inv.T,
+        np.eye(model.d),
+        atol=2e-12,
+        rtol=2e-12,
+    )
+    np.testing.assert_allclose(
+        model._log_det,
+        np.linalg.slogdet(expected)[1],
+        atol=2e-12,
+        rtol=2e-12,
+    )
 
 
 @pytest.mark.parametrize(
@@ -703,68 +663,6 @@ def test_posterior_state_weights_are_normalized(corr_mode, corr_params):
         assert model.corr_alpha() is None
 
 
-@pytest.mark.parametrize(
-    ("transition_method", "grid_method", "atol"),
-    [
-        ("matrix", "dense", 2e-13),
-        ("matrix", "sparse", 2e-8),
-        ("local", "auto", 2e-13),
-    ],
-)
-def test_native_smoothed_state_distribution_matches_tmgrid_oracle(
-        transition_method, grid_method, atol):
-    u = _u(T=21)
-    model = StochasticStudentCopula(d=3, R=_R())
-    latent_params = (1.2, 0.5, 0.8)
-    config = AutoTMConfig(
-        K=37,
-        grid_range=3.5,
-        grid_method=grid_method,
-        adaptive=False,
-        transition_method=transition_method,
-        max_K=None,
-        gh_order=7,
-    )
-
-    expected_grid, expected_weights = _posterior_state_weights_tm_oracle(
-        model, u, latent_params, config)
-    actual_grid, actual_weights = (
-        _cpp_scar_ou.smoothed_state_distribution(
-            *latent_params, u, model, config)
-    )
-
-    np.testing.assert_allclose(
-        actual_grid, expected_grid, rtol=0.0, atol=2e-15)
-    np.testing.assert_allclose(
-        actual_weights, expected_weights, rtol=0.0, atol=atol)
-    np.testing.assert_allclose(
-        actual_weights.sum(axis=1), 1.0, rtol=0.0, atol=2e-15)
-
-
-def test_posterior_state_weights_native_path_does_not_construct_tmgrid(
-        monkeypatch):
-    u = _u(T=18)
-    model = StochasticStudentCopula(d=3, R=_R())
-
-    def fail_tmgrid(*args, **kwargs):
-        raise AssertionError("production smoothing must not construct TMGrid")
-
-    monkeypatch.setattr(TMGrid, "__init__", fail_tmgrid)
-    weights = model.posterior_state_weights(
-        u,
-        params=np.array([0.01, 0.5, 0.8]),
-        K=31,
-        adaptive=True,
-        max_K=35,
-        transition_method="auto",
-    )
-
-    assert weights.shape == (len(u), 35)
-    assert np.all(np.isfinite(weights))
-    np.testing.assert_allclose(
-        weights.sum(axis=1), 1.0, rtol=0.0, atol=2e-15)
-
-
 def test_posterior_state_weights_validates_inputs_and_param_length():
     u = _u(T=12)
     model = StochasticStudentCopula(d=3, corr_mode="shrinkage")
@@ -792,7 +690,9 @@ def test_posterior_state_weights_validates_inputs_and_param_length():
 def test_posterior_state_weights_uses_fit_result_params_by_default():
     u = _u(T=16)
     model = StochasticStudentCopula(d=3, R=_R())
-    model.fit_result = SimpleNamespace(params=ou_params(1.2, 0.5, 0.8))
+    model.fit_result = LatentResult(
+        log_likelihood=1.0, method="SCAR-TM-OU", copula_name=model.name,
+        success=True, params=ou_params(1.2, 0.5, 0.8))
 
     implicit = model.posterior_state_weights(u, K=8, adaptive=False)
     explicit = model.posterior_state_weights(
@@ -974,14 +874,17 @@ def test_prepared_scar_ou_objective_matches_functional_api(
         corr_grad, expected_corr_grad, rtol=0.0, atol=0.0)
 
 
-def test_prepared_scar_ou_updates_student_factor():
+@pytest.mark.parametrize("transition_method", ["matrix", "local", "spectral", "auto"])
+def test_prepared_scar_ou_updates_student_factor(transition_method):
     u = _u(T=18, d=3, seed=20260722)
     model = StochasticStudentCopula(d=3, R=_R(d=3, rho=0.2))
     config = AutoTMConfig(
-        transition_method="matrix",
+        transition_method=transition_method,
         K=10,
         max_K=10,
         adaptive=False,
+        basis_order=16,
+        quad_order=40,
     )
     prepared = _cpp_scar_ou.prepare_objective(u, model, config)
     before_value, _, _ = prepared.neg_loglik_with_grad_info(1.1, 0.3, 0.8)
@@ -1006,6 +909,43 @@ def test_prepared_scar_ou_updates_student_factor():
     assert abs(value - before_value) > 1e-10
     np.testing.assert_allclose(value, expected_value, rtol=0.0, atol=0.0)
     np.testing.assert_allclose(grad, expected_grad, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("transition_method", ["matrix", "local", "spectral"])
+def test_native_prepared_student_owns_inputs_after_wrapper_deletion(transition_method):
+    import gc
+
+    u = _u(T=18, d=3, seed=20260906)
+    model = StochasticStudentCopula(d=3, R=_R(d=3, rho=0.2))
+    config = AutoTMConfig(
+        transition_method=transition_method, K=10, max_K=10,
+        adaptive=False, basis_order=16, quad_order=40,
+    )
+    prepared = _cpp_scar_ou.prepare_objective(u, model, config)
+    native = prepared._native
+    params = _cpp_scar_ou._params(prepared.module, 1.1, 0.3, 0.8)
+    expected = native.neg_loglik_with_grad_and_corr(params)
+    # The C++ emission may borrow its evaluator's spec, never the Python
+    # descriptor or caller's observations. Destroy all those original owners.
+    u[:] = 0.5
+    del u, prepared, model
+    gc.collect()
+    np.testing.assert_equal(native.neg_loglik_with_grad_and_corr(params), expected)
+
+    for rho in [0.4, -0.1, 0.2]:
+        replacement = StochasticStudentCopula(d=3, R=_R(d=3, rho=rho))
+        original_u = _u(T=18, d=3, seed=20260906)
+        reference = _cpp_scar_ou.prepare_objective(original_u, replacement, config)
+        native.update_student_factor(replacement._L_inv.reshape(-1), replacement._log_det)
+        np.testing.assert_equal(
+            native.neg_loglik_with_grad_and_corr(params),
+            reference._native.neg_loglik_with_grad_and_corr(params))
+
+    before_invalid = native.neg_loglik_with_grad_and_corr(params)
+    with pytest.raises(ValueError, match="finite"):
+        native.update_student_factor(np.full(9, np.nan), 0.0)
+    np.testing.assert_equal(
+        native.neg_loglik_with_grad_and_corr(params), before_invalid)
 
 
 def test_prepared_scar_ou_rejects_invalid_shapes():
@@ -1070,7 +1010,7 @@ def test_scar_estimated_corr_modes_use_python_optimizer_with_native_likelihood(
     assert result.diagnostics["prepared_native_evaluator"] is True
     assert result.diagnostics["prepared_native_evaluator_count"] >= 1
     assert (
-        result.diagnostics["correlation_parameterization_engine"] == "python")
+        result.diagnostics["correlation_parameterization_engine"] == "cpp")
     assert result.diagnostics["analytical_grad_requested"] is True
     assert result.diagnostics["analytical_grad_used"] is True
     assert result.diagnostics["optimizer_gradient"] == "analytical"
@@ -1132,134 +1072,68 @@ def test_spectral_cholesky_fit_uses_native_correlation_gradient():
 
 
 @pytest.mark.parametrize(
-    ("corr_mode", "corr_n_params"),
+    "corr_mode",
     [
-        ("shrinkage", 1),
-        ("cholesky", 3),
+        "shrinkage",
+        "cholesky",
     ],
 )
-def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
-        corr_mode, corr_n_params, monkeypatch):
+def test_joint_analytical_gradient_does_not_fallback_to_python_fd(
+        corr_mode, monkeypatch):
     u = _u(T=12)
     model = StochasticStudentCopula(d=3, R=_R(), corr_mode=corr_mode)
     alpha0 = np.array([2.0, -0.5, 1.5])
-    calls = {"gradient": 0, "objective": 0}
-    captured = {}
+    calls = {"correlation": 0, "ou_only": 0}
 
-    def value_for(kappa, mu, nu, copula):
-        ou = np.array([kappa, mu, nu], dtype=np.float64)
-        corr = np.asarray(copula.corr_params(), dtype=np.float64)
-        return float(np.sum((ou - np.array([1.0, 0.25, 0.75])) ** 2)
-                     + np.sum(corr ** 2) + 3.0)
+    def unsupported(*args, **kwargs):
+        calls["correlation"] += 1
+        raise _cpp_scar_ou.NativeUnsupported("test native derivative failure")
 
-    def info_for(kappa):
-        return {
-            "backend": "spectral",
-            "transition_method": "auto",
-            "kappa_dt": float(kappa) / (len(u) - 1),
-            "n_obs": len(u),
-            "basis_order": 32,
-        }
-
-    def fake_gradient(kappa, mu, nu, u_arg, copula, config):
-        calls["gradient"] += 1
-        grad = 2.0 * (
-            np.array([kappa, mu, nu], dtype=np.float64)
-            - np.array([1.0, 0.25, 0.75])
-        )
-        return value_for(kappa, mu, nu, copula), grad, info_for(kappa)
-
-    def fake_objective(kappa, mu, nu, u_arg, copula, config):
-        calls["objective"] += 1
-        return value_for(kappa, mu, nu, copula), info_for(kappa)
+    def forbidden_ou_only(*args, **kwargs):
+        calls["ou_only"] += 1
+        raise AssertionError("OU-only gradient fallback must not run")
 
     def fake_minimize(fun, x0, *, method, jac, bounds, options):
         assert method == "L-BFGS-B"
         assert jac is True
-        value, gradient = fun(np.asarray(x0, dtype=np.float64))
-        captured["gradient"] = gradient.copy()
-        captured["x0"] = np.asarray(x0, dtype=np.float64).copy()
-        return SimpleNamespace(
-            x=np.asarray(x0, dtype=np.float64).copy(),
-            fun=float(value),
-            success=True,
-            message="test optimizer",
-            nfev=1,
-            jac=gradient,
-        )
+        return fun(np.asarray(x0, dtype=np.float64))
 
     monkeypatch.setattr(
         _cpp_scar_ou,
         "neg_loglik_with_grad_and_corr_info",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            _cpp_scar_ou.CppUnsupported("test fallback")),
+        unsupported,
     )
     monkeypatch.setattr(
         _cpp_scar_ou,
         "neg_loglik_with_grad_and_corr_directional_info",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            _cpp_scar_ou.CppUnsupported("test fallback")),
+        unsupported,
     )
     monkeypatch.setattr(
         _cpp_scar_ou,
         "prepare_objective",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            _cpp_scar_ou.CppUnsupported("test prepared fallback")),
+            _cpp_scar_ou.NativeUnsupported("test prepared fallback")),
     )
     monkeypatch.setattr(
-        _cpp_scar_ou, "neg_loglik_with_grad_info", fake_gradient)
-    monkeypatch.setattr(_cpp_scar_ou, "neg_loglik_info", fake_objective)
+        _cpp_scar_ou, "neg_loglik_with_grad_info", forbidden_ou_only)
     monkeypatch.setattr(scar_tm, "minimize", fake_minimize)
 
-    result = scar_tm.SCARTMStrategy(
-        analytical_grad=True,
-        smart_init=False,
-        strict_gradient_policy=True,
-    ).fit(
-        model,
-        u,
-        alpha0=alpha0,
-        eps=1e-6,
-    )
+    with pytest.raises(
+            _cpp_scar_ou.NativeUnsupported,
+            match="native derivative failure"):
+        scar_tm.SCARTMStrategy(
+            analytical_grad=True,
+            smart_init=False,
+            strict_gradient_policy=True,
+        ).fit(
+            model,
+            u,
+            alpha0=alpha0,
+            eps=1e-6,
+        )
 
-    expected_physical = np.concatenate([
-        2.0 * (alpha0 - np.array([1.0, 0.25, 0.75])),
-        2.0 * model.corr_params() + 1e-6,
-    ])
-    expected_optimizer = expected_physical.copy()
-    expected_optimizer[0] = (
-        expected_physical[0] * alpha0[0]
-        + 0.5 * expected_physical[2] * alpha0[2])
-    expected_optimizer[2] = expected_physical[2] * alpha0[2]
-    sigma0 = alpha0[2] / np.sqrt(2.0 * alpha0[0])
-    expected_x0 = np.concatenate([
-        np.array([np.log(alpha0[0]), alpha0[1], np.log(sigma0)]),
-        model.corr_params(),
-    ])
-
-    assert calls == {
-        "gradient": 2,
-        "objective": 2 * corr_n_params,
-    }
-    np.testing.assert_allclose(
-        captured["gradient"], expected_optimizer,
-        rtol=1e-7, atol=1e-7)
-    np.testing.assert_allclose(
-        captured["x0"], expected_x0)
-    assert (
-        result.diagnostics["optimizer_parameterization"]
-        == "log_kappa_mu_log_stationary_sigma")
-    assert result.diagnostics["objective_evaluations"] == (
-        2 * (1 + corr_n_params))
-    assert result.diagnostics["hybrid_gradient_evaluations"] == 2
-    assert result.diagnostics["correlation_fd_evaluations"] == (
-        2 * corr_n_params)
-    assert result.diagnostics["analytical_grad_used"] is True
-    assert result.diagnostics["final_validation_passed"] is False
-    assert (
-        "projected gradient exceeds validation tolerance"
-        in result.diagnostics["final_validation_reasons"]
-    )
+    assert calls["correlation"] >= 1
+    assert calls["ou_only"] == 0
 
 
 @pytest.mark.parametrize(
@@ -1453,54 +1327,6 @@ def test_fixed_kendall_plugin_correlation_supports_gas():
     assert isinstance(api_result, GASResult)
     assert api_result.n_params == 6
     assert api_result.diagnostics["corr_mode"] == "fixed"
-
-
-@pytest.mark.parametrize(
-    "factory",
-    [
-        lambda: StochasticStudentCopula(d=3, corr_mode="shrinkage"),
-        lambda: StochasticStudentCopula(d=3, corr_mode="cholesky"),
-    ],
-)
-@pytest.mark.parametrize("method", ["scar-p-ou", "scar-m-ou"])
-def test_data_estimated_corr_is_limited_to_mle_and_scar_tm_ou(
-        factory, method):
-    u = _u(T=20)
-    kwargs = {
-        "maxiter": 1,
-        "maxfun": 5,
-        "smart_init": False,
-        "alpha0": np.array([1.0, 0.5, 0.8]),
-        "gamma0": np.array([0.1, 0.05, 0.5]),
-        "n_tr": 4,
-        "seed": 7,
-    }
-
-    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
-        factory().fit(u, method=method, **kwargs)
-
-    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
-        fit(factory(), u, method=method, **kwargs)
-
-
-@pytest.mark.parametrize("method", ["scar-p-ou", "scar-m-ou"])
-def test_fixed_data_estimated_corr_is_still_limited_for_mc_methods(method):
-    u = _u(T=20)
-    kwargs = {
-        "maxiter": 1,
-        "maxfun": 5,
-        "smart_init": False,
-        "alpha0": np.array([1.0, 0.5, 0.8]),
-        "gamma0": np.array([0.1, 0.05, 0.5]),
-        "n_tr": 4,
-        "seed": 7,
-    }
-
-    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
-        StochasticStudentCopula(d=3).fit(u, method=method, **kwargs)
-
-    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
-        fit(StochasticStudentCopula(d=3), u, method=method, **kwargs)
 
 
 def test_posterior_state_weights_with_joint_params_does_not_mutate_model():

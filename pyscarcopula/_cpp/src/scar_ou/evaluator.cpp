@@ -9,6 +9,259 @@
 namespace scar {
 using namespace evaluator_detail;
 
+const PreparedDynamicEmission& ScarOuEvaluator::resolve_dynamic_emission(
+    const CopulaSpec& copula,
+    std::unique_ptr<PreparedDynamicEmission>& owner) const {
+
+    if (prepared_emission_ != nullptr) {
+        return *prepared_emission_;
+    }
+    owner = std::make_unique<PreparedDynamicEmission>(copula);
+    return *owner;
+}
+
+ScarOuVectorResult ScarOuEvaluator::predictive_mean_local_gh(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::LocalGh;
+    out.values = predictive_mean_local_gh(params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::predictive_mean_matrix(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::Matrix;
+    out.values = predictive_mean_matrix(params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::predictive_mean_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.values = predictive_mean_auto(
+        params, copula, u, config, out.backend, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::forward_rosenblatt_local_gh(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::LocalGh;
+    out.values = forward_rosenblatt_local_gh(
+        params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::forward_rosenblatt_matrix(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::Matrix;
+    out.values = forward_rosenblatt_matrix(
+        params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::forward_rosenblatt_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.values = forward_rosenblatt_auto(
+        params, copula, u, config, out.backend, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::gaussian_rosenblatt_local_gh(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::LocalGh;
+    out.values = gaussian_rosenblatt_local_gh(
+        params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::gaussian_rosenblatt_matrix(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::Matrix;
+    out.values = gaussian_rosenblatt_matrix(
+        params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::gaussian_rosenblatt_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.values = gaussian_rosenblatt_auto(
+        params, copula, u, config, out.backend, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::student_rosenblatt_local_gh(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::LocalGh;
+    out.values = student_rosenblatt_local_gh(
+        params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::student_rosenblatt_matrix(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::Matrix;
+    out.values = student_rosenblatt_matrix(
+        params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::student_rosenblatt_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.values = student_rosenblatt_auto(
+        params, copula, u, config, out.backend, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::mixture_h_local_gh(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::LocalGh;
+    out.values = mixture_h_local_gh(params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::mixture_h_matrix(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::Matrix;
+    out.values = mixture_h_matrix(params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::mixture_h_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.values = mixture_h_auto(
+        params, copula, u, config, out.backend, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::mixture_h_pair_local_gh(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::LocalGh;
+    out.values = mixture_h_pair_local_gh(
+        params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::mixture_h_pair_matrix(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.backend = OuBackend::Matrix;
+    out.values = mixture_h_pair_matrix(
+        params, copula, u, config, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
+ScarOuVectorResult ScarOuEvaluator::mixture_h_pair_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+    int status = SCAR_OK;
+    ScarOuVectorResult out;
+    out.values = mixture_h_pair_auto(
+        params, copula, u, config, out.backend, status);
+    out.status = status_from_int(status);
+    return out;
+}
+
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
     const OuParams& params,
     const CopulaSpec& copula,
@@ -18,12 +271,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
-    if (u.empty() || config.auto_small_kdt <= 0.0) {
+    if (u.size() < 2 || config.auto_small_kdt <= 0.0) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    const double kdt = u.size() <= 1
-        ? params.kappa
-        : params.kappa / static_cast<double>(u.size() - 1);
+    const double kdt = params.kappa / static_cast<double>(u.size() - 1);
     if (kdt < config.auto_small_kdt) {
         return neg_loglik_with_grad_and_corr_local_gh(
             params, copula, u, config);
@@ -33,7 +284,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
     if (auto_grad_accepted(result)) {
         return result;
     }
-    if (result.status != SCAR_OK
+    if (!result.is_ok()
         && !recoverable_numerical_status(result.status)) {
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
@@ -48,7 +299,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    if (result.status != SCAR_OK
+    if (!result.is_ok()
         && !recoverable_numerical_status(result.status)) {
         set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
                           matrix_reason);
@@ -71,12 +322,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_auto
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
-    if (u.empty() || config.auto_small_kdt <= 0.0) {
+    if (u.size() < 2 || config.auto_small_kdt <= 0.0) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    const double kdt = u.size() <= 1
-        ? params.kappa
-        : params.kappa / static_cast<double>(u.size() - 1);
+    const double kdt = params.kappa / static_cast<double>(u.size() - 1);
     if (kdt < config.auto_small_kdt) {
         return neg_loglik_with_grad_and_corr_directional_local_gh(
             params, copula, u, config, corr_direction);
@@ -87,7 +336,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_auto
     if (auto_grad_accepted(result)) {
         return result;
     }
-    if (result.status != SCAR_OK
+    if (!result.is_ok()
         && !recoverable_numerical_status(result.status)) {
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
@@ -102,7 +351,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_auto
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    if (result.status != SCAR_OK
+    if (!result.is_ok()
         && !recoverable_numerical_status(result.status)) {
         set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
                           matrix_reason);
@@ -124,12 +373,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_auto(
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
-    if (u.empty() || config.auto_small_kdt <= 0.0) {
+    if (u.size() < 2 || config.auto_small_kdt <= 0.0) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    const double kdt = u.size() <= 1
-        ? params.kappa
-        : params.kappa / static_cast<double>(u.size() - 1);
+    const double kdt = params.kappa / static_cast<double>(u.size() - 1);
     if (kdt < config.auto_small_kdt) {
         return neg_loglik_with_grad_local_gh(params, copula, u, config);
     }
@@ -138,7 +385,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_auto(
     if (auto_grad_accepted(result)) {
         return result;
     }
-    if (result.status != SCAR_OK
+    if (!result.is_ok()
         && !recoverable_numerical_status(result.status)) {
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
@@ -152,7 +399,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    if (result.status != SCAR_OK
+    if (!result.is_ok()
         && !recoverable_numerical_status(result.status)) {
         set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
                           matrix_reason);
@@ -173,12 +420,10 @@ LogLikResult ScarOuEvaluator::loglik_auto(
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_loglik(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
-    if (u.empty() || config.auto_small_kdt <= 0.0) {
+    if (u.size() < 2 || config.auto_small_kdt <= 0.0) {
         return invalid_loglik(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    const double kdt = u.size() <= 1
-        ? params.kappa
-        : params.kappa / static_cast<double>(u.size() - 1);
+    const double kdt = params.kappa / static_cast<double>(u.size() - 1);
     if (kdt < config.auto_small_kdt) {
         return loglik_local_gh(params, copula, u, config);
     }
@@ -187,7 +432,7 @@ LogLikResult ScarOuEvaluator::loglik_auto(
     if (auto_loglik_accepted(result)) {
         return result;
     }
-    if (result.status != SCAR_OK
+    if (!result.is_ok()
         && !recoverable_numerical_status(result.status)) {
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
@@ -201,7 +446,7 @@ LogLikResult ScarOuEvaluator::loglik_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    if (result.status != SCAR_OK
+    if (!result.is_ok()
         && !recoverable_numerical_status(result.status)) {
         set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
                           matrix_reason);
@@ -222,7 +467,10 @@ std::vector<double> ScarOuEvaluator::predictive_mean_auto(
     int& status) const {
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(u.size(), 0.0);
     }
@@ -259,7 +507,10 @@ std::vector<double> ScarOuEvaluator::mixture_h_auto(
     int& status) const {
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(u.size(), 0.0);
     }
@@ -292,7 +543,10 @@ std::vector<double> ScarOuEvaluator::mixture_h_pair_auto(
     int& status) const {
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(2 * u.size(), 0.0);
     }
@@ -325,7 +579,10 @@ StateDistribution ScarOuEvaluator::state_distribution_auto(
     bool horizon_next) const {
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_state_distribution(SCAR_INVALID_TRANSFORM, OuBackend::Matrix);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
@@ -355,12 +612,15 @@ ScarOuEvaluator::smoothed_state_distribution_auto(
     auto invalid = [](int status) {
         SmoothedStateDistribution out;
         out.backend = OuBackend::Matrix;
-        out.status = status;
+        out.status = status_from_int(status);
         return out;
     };
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid(SCAR_INVALID_TRANSFORM);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {

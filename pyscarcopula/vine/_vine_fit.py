@@ -1,10 +1,12 @@
 """Shared pair-edge fitting for an already specified regular vine."""
 
+from collections import Counter
 from dataclasses import dataclass
 from time import perf_counter
 
 import numpy as np
 
+from pyscarcopula._native import statistics, vine as native_vine
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 from pyscarcopula.vine._helpers import _clip_unit
@@ -127,6 +129,9 @@ def fit_vine_edges(
         threshold,
         dynamic_failure_policy,
     )
+    from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
+    fit_kwargs = dict(fit_kwargs or {})
+    partition_strategy_fit_kwargs(method, fit_kwargs)
 
     candidates = (
         candidates if candidates is not None else _default_candidates())
@@ -156,7 +161,6 @@ def fit_vine_edges(
         for variable in range(d)
     }
     fitted_levels = []
-    fit_kwargs = dict(fit_kwargs or {})
     for tree, level in enumerate(tree_levels):
         fitted_levels.append(_fit_tree_level(
             tree,
@@ -207,6 +211,16 @@ def _fit_tree_level(
         fit_with_strategy = _fit_with_strategy
     is_truncated = (
         truncation_level is not None and t >= truncation_level)
+    selection_fit_kwargs = dict(fit_kwargs)
+    if str(method).lower() != "mle":
+        from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
+
+        _, selection_fit_kwargs = partition_strategy_fit_kwargs(
+            "mle", fit_kwargs, reject_unknown=False)
+        if "alpha0" in selection_fit_kwargs:
+            alpha0 = np.asarray(selection_fit_kwargs["alpha0"])
+            if alpha0.size != 1:
+                selection_fit_kwargs.pop("alpha0")
 
     fitted_level = []
     for edge_idx, (conditioned, conditioning) in enumerate(tree_repr):
@@ -239,12 +253,13 @@ def _fit_tree_level(
             tau_val = 0.0
         else:
             tau_val = _kendall_tau_value(u1, u2)
-            if np.isnan(tau_val):
+            if statistics.is_nan(tau_val):
                 tau_val = 0.0
 
         if (
                 force_independent
-                or threshold is not None and abs(tau_val) < threshold):
+                or threshold is not None
+                and statistics.absolute_below(tau_val, threshold)):
             selection_started = perf_counter()
             copula = IndependentCopula()
             result = copula._fit_validated(u_pair)
@@ -261,7 +276,12 @@ def _fit_tree_level(
                     selection_result = copula._fit_validated(u_pair)
                 else:
                     selection_result = fit_with_strategy(
-                        copula, u_pair, "mle", config, fit_kwargs)
+                        copula,
+                        u_pair,
+                        "mle",
+                        config,
+                        selection_fit_kwargs,
+                    )
             else:
                 copula, selection_result = select_best_copula(
                     u1,
@@ -272,6 +292,8 @@ def _fit_tree_level(
                     transform_type=transform_type,
                     u_pair=u_pair,
                     tau_value=tau_val,
+                    config=config,
+                    fit_kwargs=selection_fit_kwargs,
                 )
             edge_fit_diagnostics["selection_ms"] = (
                 1e3 * (perf_counter() - selection_started))
@@ -344,7 +366,8 @@ def _fit_tree_level(
         fitted_level.append(pair)
 
         if t < d - 2:
-            u1_next, u2_next = pair.h_pair(u1, u2)
+            u1_next, u2_next = native_vine.fit_edge_pseudo_observations(
+                pair, u1, u2)
             pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(u2_next)
             pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
 
@@ -361,35 +384,15 @@ def _make_fixed_copula(spec, transform_type):
 
 
 def _fit_with_strategy(copula, u_pair, method, config, fit_kwargs):
-    from pyscarcopula.strategy._base import get_strategy
+    from pyscarcopula.strategy._base import (
+        get_strategy,
+        partition_strategy_fit_kwargs,
+    )
 
-    fit_call_kwargs = dict(fit_kwargs)
-    if str(method).lower() == "mle" and "alpha0" in fit_call_kwargs:
-        alpha0 = np.asarray(fit_call_kwargs["alpha0"])
-        if alpha0.size != 1:
-            fit_call_kwargs.pop("alpha0")
-    strategy_kwargs = {
-        key: value
-        for key, value in fit_call_kwargs.items()
-        if key not in (
-            "alpha0",
-            "gamma0",
-            "gtol",
-            "ftol",
-            "maxfun",
-            "maxiter",
-            "maxls",
-            "eps",
-            "maxcor",
-            "finite_diff_rel_step",
-            "score_eps",
-            "gamma_bound",
-            "beta_bound",
-            "seed",
-            "dwt",
-            "verbose",
-        )
-    }
+    strategy_kwargs, fit_call_kwargs = partition_strategy_fit_kwargs(
+        method,
+        fit_kwargs,
+    )
     strategy = get_strategy(method, config=config, **strategy_kwargs)
     return strategy.fit(copula, u_pair, **fit_call_kwargs)
 
@@ -443,10 +446,8 @@ def _build_vine_edge_fit(fitted_levels, *, requested_method):
         record.setdefault("fallback_reason", None)
         records.append(record)
     edge_records = tuple(records)
-    actual_methods = {}
-    for record in edge_records:
-        method = record["actual_method"]
-        actual_methods[method] = actual_methods.get(method, 0) + 1
+    actual_methods = dict(Counter(
+        record["actual_method"] for record in edge_records))
     fallback_edges = tuple(
         record for record in edge_records if record["fallback_used"])
     diagnostics = {
@@ -460,10 +461,10 @@ def _build_vine_edge_fit(fitted_levels, *, requested_method):
     return VineEdgeFit(
         pair_copulas=pair_copulas,
         fit_diagnostics=diagnostics,
-        log_likelihood=float(sum(
-            pair.log_likelihood for pair in pair_copulas.values())),
-        parameter_count=int(sum(
-            pair.n_params for pair in pair_copulas.values())),
+        log_likelihood=statistics.sum_values(
+            pair.log_likelihood for pair in pair_copulas.values()),
+        parameter_count=statistics.sum_int64(
+            pair.n_params for pair in pair_copulas.values()),
         actual_methods=actual_methods,
         fallback_count=len(fallback_edges),
         fallback_edges=fallback_edges,

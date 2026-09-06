@@ -1,13 +1,15 @@
 #pragma once
 
-#include "scar/copula.hpp"
+#include "scar/copula/spec.hpp"
+#include "scar/gas/result.hpp"
 #include "scar/observation.hpp"
-#include "scar/status.hpp"
 
-#include <cstdint>
 #include <vector>
 
 namespace scar {
+
+class PreparedDynamicEmission;
+class PreparedDynamicEmissionWorkspace;
 
 /// Scaling applied to the GAS score in the state recursion.
 enum class GasScaling : int {
@@ -30,49 +32,12 @@ struct GasConfig {
     double score_clip = 100.0;
     double fisher_floor = 1e-6;
     double stationary_beta_tol = 1e-8;
-};
-
-struct GasLogLikResult {
-    double log_likelihood = 0.0;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
-};
-
-/// Full filtered GAS paths and their total log-likelihood.
-struct GasFilterResult {
-    std::vector<double> g_path;
-    std::vector<double> r_path;
-    std::vector<double> score_path;
-    double log_likelihood = 0.0;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
-};
-
-struct GasUpdateResult {
-    double g_next = 0.0;
-    double r = 0.0;
-    double r_next = 0.0;
-    double log_likelihood = 0.0;
-    double score = 0.0;
-    int status = SCAR_OK;
-};
-
-struct GasStateResult {
-    double g = 0.0;
-    double parameter = 0.0;
-    int status = SCAR_OK;
-};
-
-struct GasPredictResult {
-    double parameter = 0.0;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
-};
-
-struct GasPathResult {
-    std::vector<double> values;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
+    double optimizer_gradient_eps = 1e-5;
+    bool optimizer_gradient_relative = false;
+    // Empty bounds mean unbounded finite differences; fits supply their
+    // actual optimizer bounds, including a joint correlation coordinate.
+    std::vector<double> optimizer_lower_bounds;
+    std::vector<double> optimizer_upper_bounds;
 };
 
 /// Native evaluator for bivariate score-driven copula dynamics.
@@ -81,6 +46,11 @@ public:
     GasStateResult initial_state(
         const GasParams& params,
         const CopulaSpec& copula,
+        const GasConfig& config) const;
+
+    GasStateResult initial_state_prepared(
+        const GasParams& params,
+        const PreparedDynamicEmission& emission,
         const GasConfig& config) const;
 
     GasFilterResult filter(
@@ -101,9 +71,33 @@ public:
         ObservationView u,
         const GasConfig& config) const;
 
+    GasObjectiveGradientResult negative_log_likelihood_and_gradient(
+        const GasParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const GasConfig& config) const;
+
+    GasObjectiveGradientResult
+    negative_log_likelihood_and_gradient_shrinkage(
+        const GasParams& params,
+        const CopulaSpec& copula,
+        DoubleView base_correlation,
+        double raw_shrinkage,
+        ObservationView u,
+        const GasConfig& config) const;
+
     GasUpdateResult update_one(
         const GasParams& params,
         const CopulaSpec& copula,
+        double g,
+        double u1,
+        double u2,
+        const GasConfig& config) const;
+
+    GasUpdateResult update_one_prepared(
+        const GasParams& params,
+        const PreparedDynamicEmission& emission,
+        PreparedDynamicEmissionWorkspace& workspace,
         double g,
         double u1,
         double u2,
@@ -116,6 +110,14 @@ public:
         ObservationView observation,
         const GasConfig& config) const;
 
+    GasUpdateResult update_observation_prepared(
+        const GasParams& params,
+        const PreparedDynamicEmission& emission,
+        PreparedDynamicEmissionWorkspace& workspace,
+        double g,
+        ObservationView observation,
+        const GasConfig& config) const;
+
     GasPredictResult predict_parameter(
         const GasParams& params,
         const CopulaSpec& copula,
@@ -123,8 +125,20 @@ public:
         const GasConfig& config,
         bool horizon_next) const;
 
+    GasSampleResult sample_bivariate(
+        const GasParams& params,
+        const CopulaSpec& copula,
+        ObservationView draws,
+        const GasConfig& config) const;
+
     GasPathResult h_path(
         const GasParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const GasConfig& config) const;
+
+    GasOuInitializationResult ou_initial_point(
+        double static_mu,
         const CopulaSpec& copula,
         ObservationView u,
         const GasConfig& config) const;

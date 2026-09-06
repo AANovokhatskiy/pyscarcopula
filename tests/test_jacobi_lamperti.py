@@ -1,19 +1,17 @@
 """Lamperti--Euler Jacobi sampling contracts and validation checks."""
 
-import inspect
 import os
 
 import numpy as np
 import pytest
+from scipy.special import betainc
 from scipy.stats import norm
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 from pyscarcopula import GumbelCopula, VineCopula
 from pyscarcopula.api import sample
 from pyscarcopula._types import LatentResult, jacobi_params
 from pyscarcopula.numerical.jacobi_sampling import (
-    _lamperti_chunk_kernel,
-    _reflect_interval,
     sample_jacobi_lamperti_trajectory,
 )
 from pyscarcopula.strategy._base import get_strategy_for_result
@@ -22,13 +20,15 @@ from pyscarcopula.vine._edge_adapter import sample_r_path
 
 
 class _DeterministicRNG:
-    def __init__(self, initial_tau, innovations):
-        self.initial_tau = float(initial_tau)
+    def __init__(self, initial_uniform, innovations):
+        self.initial_uniform = float(initial_uniform)
         self.innovations = iter(innovations)
 
-    def beta(self, alpha, beta):
-        del alpha, beta
-        return self.initial_tau
+    def uniform(self, low=0.0, high=1.0, size=None):
+        assert low == 0.0 and high == 1.0
+        if size is None:
+            return self.initial_uniform
+        return np.full(size, self.initial_uniform, dtype=np.float64)
 
     def standard_normal(self, size=None):
         if size is None:
@@ -66,7 +66,9 @@ def test_lamperti_one_step_matches_independent_ito_formula():
     kappa, m, xi = 1.2, 0.4, 0.25
     tau0 = 0.37
     innovation = 0.2
-    rng = _DeterministicRNG(tau0, [innovation])
+    alpha = 2.0 * kappa * m / xi**2
+    beta = 2.0 * kappa * (1.0 - m) / xi**2
+    rng = _DeterministicRNG(betainc(alpha, beta, tau0), [innovation])
 
     actual = sample_jacobi_lamperti_trajectory(
         kappa, m, xi, 2, rng=rng, substeps=1)
@@ -93,9 +95,15 @@ def test_lamperti_one_step_matches_independent_ito_formula():
         (-1234.25, 0.25),
     ],
 )
-def test_lamperti_reflection_maps_to_closed_interval_in_constant_time(
+def test_lamperti_reflection_maps_to_closed_interval_in_native_cpp(
         value, expected):
-    assert _reflect_interval(value, 1.0) == pytest.approx(expected)
+    from pyscarcopula._native._extension import load
+
+    module = load()
+    result = module.jacobi_apply_boundary(
+        value, 1.0, module.JacobiBoundaryPolicy.Reflect)
+    assert int(result["status"]) == 0
+    assert result["value"] == pytest.approx(expected)
 
 
 def test_lamperti_boundary_diagnostics_are_explicit():
@@ -104,7 +112,7 @@ def test_lamperti_boundary_diagnostics_are_explicit():
         0.5,
         1.0,
         30,
-        rng=np.random.default_rng(1),
+        rng=np.random.default_rng(2),
         substeps=1,
         boundary="reflect",
         return_diagnostics=True,
@@ -116,7 +124,7 @@ def test_lamperti_boundary_diagnostics_are_explicit():
     assert diagnostics["boundary_intervention_rate"] == pytest.approx(
         diagnostics["boundary_interventions"]
         / diagnostics["euler_steps"])
-    assert diagnostics["sampling_engine"] == "numba"
+    assert diagnostics["sampling_engine"] == "native"
     assert diagnostics["stationary_boundary_singular"]
 
 
@@ -200,11 +208,11 @@ def test_fitted_result_restores_lamperti_sampler_and_diagnostics():
     assert strategy.lamperti_substeps == 4
     assert strategy.lamperti_boundary == "clip"
     assert strategy.lamperti_eps == pytest.approx(2e-9)
-    assert strategy.lamperti_engine == "python"
+    assert strategy.lamperti_engine == "native"
     assert strategy.lamperti_chunk_observations == 3
     assert strategy.memory_budget_bytes == 100_000
     assert diagnostics["sampling_method"] == "lamperti_euler"
-    assert diagnostics["sampling_engine"] == "python"
+    assert diagnostics["sampling_engine"] == "native"
     assert diagnostics["substeps"] == 4
     assert not diagnostics["stationary_boundary_singular"]
 
@@ -308,12 +316,6 @@ def test_strategy_rejects_invalid_lamperti_configuration(
         get_strategy("scar-tm-jacobi", **{option: value})
 
 
-def test_lamperti_numba_kernel_has_permanent_parallel_ban():
-    assert not _lamperti_chunk_kernel.targetoptions.get("parallel", False)
-    source = inspect.getsource(_lamperti_chunk_kernel.py_func)
-    assert "prange" not in source
-
-
 @pytest.mark.parametrize(
     ("parameters", "boundary"),
     [
@@ -323,7 +325,7 @@ def test_lamperti_numba_kernel_has_permanent_parallel_ban():
         ((0.1, 0.2, 1.0), "clip"),
     ],
 )
-def test_lamperti_numba_matches_python_pathwise(parameters, boundary):
+def test_lamperti_legacy_engine_aliases_share_native_path(parameters, boundary):
     kwargs = dict(
         substeps=4,
         boundary=boundary,
@@ -372,6 +374,8 @@ def test_lamperti_chunk_size_does_not_change_path_or_rng(engine):
         == large_diagnostics["boundary_interventions"])
     assert small_diagnostics["chunk_observations"] == 1
     assert large_diagnostics["chunk_observations"] == 36
+    assert small_diagnostics["sampling_engine"] == engine
+    assert large_diagnostics["sampling_engine"] == engine
     np.testing.assert_array_equal(
         small_rng.random(8), large_rng.random(8))
 
@@ -379,7 +383,8 @@ def test_lamperti_chunk_size_does_not_change_path_or_rng(engine):
 def test_lamperti_chunk_shrinks_to_memory_budget_before_rng_draws():
     n = 10
     substeps = 4
-    budget = (n + 2 * substeps) * 8
+    elements_per_interval = 2 * substeps + 2
+    budget = (n + 2 * elements_per_interval) * 8
     path, diagnostics = sample_jacobi_lamperti_trajectory(
         1.2,
         0.4,
@@ -398,7 +403,7 @@ def test_lamperti_chunk_shrinks_to_memory_budget_before_rng_draws():
 
 
 @pytest.mark.benchmark
-def test_lamperti_numba_warm_speedup_report():
+def test_lamperti_native_warm_throughput_report():
     if os.environ.get("PYSCA_RUN_BENCHMARKS") != "1":
         pytest.skip("set PYSCA_RUN_BENCHMARKS=1 to run benchmark gates")
     substeps = 16
@@ -410,35 +415,46 @@ def test_lamperti_numba_warm_speedup_report():
         2,
         rng=np.random.default_rng(200),
         substeps=substeps,
-        engine="numba",
+        engine="native",
     )
     measured = interleaved_timings(
         {
-            engine: (
-                lambda engine=engine: sample_jacobi_lamperti_trajectory(
+            "native_chunked": lambda: sample_jacobi_lamperti_trajectory(
+                1.2,
+                0.4,
+                0.25,
+                n,
+                rng=np.random.default_rng(201),
+                substeps=substeps,
+                engine="native",
+                chunk_observations=4096,
+            ),
+            "native_single_interval": (
+                lambda: sample_jacobi_lamperti_trajectory(
                     1.2,
                     0.4,
                     0.25,
                     n,
                     rng=np.random.default_rng(201),
                     substeps=substeps,
-                    engine=engine,
+                    engine="native",
+                    chunk_observations=1,
                 )
-            )
-            for engine in ("numba", "python")
+            ),
         },
         repeats=3,
     )
-    elapsed = measured.medians
-    speedup = measured.median_ratio("python", "numba")
+    medians = measured.medians
+    chunk_speedup = measured.median_ratio(
+        "native_single_interval", "native_chunked")
 
     print(
-        "lamperti_numba_warm "
-        f"numba_seconds={elapsed['numba']:.6f} "
-        f"python_seconds={elapsed['python']:.6f} "
-        f"speedup={speedup:.2f}x"
+        "lamperti_native_warm "
+        f"chunked_seconds={medians['native_chunked']:.6f} "
+        f"single_interval_seconds={medians['native_single_interval']:.6f} "
+        f"chunk_speedup={chunk_speedup:.2f}x"
     )
-    assert speedup >= 10.0
+    assert chunk_speedup >= 2.0
 
 
 @pytest.mark.validation

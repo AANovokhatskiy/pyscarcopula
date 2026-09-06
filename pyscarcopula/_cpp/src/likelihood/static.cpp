@@ -1,8 +1,19 @@
 #include "scar/copula.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "../copula/multivariate/gaussian/density_internal.hpp"
+
+#include "scar/copula/prepared_dynamic_emission.hpp"
+#include "scar/copula/rotation.hpp"
+#include "scar/copula/multivariate/correlation/dense.hpp"
+#include "scar/copula/multivariate/gaussian/density.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/dispatch.hpp"
+#include "scar/copula/multivariate/student/density.hpp"
+#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/detail/parallel.hpp"
+#include "scar/detail/safety.hpp"
 #include "scar/factor.hpp"
+#include "scar/math/normal.hpp"
 #include "scar/status.hpp"
 
 #include <algorithm>
@@ -40,10 +51,10 @@ bool static_parallel_worthwhile(
         if (
                 spec.family == CopulaFamily::MultivariateGaussian
                 && spec.correlation_kind == CorrelationKind::Factor
-                && spec.factor_correlation != nullptr) {
+                && spec.factor_operator() != nullptr) {
             return scar_internal::grid_parallel_worthwhile(
                 rows,
-                dim * spec.factor_correlation->rank(),
+                dim * spec.factor_operator()->rank(),
                 kExpensiveMinRows,
                 kExpensiveMinWork);
         }
@@ -62,26 +73,21 @@ std::int64_t static_min_rows(const CopulaSpec& spec) {
         : kCheapMinRows);
 }
 
-int expected_dimension(const CopulaSpec& spec) {
-    if (spec.family == CopulaFamily::Student
-        || spec.family == CopulaFamily::EquicorrGaussian
-        || spec.family == CopulaFamily::MultivariateGaussian) {
-        return spec.dim;
-    }
-    return 2;
-}
-
 bool valid_dense_factor(const CopulaSpec& spec) {
     std::size_t square = 0;
     if (spec.dim < 2
-        || !scar_internal::valid_student_dimension(spec.dim, square)
-        || spec.l_inv.size() != square
-        || !std::isfinite(spec.log_det)) {
+        || !scar_internal::valid_student_dimension(spec.dim, square)) {
+        return false;
+    }
+    const auto& correlation =
+        copula::multivariate::correlation::dense(spec);
+    if (correlation.inverse_cholesky.size() != square
+        || !std::isfinite(correlation.log_determinant)) {
         return false;
     }
     for (int i = 0; i < spec.dim; ++i) {
         for (int j = 0; j < spec.dim; ++j) {
-            const double value = spec.l_inv[
+            const double value = correlation.inverse_cholesky[
                 static_cast<std::size_t>(i)
                     * static_cast<std::size_t>(spec.dim)
                 + static_cast<std::size_t>(j)];
@@ -96,13 +102,14 @@ bool valid_dense_factor(const CopulaSpec& spec) {
 
 bool valid_multivariate_gaussian_correlation(const CopulaSpec& spec) {
     if (spec.correlation_kind == CorrelationKind::Factor) {
+        const auto& factor = spec.factor_operator();
         return (
             spec.dim >= 2
-            && spec.factor_correlation != nullptr
-            && spec.factor_correlation->dimension()
+            && factor != nullptr
+            && factor->dimension()
                 == static_cast<std::size_t>(spec.dim)
-            && std::isfinite(spec.factor_correlation->logdet())
-            && std::isfinite(spec.log_det)
+            && std::isfinite(factor->logdet())
+            && std::isfinite(spec.dense_log_determinant())
         );
     }
     return valid_dense_factor(spec);
@@ -128,7 +135,7 @@ int validate(const CopulaSpec& spec, const Observations& u) {
         return SCAR_INVALID_FAMILY;
     }
 
-    const int dim = expected_dimension(spec);
+    const int dim = spec.model_descriptor().expected_dimension();
     for (const auto& row : u) {
         if (row.size() != static_cast<std::size_t>(dim)) {
             return SCAR_INVALID_SIZE;
@@ -140,72 +147,6 @@ int validate(const CopulaSpec& spec, const Observations& u) {
         }
     }
     return SCAR_OK;
-}
-
-double multivariate_gaussian_log_pdf(
-    const CopulaSpec& spec,
-    const double* scores,
-    std::vector<double>& factor_projection,
-    std::vector<double>& factor_solved) {
-
-    double marginal_quad = 0.0;
-    if (
-            spec.correlation_kind == CorrelationKind::Factor
-            && spec.factor_correlation != nullptr) {
-        const FactorCorrelationOperator& correlation =
-            *spec.factor_correlation;
-        const std::size_t dimension = correlation.dimension();
-        const std::size_t rank = correlation.rank();
-        const std::vector<double>& inverse_uniqueness =
-            correlation.inverse_uniqueness();
-        const std::vector<double>& weighted_loadings =
-            correlation.weighted_loadings();
-        factor_projection.assign(rank, 0.0);
-        double diagonal_quad = 0.0;
-        for (std::size_t column = 0; column < dimension; ++column) {
-            const double value = scores[column];
-            marginal_quad += value * value;
-            diagonal_quad +=
-                inverse_uniqueness[column] * value * value;
-            const double* weighted =
-                weighted_loadings.data() + column * rank;
-            for (std::size_t factor = 0; factor < rank; ++factor) {
-                factor_projection[factor] += weighted[factor] * value;
-            }
-        }
-        factor_solved.assign(
-            factor_projection.begin(), factor_projection.end());
-        correlation.solve_core_inplace(factor_solved.data());
-        double correction = 0.0;
-        for (std::size_t factor = 0; factor < rank; ++factor) {
-            correction +=
-                factor_projection[factor] * factor_solved[factor];
-        }
-        const double joint_quad = diagonal_quad - correction;
-        if (!std::isfinite(joint_quad) || joint_quad < -1e-10) {
-            return std::numeric_limits<double>::quiet_NaN();
-        }
-        return (
-            -0.5 * correlation.logdet()
-            - 0.5 * (std::max(0.0, joint_quad) - marginal_quad)
-        );
-    }
-
-    double joint_quad = 0.0;
-    for (int i = 0; i < spec.dim; ++i) {
-        const double xi = scores[i];
-        marginal_quad += xi * xi;
-        double whitened = 0.0;
-        for (int j = 0; j <= i; ++j) {
-            whitened += spec.l_inv[
-                static_cast<std::size_t>(i)
-                    * static_cast<std::size_t>(spec.dim)
-                + static_cast<std::size_t>(j)]
-                * scores[j];
-        }
-        joint_quad += whitened * whitened;
-    }
-    return -0.5 * spec.log_det - 0.5 * (joint_quad - marginal_quad);
 }
 
 }  // namespace
@@ -220,12 +161,13 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
       n_threads_(n_threads),
       status_(validate(spec_, u_)) {
 
-    if (n_threads_ < 1 || n_threads_ > 256) {
+    if (!scar_internal::valid_thread_count(n_threads_)) {
         status_ = SCAR_INVALID_PARAMETER;
     }
     if (status_ != SCAR_OK) {
         return;
     }
+    emission_ = std::make_unique<PreparedDynamicEmission>(spec_);
     if (spec_.family == CopulaFamily::EquicorrGaussian) {
         equicorr_sums_.resize(u_.size(), 0.0);
         equicorr_sum_squares_.resize(u_.size(), 0.0);
@@ -241,13 +183,16 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
             equicorr_sums_[i] = stats.sum;
             equicorr_sum_squares_[i] = stats.sum_squares;
         }
+        spec_.equicorr_sum_scores() = equicorr_sums_;
+        spec_.equicorr_sum_squares() = equicorr_sum_squares_;
+        emission_->refresh(spec_);
         return;
     }
     if (spec_.family != CopulaFamily::Gaussian
         && spec_.family != CopulaFamily::MultivariateGaussian) {
         return;
     }
-    const int dim = expected_dimension(spec_);
+    const int dim = spec_.model_descriptor().expected_dimension();
     std::size_t score_count = 0;
     if (!scar_internal::checked_size_mul(
             u_.size(), static_cast<std::size_t>(dim), score_count)) {
@@ -260,7 +205,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
             gaussian_scores_[
                 i * static_cast<std::size_t>(dim)
                 + static_cast<std::size_t>(j)] =
-                scar_internal::normal_quantile(
+                scar::math::normal_quantile(
                     scar_internal::clip_pseudo_observation(
                         u_[i][static_cast<std::size_t>(j)]));
         }
@@ -285,7 +230,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
         status_ = SCAR_INVALID_FAMILY;
         return;
     }
-    if (n_threads_ < 1 || n_threads_ > 256) {
+    if (!scar_internal::valid_thread_count(n_threads_)) {
         status_ = SCAR_INVALID_PARAMETER;
         return;
     }
@@ -303,7 +248,16 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
         }
     }
     status_ = SCAR_OK;
+    spec_.equicorr_sum_scores() = equicorr_sums_;
+    spec_.equicorr_sum_squares() = equicorr_sum_squares_;
+    emission_ = std::make_unique<PreparedDynamicEmission>(spec_);
 }
+
+StaticCopulaEvaluator::~StaticCopulaEvaluator() = default;
+StaticCopulaEvaluator::StaticCopulaEvaluator(
+    StaticCopulaEvaluator&&) noexcept = default;
+StaticCopulaEvaluator& StaticCopulaEvaluator::operator=(
+    StaticCopulaEvaluator&&) noexcept = default;
 
 StaticObjectiveResult StaticCopulaEvaluator::objective(
     double parameter,
@@ -311,6 +265,40 @@ StaticObjectiveResult StaticCopulaEvaluator::objective(
 
     return evaluate_objective(
         parameter, true, correlation_gradient_requested);
+}
+
+StaticObjectiveResult StaticCopulaEvaluator::transformed_objective(
+    double optimizer_parameter) const {
+
+    StaticObjectiveResult out;
+    out.n_threads_requested = n_threads_;
+    if (spec_.family != CopulaFamily::EquicorrGaussian
+        || !std::isfinite(optimizer_parameter)) {
+        out.status = Status::InvalidParameter;
+        out.negative_log_likelihood =
+            std::numeric_limits<double>::infinity();
+        return out;
+    }
+    const double parameter = scar_internal::equicorr_transform(
+        spec_, optimizer_parameter);
+    const double derivative = scar_internal::equicorr_dtransform(
+        spec_, optimizer_parameter);
+    if (!std::isfinite(parameter) || !std::isfinite(derivative)) {
+        out.status = Status::NumericalFailure;
+        out.negative_log_likelihood =
+            std::numeric_limits<double>::infinity();
+        return out;
+    }
+    out = evaluate_objective(parameter, true, false);
+    if (out.is_ok()) {
+        out.negative_gradient *= derivative;
+        if (!std::isfinite(out.negative_gradient)) {
+            out.status = Status::NumericalFailure;
+            out.negative_log_likelihood =
+                std::numeric_limits<double>::infinity();
+        }
+    }
+    return out;
 }
 
 StaticObjectiveResult StaticCopulaEvaluator::objective_value(
@@ -331,13 +319,13 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
     bool correlation_gradient_requested) const {
 
     StaticObjectiveResult out;
-    out.status = status_;
+    out.status = status_from_int(status_);
     out.n_threads_requested = n_threads_;
     const std::size_t dim = static_cast<std::size_t>(spec.dim);
     std::size_t square = 0;
     std::size_t n_corr = 0;
     std::size_t score_count = 0;
-    if (out.status != SCAR_OK
+    if (!out.is_ok()
         || spec_.family != CopulaFamily::MultivariateGaussian
         || spec.family != CopulaFamily::MultivariateGaussian
         || spec.dim != spec_.dim
@@ -350,8 +338,8 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
         || (correlation_gradient_requested
             && !scar_internal::valid_student_correlation_count(
                 spec.dim, n_corr))) {
-        out.status = out.status == SCAR_OK
-            ? SCAR_INVALID_PARAMETER : out.status;
+        out.status = out.is_ok()
+            ? Status::InvalidParameter : out.status;
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         return out;
@@ -360,11 +348,24 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
     std::vector<double> precision;
     if (correlation_gradient_requested
         && !scar_internal::student_precision_matrix(spec, precision)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = Status::InvalidSize;
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         return out;
     }
+    const std::vector<double>* inverse_cholesky =
+        correlation_gradient_requested
+            ? &copula::multivariate::correlation::dense(spec)
+                .inverse_cholesky
+            : nullptr;
+    const auto* dense_correlation =
+        spec.correlation_kind != CorrelationKind::Factor
+            ? &copula::multivariate::correlation::dense(spec)
+            : nullptr;
+    const FactorCorrelationOperator* factor_correlation =
+        spec.correlation_kind == CorrelationKind::Factor
+            ? spec.factor_operator().get()
+            : nullptr;
 
     const bool use_threads = static_parallel_worthwhile(
         spec, n_obs_, n_threads_);
@@ -385,13 +386,34 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
             std::vector<double> factor_solved;
             std::vector<double> whitened(dim, 0.0);
             std::vector<double> precision_score(dim, 0.0);
+            if (dense_correlation != nullptr
+                && !correlation_gradient_requested) {
+                std::int64_t relative_failure = -1;
+                if (!copula::multivariate::gaussian::accumulate_log_pdf(
+                        *dense_correlation,
+                        spec.dim,
+                        gaussian_scores_.data()
+                            + static_cast<std::size_t>(begin) * dim,
+                        static_cast<std::size_t>(end - begin),
+                        block_result.log_likelihood,
+                        relative_failure)) {
+                    block_result.failure_index = begin + relative_failure;
+                }
+                return;
+            }
             for (std::int64_t row_index = begin;
                  row_index < end;
                  ++row_index) {
                 const double* scores = gaussian_scores_.data()
                     + static_cast<std::size_t>(row_index) * dim;
-                const double log_pdf = multivariate_gaussian_log_pdf(
-                    spec, scores, factor_projection, factor_solved);
+                const double log_pdf = dense_correlation != nullptr
+                    ? copula::multivariate::gaussian::log_pdf(
+                        *dense_correlation, spec.dim, scores)
+                    : copula::multivariate::gaussian::log_pdf(
+                        *factor_correlation,
+                        scores,
+                        factor_projection,
+                        factor_solved);
                 if (!std::isfinite(log_pdf)) {
                     block_result.failure_index = row_index;
                     return;
@@ -403,7 +425,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
                 for (int i = 0; i < spec.dim; ++i) {
                     double value = 0.0;
                     for (int j = 0; j <= i; ++j) {
-                        value += spec.l_inv[
+                        value += (*inverse_cholesky)[
                             static_cast<std::size_t>(i) * dim
                             + static_cast<std::size_t>(j)]
                             * scores[static_cast<std::size_t>(j)];
@@ -413,7 +435,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
                 for (int i = 0; i < spec.dim; ++i) {
                     double value = 0.0;
                     for (int j = i; j < spec.dim; ++j) {
-                        value += spec.l_inv[
+                        value += (*inverse_cholesky)[
                             static_cast<std::size_t>(j) * dim
                             + static_cast<std::size_t>(i)]
                             * whitened[static_cast<std::size_t>(j)];
@@ -443,9 +465,9 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
         }
         ++out.parallel_blocks;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
         log_likelihood += block.log_likelihood;
         for (std::size_t index = 0; index < n_corr; ++index) {
@@ -453,8 +475,8 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
                 block.correlation_gradient[index];
         }
     }
-    if (out.failure_index >= 0) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+    if (out.failure.index >= 0) {
+        out.status = Status::NumericalFailure;
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         return out;
@@ -477,7 +499,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
     if (spec_.family == CopulaFamily::MultivariateGaussian) {
         if (!std::isfinite(parameter)) {
             StaticObjectiveResult invalid;
-            invalid.status = SCAR_INVALID_PARAMETER;
+            invalid.status = Status::InvalidParameter;
             invalid.n_threads_requested = n_threads_;
             invalid.negative_log_likelihood =
                 std::numeric_limits<double>::infinity();
@@ -488,18 +510,18 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
     }
 
     StaticObjectiveResult out;
-    out.status = status_;
+    out.status = status_from_int(status_);
     out.n_threads_requested = n_threads_;
     if (status_ != SCAR_OK || !std::isfinite(parameter)) {
-        if (out.status == SCAR_OK) {
-            out.status = SCAR_INVALID_PARAMETER;
+        if (out.is_ok()) {
+            out.status = Status::InvalidParameter;
         }
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         return out;
     }
 
-    const int dim = expected_dimension(spec_);
+    const int dim = spec_.model_descriptor().expected_dimension();
     std::vector<double> precision;
     std::vector<double> df_grid;
     std::size_t n_corr = 0;
@@ -510,7 +532,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
         if (!scar_internal::valid_student_correlation_count(
                 spec_.dim, n_corr)
             || !scar_internal::student_precision_matrix(spec_, precision)) {
-            out.status = SCAR_INVALID_SIZE;
+            out.status = Status::InvalidSize;
             out.negative_log_likelihood =
                 std::numeric_limits<double>::infinity();
             return out;
@@ -534,14 +556,10 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
             block_result.ran = true;
             block_result.correlation_gradient.assign(n_corr, 0.0);
             std::vector<double> corr_scores(n_corr, 0.0);
-            scar_internal::StudentWorkspace student_workspace;
+            PreparedDynamicEmissionWorkspace emission_workspace =
+                emission_->make_workspace(parameter_gradient_requested);
             std::vector<double> gaussian_factor_projection;
             std::vector<double> gaussian_factor_solved;
-            if (spec_.family == CopulaFamily::Student) {
-                student_workspace.reserve_x(static_cast<std::size_t>(dim));
-                student_workspace.reserve_dx_ddf(
-                    static_cast<std::size_t>(dim));
-            }
             for (std::int64_t row_index = begin;
                  row_index < end;
                  ++row_index) {
@@ -555,17 +573,20 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
                     ? nullptr
                     : u_[i].data();
 
-                if (spec_.family == CopulaFamily::Student) {
-                    if (!parameter_gradient_requested) {
-                        log_pdf = scar_internal::student_log_pdf(
-                            spec_, row, parameter, row_index,
-                            student_workspace);
-                    } else {
-                        ok = scar_internal::student_log_pdf_and_dlog_ddf(
-                            spec_, row, parameter, row_index,
-                            log_pdf, dlog, student_workspace);
-                    }
-                    if (ok && correlation_gradient_requested) {
+                if (spec_.family != CopulaFamily::MultivariateGaussian) {
+                    const DynamicEmissionRowResult evaluation =
+                        emission_->evaluate_parameter(
+                            row,
+                            row_index,
+                            parameter,
+                            parameter_gradient_requested,
+                            emission_workspace);
+                    ok = evaluation.is_ok();
+                    log_pdf = evaluation.log_pdf;
+                    dlog = evaluation.dlog_dparameter;
+                    if (ok
+                        && spec_.family == CopulaFamily::Student
+                        && correlation_gradient_requested) {
                         ok = scar_internal::student_corr_score_row(
                             spec_,
                             row,
@@ -580,33 +601,13 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
                             }
                         }
                     }
-                } else if (
-                    spec_.family == CopulaFamily::EquicorrGaussian) {
-                    const scar_internal::EquicorrStats stats{
-                        equicorr_sums_[i], equicorr_sum_squares_[i]};
-                    log_pdf = scar_internal::equicorr_log_pdf_from_stats(
-                        spec_, stats, parameter,
-                        parameter_gradient_requested ? &dlog : nullptr);
-                } else if (
-                    spec_.family == CopulaFamily::MultivariateGaussian) {
-                    log_pdf = multivariate_gaussian_log_pdf(
+                } else {
+                    log_pdf = copula::multivariate::gaussian::log_pdf(
                         spec_,
                         gaussian_scores_.data()
                             + i * static_cast<std::size_t>(dim),
                         gaussian_factor_projection,
                         gaussian_factor_solved);
-                } else {
-                    double u1 = 0.0;
-                    double u2 = 0.0;
-                    scar_internal::apply_rotation(
-                        row[0], row[1],
-                        static_cast<int>(spec_.rotation), u1, u2);
-                    log_pdf = scar_internal::copula_log_pdf_unrotated(
-                        spec_, u1, u2, parameter);
-                    if (parameter_gradient_requested) {
-                        dlog = scar_internal::copula_dlog_pdf_dr_unrotated(
-                            spec_, u1, u2, parameter);
-                    }
                 }
 
                 if (!ok
@@ -632,9 +633,9 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
         }
         ++out.parallel_blocks;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
         log_likelihood += block.log_likelihood;
         gradient += block.gradient;
@@ -642,8 +643,8 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
             corr_gradient[p] += block.correlation_gradient[p];
         }
     }
-    if (out.failure_index >= 0) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+    if (out.failure.index >= 0) {
+        out.status = Status::NumericalFailure;
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         out.negative_gradient = 0.0;
@@ -666,7 +667,7 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
     if (status_ != SCAR_OK || !std::isfinite(parameter)) {
         return out;
     }
-    const int dim = expected_dimension(spec_);
+    const int dim = spec_.model_descriptor().expected_dimension();
     const bool use_threads = static_parallel_worthwhile(
         spec_, n_obs_, n_threads_);
     scar_internal::parallel_for_blocks(
@@ -677,13 +678,12 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
         [&](std::int64_t begin,
             std::int64_t end,
             std::size_t) {
-            scar_internal::StudentWorkspace student_workspace;
+            PreparedDynamicEmissionWorkspace emission_workspace =
+                emission_ == nullptr
+                    ? PreparedDynamicEmissionWorkspace{}
+                    : emission_->make_workspace(false);
             std::vector<double> gaussian_factor_projection;
             std::vector<double> gaussian_factor_solved;
-            if (spec_.family == CopulaFamily::Student) {
-                student_workspace.reserve_x(
-                    static_cast<std::size_t>(dim));
-            }
             for (std::int64_t row_index = begin;
                  row_index < end;
                  ++row_index) {
@@ -693,40 +693,32 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
                     spec_.family == CopulaFamily::EquicorrGaussian
                     ? nullptr
                     : u_[i].data();
-                if (spec_.family == CopulaFamily::Student) {
-                    out[i] = scar_internal::student_log_pdf(
-                        spec_, row, parameter, row_index,
-                        student_workspace);
-                } else if (
-                    spec_.family == CopulaFamily::EquicorrGaussian) {
-                    const scar_internal::EquicorrStats stats{
-                        equicorr_sums_[i], equicorr_sum_squares_[i]};
-                    out[i] = scar_internal::equicorr_log_pdf_from_stats(
-                        spec_, stats, parameter, nullptr);
-                } else if (
-                    spec_.family == CopulaFamily::MultivariateGaussian) {
-                    out[i] = multivariate_gaussian_log_pdf(
+                if (spec_.family == CopulaFamily::MultivariateGaussian) {
+                    out[i] = copula::multivariate::gaussian::log_pdf(
                         spec_,
                         gaussian_scores_.data()
                             + i * static_cast<std::size_t>(dim),
                         gaussian_factor_projection,
                         gaussian_factor_solved);
-                } else {
-                    double u1 = 0.0;
-                    double u2 = 0.0;
-                    scar_internal::apply_rotation(
-                        row[0], row[1],
-                        static_cast<int>(spec_.rotation), u1, u2);
-                    out[i] = scar_internal::copula_log_pdf_unrotated(
-                        spec_, u1, u2, parameter);
+                } else if (emission_ != nullptr) {
+                    const DynamicEmissionRowResult evaluation =
+                        emission_->evaluate_parameter(
+                            row,
+                            row_index,
+                            parameter,
+                            false,
+                            emission_workspace);
+                    out[i] = evaluation.is_ok()
+                        ? evaluation.log_pdf
+                        : -std::numeric_limits<double>::infinity();
                 }
             }
         });
     return out;
 }
 
-int StaticCopulaEvaluator::status() const noexcept {
-    return status_;
+Status StaticCopulaEvaluator::status() const noexcept {
+    return status_from_int(status_);
 }
 
 }  // namespace scar

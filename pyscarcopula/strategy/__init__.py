@@ -9,8 +9,6 @@ Available methods:
     'SCAR-TM-JACOBI' - transfer matrix with Jacobi Kendall-tau latent
     'MLE'        — constant parameter (strategy/mle.py)
     'SCAR-TM-OU' — transfer matrix with OU latent (strategy/scar_tm.py)
-    'SCAR-P-OU'  — MC p-sampler with OU latent (strategy/scar_mc.py)
-    'SCAR-M-OU'  — MC m-sampler with EIS (strategy/scar_mc.py)
     'GAS'        — score-driven (strategy/gas.py)
 
 Usage:
@@ -25,6 +23,7 @@ from pyscarcopula.strategy._base import (
     get_strategy,
     register_strategy,
     list_methods,
+    validate_strategy_method,
 )
 from pyscarcopula.strategy.multivariate_mle import (
     StaticMLEEvaluation,
@@ -38,6 +37,7 @@ __all__ = [
     'get_strategy',
     'register_strategy',
     'list_methods',
+    'validate_strategy_method',
     'StaticMLEEvaluation',
     'StaticMLEOutcome',
     'StaticMLEProblem',

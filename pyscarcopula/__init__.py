@@ -12,17 +12,46 @@ Usage:
 
 # ruff: noqa: E402
 
+
+def _require_main_interpreter():
+    # Reject before importing metadata, NumPy, or pybind11: their extension
+    # modules can deadlock or retain unsafe state after a subinterpreter is
+    # destroyed. The native support slot alone is too late (and absent < 3.12).
+    try:
+        import _interpreters as interpreters  # CPython >= 3.13
+    except ImportError:
+        try:
+            import _xxsubinterpreters as interpreters
+        except ImportError:
+            return  # These optional CPython modules are absent on some builds.
+    if interpreters.get_current() != interpreters.get_main():
+        raise ImportError(
+            "pyscarcopula does not support subinterpreters; "
+            "import it in the main interpreter.")
+
+
+_require_main_interpreter()
+del _require_main_interpreter
+
 from importlib import metadata as _metadata
 
 __version__ = _metadata.version("pyscarcopula")
 del _metadata
+
+from pyscarcopula._native import load as _load_native
+from pyscarcopula._native.errors import NativeUnavailable as _NativeUnavailable
+
+try:
+    _load_native()
+except _NativeUnavailable as _native_error:
+    raise ImportError(str(_native_error)) from _native_error
+del _load_native, _NativeUnavailable
 
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.independent import IndependentCopula
-from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.vine import VineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 
@@ -48,7 +77,6 @@ from pyscarcopula.copula.multivariate import (
 from pyscarcopula.copula.base import (
     BivariateCopula,
     CopulaBase,
-    CopulaCapabilities,
 )
 from pyscarcopula.copula.multivariate import MultivariateCopula
 from pyscarcopula._types import (
@@ -82,11 +110,9 @@ __all__ = (
     'CorrelationPolicy',
     'FactorEstimation',
     'FloatArray',
-    # Base hierarchy and capability contract
+    # Base hierarchy
     'CopulaBase', 'BivariateCopula', 'MultivariateCopula',
-    'CopulaCapabilities',
     # Vine
-    'CVineCopula',
     'VineCopula',
     'RVineCopula',
     # Prediction options

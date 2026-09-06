@@ -107,12 +107,13 @@ def _dynamic_fit_kwargs(method):
     if method == "mle":
         return {"gtol": 1e-2, "maxiter": 100, "maxfun": 500}
     if method == "gas":
-        return {"maxiter": 1, "maxfun": 8}
+        return {"gtol": 1e-2, "maxiter": 150, "maxfun": 2000}
     return {
         "K": 12,
         "grid_range": 3.0,
-        "maxiter": 1,
-        "maxfun": 8,
+        "gtol": 1e-2,
+        "maxiter": 150,
+        "maxfun": 2000,
         "transition_method": "matrix",
         "adaptive": False,
     }
@@ -130,11 +131,8 @@ def _assert_dynamic_bootstrap_parallel_parity(
         bootstrap=True,
         n_bootstrap=2,
         bootstrap_refit=bootstrap_refit,
-        bootstrap_fit_kwargs=(
-            {"gtol": 1e-2, "maxiter": 100, "maxfun": 500}
-            if str(fit_result.method).upper() == "MLE"
-            else {"maxiter": 1, "maxfun": 8}
-        ),
+        bootstrap_fit_kwargs={
+            "gtol": 1e-2, "maxiter": 150, "maxfun": 2000},
         rng=930,
     )
     sequential = gof_test(model, u, n_jobs=1, **kwargs)
@@ -660,11 +658,19 @@ def test_nonbootstrap_gof_ignores_n_jobs():
     assert np.isfinite(result.statistic)
 
 
-def test_bootstrap_worker_error_identifies_replication():
+def test_bootstrap_worker_error_identifies_replication(monkeypatch):
+    import pyscarcopula.stattests as st
+    from dataclasses import replace
     from pyscarcopula.stattests import gof_test
 
     model, u, fit_result = _fit_bivariate("mle")
 
+    def fail_simulation(*args, **kwargs):
+        raise ValueError("simulation failed")
+
+    monkeypatch.setitem(
+        st._BOOTSTRAP_ADAPTERS, "bivariate",
+        replace(st._BOOTSTRAP_ADAPTERS["bivariate"], simulate=fail_simulation))
     with pytest.raises(RuntimeError, match="bootstrap iteration 1 failed"):
         gof_test(
             model,
@@ -674,7 +680,6 @@ def test_bootstrap_worker_error_identifies_replication():
             bootstrap=True,
             n_bootstrap=2,
             bootstrap_refit=True,
-            bootstrap_fit_kwargs={"tol": 1e-6},
             rng=915,
             n_jobs=1,
         )

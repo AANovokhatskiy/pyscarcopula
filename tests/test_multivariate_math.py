@@ -5,8 +5,9 @@ import numpy as np
 import pytest
 from pathlib import Path
 from scipy.special import stdtrit
-from scipy.stats import multivariate_normal, multivariate_t, norm
+from scipy.stats import chi2, multivariate_normal, multivariate_t, norm
 from scipy.stats import t as t_dist
+from student_oracles import student_quantile_beta_oracle
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula.io import load_model, save_model
@@ -40,8 +41,12 @@ from pyscarcopula.copula.multivariate.student_ppf_cache import (
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
-from pyscarcopula.numerical.tm_grid import TMGrid
-from pyscarcopula.numerical import _cpp_gas, _cpp_scar_ou
+from pyscarcopula._native import (
+    gas as _cpp_gas,
+    multivariate as _cpp_multivariate,
+    scar_ou as _cpp_scar_ou,
+)
+from pyscarcopula._native.errors import NativeError
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_filter
 from pyscarcopula.stattests import (
@@ -85,45 +90,22 @@ def _R():
     )
 
 
-def _materialized_equicorr_scar_rosenblatt(
-        copula, u, fit_result, K, grid_range, config=None):
-    eps = 1e-10
-    u_c = np.clip(u, eps, 1.0 - eps)
-    x_norm = norm.ppf(u_c)
-    T, d = u.shape
-    kappa, mu, nu = fit_result.params.values
-    grid_kwargs = {}
-    if config is not None:
-        grid_kwargs = {
-            "grid_method": config.grid_method,
-            "adaptive": config.adaptive,
-            "pts_per_sigma": config.pts_per_sigma,
-            "transition_method": config.transition_method,
-            "max_K": config.max_K,
-            "r_gh": config.r_gh,
-            "gh_order": config.gh_order,
-        }
-    grid = TMGrid(
-        kappa, mu, nu, T, K, grid_range, **grid_kwargs)
-    x_grid = grid.z + grid.mu
-    rho_grid = copula.transform(x_grid)
-    fi_grid = grid.copula_grid(u, copula)
-    weights = grid.forward_weights(fi_grid)
+def test_native_student_sampler_transforms_raw_uniform_radial_draws():
+    correlation = np.array([[1.0, 0.3], [0.3, 1.0]])
+    df = np.array([5.0, 8.0])
+    normal_draws = np.array([[0.4, -0.2], [-0.7, 1.1]])
+    radial_uniforms = np.array([0.25, 0.75])
 
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-    for k in range(T):
-        for i in range(1, d):
-            sx = np.sum(x_norm[k, :i])
-            denom = 1.0 + (i - 1) * rho_grid
-            cond_mean = rho_grid * sx / denom
-            cond_var = np.maximum(1.0 - i * rho_grid ** 2 / denom, 1e-10)
-            z_i = (x_norm[k, i] - cond_mean) / np.sqrt(cond_var)
-            prefix_density = _equicorr_leading_density(
-                x_norm[k, :i], rho_grid)
-            state_weights = _prefix_reweighted(weights[k], prefix_density)
-            e[k, i] = np.sum(state_weights * norm.cdf(z_i))
-    return np.clip(e, eps, 1.0 - eps)
+    from_uniforms = _cpp_multivariate.student_sample_from_normal_uniforms(
+        correlation, df, normal_draws, radial_uniforms)
+    from_quantiles = _cpp_multivariate.student_sample_from_draws(
+        correlation, df, normal_draws, chi2.ppf(radial_uniforms, df))
+
+    np.testing.assert_allclose(
+        from_uniforms, from_quantiles, rtol=5e-12, atol=5e-13)
+    with pytest.raises(NativeError, match="Student"):
+        _cpp_multivariate.student_sample_from_normal_uniforms(
+            correlation, df, normal_draws, [1.0, 0.5])
 
 
 def _prefix_reweighted(weights, prefix_density):
@@ -197,112 +179,6 @@ def _student_leading_density(x_prefix_grid, df_grid, R_inv, log_det):
     return out
 
 
-def _materialized_student_scar_rosenblatt(
-        copula, u, fit_result, K, grid_range, config=None):
-    eps = 1e-10
-    T, d = u.shape
-    kappa, mu, nu = fit_result.params.values
-    grid_kwargs = {}
-    if config is not None:
-        grid_kwargs = {
-            "grid_method": config.grid_method,
-            "adaptive": config.adaptive,
-            "pts_per_sigma": config.pts_per_sigma,
-            "transition_method": config.transition_method,
-            "max_K": config.max_K,
-            "r_gh": config.r_gh,
-            "gh_order": config.gh_order,
-        }
-    grid = TMGrid(
-        kappa, mu, nu, T, K, grid_range, **grid_kwargs)
-    x_grid = grid.z + grid.mu
-    df_grid = copula.transform(x_grid)
-    fi_grid = grid.copula_grid(u, copula)
-    weights = grid.forward_weights(fi_grid)
-    beta_sub, sigma_cond_sub, R_inv_sub = _student_scar_static_terms(copula.R, d)
-    log_det_sub = [0.0]
-    for i in range(2, d):
-        sign, log_det = np.linalg.slogdet(copula.R[:i, :i])
-        assert sign > 0
-        log_det_sub.append(float(log_det))
-    u_c = np.clip(u, eps, 1.0 - eps)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-    for k in range(T):
-        x_all = np.empty((grid.K, d), dtype=np.float64)
-        for dim in range(d):
-            x_all[:, dim] = t_dist.ppf(u_c[k, dim], df=df_grid)
-        for i in range(1, d):
-            x_prev = x_all[:, :i]
-            mu_cond = x_prev @ beta_sub[i - 1]
-            quad = np.sum(x_prev @ R_inv_sub[i - 1] * x_prev, axis=1)
-            df_cond = df_grid + i
-            scale = (df_grid + quad) / df_cond
-            z_i = (x_all[:, i] - mu_cond) / (
-                sigma_cond_sub[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
-            prefix_density = _student_leading_density(
-                x_all[:, :i], df_grid, R_inv_sub[i - 1], log_det_sub[i - 1])
-            state_weights = _prefix_reweighted(weights[k], prefix_density)
-            e[k, i] = np.sum(state_weights * t_dist.cdf(z_i, df=df_cond))
-    return np.clip(e, eps, 1.0 - eps)
-
-
-def _equicorr_scar_rosenblatt_predictive_only(copula, u, fit_result, K, grid_range):
-    eps = 1e-10
-    u_c = np.clip(u, eps, 1.0 - eps)
-    x_norm = norm.ppf(u_c)
-    T, d = u.shape
-    kappa, mu, nu = fit_result.params.values
-    grid = TMGrid(kappa, mu, nu, T, K, grid_range)
-    x_grid = grid.z + grid.mu
-    rho_grid = copula.transform(x_grid)
-    fi_grid = grid.copula_grid(u, copula)
-    weights = grid.forward_weights(fi_grid)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-    for k in range(T):
-        for i in range(1, d):
-            sx = np.sum(x_norm[k, :i])
-            denom = 1.0 + (i - 1) * rho_grid
-            cond_mean = rho_grid * sx / denom
-            cond_var = np.maximum(1.0 - i * rho_grid ** 2 / denom, 1e-10)
-            z_i = (x_norm[k, i] - cond_mean) / np.sqrt(cond_var)
-            e[k, i] = np.sum(weights[k] * norm.cdf(z_i))
-    return np.clip(e, eps, 1.0 - eps)
-
-
-def _student_scar_rosenblatt_predictive_only(copula, u, fit_result, K, grid_range):
-    eps = 1e-10
-    T, d = u.shape
-    kappa, mu, nu = fit_result.params.values
-    grid = TMGrid(kappa, mu, nu, T, K, grid_range)
-    x_grid = grid.z + grid.mu
-    df_grid = copula.transform(x_grid)
-    fi_grid = grid.copula_grid(u, copula)
-    weights = grid.forward_weights(fi_grid)
-    beta_sub, sigma_cond_sub, R_inv_sub = _student_scar_static_terms(copula.R, d)
-    u_c = np.clip(u, eps, 1.0 - eps)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-    for k in range(T):
-        x_all = np.empty((grid.K, d), dtype=np.float64)
-        for dim in range(d):
-            x_all[:, dim] = t_dist.ppf(u_c[k, dim], df=df_grid)
-        for i in range(1, d):
-            x_prev = x_all[:, :i]
-            mu_cond = x_prev @ beta_sub[i - 1]
-            quad = np.sum(x_prev @ R_inv_sub[i - 1] * x_prev, axis=1)
-            df_cond = df_grid + i
-            scale = (df_grid + quad) / df_cond
-            z_i = (x_all[:, i] - mu_cond) / (
-                sigma_cond_sub[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
-            e[k, i] = np.sum(weights[k] * t_dist.cdf(z_i, df=df_cond))
-    return np.clip(e, eps, 1.0 - eps)
-
-
 def test_equicorr_log_pdf_matches_gaussian_copula_formula():
     u = _u()
     z = norm.ppf(np.clip(u, 1e-10, 1.0 - 1e-10))
@@ -332,31 +208,62 @@ def test_equicorr_rho_derivative_matches_finite_difference():
     np.testing.assert_allclose(analytic, finite_diff, atol=1e-7, rtol=1e-7)
 
 
-def test_equicorr_gas_score_does_not_call_python_derivative():
-    class CountingEquicorr(EquicorrGaussianCopula):
-        def __init__(self, d):
-            super().__init__(d)
-            self.calls = 0
-
-        def dlog_pdf_dr_rows(self, u, r, t_index=None):
-            self.calls += 1
-            return super().dlog_pdf_dr_rows(u, r, t_index=t_index)
-
+def test_equicorr_gas_score_does_not_call_python_derivative(monkeypatch):
     u = _u()[:1]
-    copula = CountingEquicorr(d=4)
+    copula = EquicorrGaussianCopula(d=4)
     g_t = 0.2
     r_t = float(copula.transform(np.array([g_t]))[0])
     ll_t = float(copula.log_pdf_rows(u, np.array([r_t]))[0])
-
-    score = _cpp_gas.update_one(
-        0.0, 0.0, 0.0, g_t, u, copula, "unit", 1e-4).score
-
-    assert copula.calls == 0
     expected = (
         copula.dlog_pdf_dr_rows(u, np.array([r_t]))[0]
         * copula.dtransform(np.array([g_t]))[0]
     )
+
+    def fail_derivative(*args, **kwargs):
+        raise AssertionError("native GAS score called the Python derivative")
+
+    monkeypatch.setattr(
+        EquicorrGaussianCopula, "dlog_pdf_dr_rows", fail_derivative)
+
+    score = _cpp_gas.update_one(
+        0.0, 0.0, 0.0, g_t, u, copula, "unit", 1e-4).score
+
     np.testing.assert_allclose(score, expected, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("model_kind", ["equicorr", "student"])
+def test_multivariate_gas_fisher_uses_analytical_copula_score(model_kind):
+    u = _u()[:1]
+    if model_kind == "equicorr":
+        copula = EquicorrGaussianCopula(d=4)
+        g_t = 0.2
+    else:
+        copula = StochasticStudentCopula(d=4, R=_R())
+        g_t = 1.4
+    score_eps = 1e-4
+    r_t = float(copula.transform(np.array([g_t]))[0])
+    analytic_score = float(
+        copula.dlog_pdf_dr_rows(u, np.array([r_t]))[0]
+        * copula.dtransform(np.array([g_t]))[0]
+    )
+
+    def log_pdf_at_g(g):
+        parameter = float(copula.transform(np.array([g]))[0])
+        return float(copula.log_pdf_rows(u, np.array([parameter]))[0])
+
+    ll_zero = log_pdf_at_g(g_t)
+    ll_plus = log_pdf_at_g(g_t + score_eps)
+    ll_minus = log_pdf_at_g(g_t - score_eps)
+    curvature = max(
+        -(ll_plus - 2.0 * ll_zero + ll_minus) / score_eps**2,
+        1e-6,
+    )
+    expected = np.clip(analytic_score / curvature, -100.0, 100.0)
+
+    score = _cpp_gas.update_one(
+        0.0, 0.0, 0.0, g_t, u, copula, "fisher", score_eps).score
+
+    np.testing.assert_allclose(score, expected, rtol=1e-11, atol=1e-11)
 
 
 def test_student_log_pdf_matches_scipy_t_copula_formula():
@@ -449,7 +356,7 @@ def test_student_ppf_table_uses_common_pseudo_observation_boundaries():
     for df in (table.nodes[0], table.nodes[-1]):
         np.testing.assert_allclose(
             table(df),
-            stdtrit(df, clipped),
+            student_quantile_beta_oracle(df, clipped),
             rtol=2e-13,
             atol=2e-13,
         )
@@ -701,137 +608,6 @@ def test_multivariate_mle_loglik_and_gof_contracts():
         assert 0.0 <= gof.pvalue <= 1.0
 
 
-def test_multivariate_scar_gof_does_not_materialize_forward_weights(monkeypatch):
-    u = pobs(np.random.default_rng(20260519).standard_normal((20, 3)))
-    R = np.array(
-        [
-            [1.0, 0.25, -0.10],
-            [0.25, 1.0, 0.15],
-            [-0.10, 0.15, 1.0],
-        ],
-        dtype=np.float64,
-    )
-    models = [
-        EquicorrGaussianCopula(d=3),
-        StochasticStudentCopula(d=3, R=R),
-    ]
-
-    def fail_forward_weights(self, fi_grid):
-        raise AssertionError("forward_weights should not be called")
-
-    monkeypatch.setattr(TMGrid, "forward_weights", fail_forward_weights)
-
-    for copula in models:
-        result = _scar_result(K=15, grid_range=3.0)
-        gof = gof_test(copula, u, to_pobs=False, fit_result=result, K=15,
-                       grid_range=3.0)
-        assert np.isfinite(gof.statistic)
-        assert 0.0 <= gof.pvalue <= 1.0
-
-
-def test_multivariate_scar_gof_matches_materialized_reference():
-    u = pobs(np.random.default_rng(20260521).standard_normal((14, 3)))
-    R0 = np.array(
-        [
-            [1.0, 0.25, -0.10],
-            [0.25, 1.0, 0.15],
-            [-0.10, 0.15, 1.0],
-        ],
-        dtype=np.float64,
-    )
-    result = _scar_result(K=13, grid_range=3.0)
-
-    equicorr = EquicorrGaussianCopula(d=3)
-    eq_ref = _materialized_equicorr_scar_rosenblatt(
-        equicorr, u, result, K=13, grid_range=3.0)
-    eq_got = equicorr_rosenblatt_transform(
-        equicorr, u, result, K=13, grid_range=3.0)
-    np.testing.assert_allclose(eq_got, eq_ref, atol=1e-12, rtol=1e-12)
-
-    student = StochasticStudentCopula(d=3, R=R0)
-    st_ref = _materialized_student_scar_rosenblatt(
-        student, u, result, K=13, grid_range=3.0)
-    st_got = stochastic_student_rosenblatt_transform(
-        student, u, result, K=13, grid_range=3.0)
-    np.testing.assert_allclose(st_got, st_ref, atol=8e-4, rtol=8e-4)
-
-
-@pytest.mark.parametrize(
-    ("transition_method", "grid_method", "atol"),
-    [
-        ("matrix", "dense", 2e-13),
-        ("matrix", "sparse", 2e-8),
-        ("local", "auto", 2e-13),
-    ],
-)
-def test_native_equicorr_gaussian_rosenblatt_matches_tmgrid_oracle(
-        transition_method, grid_method, atol):
-    u = pobs(np.random.default_rng(20260730).standard_normal((19, 4)))
-    copula = EquicorrGaussianCopula(d=4)
-    result = _scar_result(K=35, grid_range=3.25)
-    config = AutoTMConfig(
-        K=35,
-        grid_range=3.25,
-        grid_method=grid_method,
-        adaptive=False,
-        transition_method=transition_method,
-        max_K=None,
-        gh_order=7,
-    )
-
-    expected = _materialized_equicorr_scar_rosenblatt(
-        copula,
-        u,
-        result,
-        K=35,
-        grid_range=3.25,
-        config=config,
-    )
-    actual = _cpp_scar_ou.gaussian_rosenblatt(
-        *result.params.values, u, copula, config)
-
-    np.testing.assert_allclose(
-        actual, expected, rtol=0.0, atol=atol)
-
-
-@pytest.mark.parametrize(
-    ("transition_method", "grid_method", "atol"),
-    [
-        ("matrix", "dense", 5e-8),
-        ("matrix", "sparse", 5e-8),
-        ("local", "auto", 5e-8),
-    ],
-)
-def test_native_student_rosenblatt_matches_tmgrid_oracle(
-        transition_method, grid_method, atol):
-    u = pobs(np.random.default_rng(20260730).standard_normal((19, 4)))
-    copula = StochasticStudentCopula(d=4, R=_R())
-    result = _scar_result(K=35, grid_range=3.25)
-    config = AutoTMConfig(
-        K=35,
-        grid_range=3.25,
-        grid_method=grid_method,
-        adaptive=False,
-        transition_method=transition_method,
-        max_K=None,
-        gh_order=7,
-    )
-
-    expected = _materialized_student_scar_rosenblatt(
-        copula,
-        u,
-        result,
-        K=35,
-        grid_range=3.25,
-        config=config,
-    )
-    actual = _cpp_scar_ou.student_rosenblatt(
-        *result.params.values, u, copula, config)
-
-    np.testing.assert_allclose(
-        actual, expected, rtol=0.0, atol=atol)
-
-
 @pytest.mark.parametrize(
     ("copula", "native_name", "transform"),
     [
@@ -891,44 +667,8 @@ def test_multivariate_scar_gof_preserves_stored_grid_options(
         "gh_order": 7,
         "r_gh": 2.25,
         "n_threads": 1,
+        "corr_gradient_block_bytes": 67_108_864,
     }
-
-
-def test_multivariate_scar_gof_reweights_state_by_observed_prefix():
-    u = pobs(np.random.default_rng(20260625).standard_normal((12, 3)))
-    R = np.array(
-        [
-            [1.0, 0.42, -0.18],
-            [0.42, 1.0, 0.27],
-            [-0.18, 0.27, 1.0],
-        ],
-        dtype=np.float64,
-    )
-    result = _scar_result(K=15, grid_range=3.25)
-
-    equicorr = EquicorrGaussianCopula(d=3)
-    eq_expected = _materialized_equicorr_scar_rosenblatt(
-        equicorr, u, result, K=15, grid_range=3.25)
-    eq_predictive_only = _equicorr_scar_rosenblatt_predictive_only(
-        equicorr, u, result, K=15, grid_range=3.25)
-    eq_got = equicorr_rosenblatt_transform(
-        equicorr, u, result, K=15, grid_range=3.25)
-
-    np.testing.assert_allclose(eq_got, eq_expected, atol=1e-12, rtol=1e-12)
-    assert not np.allclose(
-        eq_expected[:, 2], eq_predictive_only[:, 2], atol=1e-5, rtol=1e-5)
-
-    student = StochasticStudentCopula(d=3, R=R)
-    st_expected = _materialized_student_scar_rosenblatt(
-        student, u, result, K=15, grid_range=3.25)
-    st_predictive_only = _student_scar_rosenblatt_predictive_only(
-        student, u, result, K=15, grid_range=3.25)
-    st_got = stochastic_student_rosenblatt_transform(
-        student, u, result, K=15, grid_range=3.25)
-
-    np.testing.assert_allclose(st_got, st_expected, atol=8e-4, rtol=8e-4)
-    assert not np.allclose(
-        st_expected[:, 2], st_predictive_only[:, 2], atol=1e-5, rtol=1e-5)
 
 
 def test_equicorr_scar_gof_uses_block_batch_emissions(monkeypatch):
@@ -946,24 +686,6 @@ def test_equicorr_scar_gof_uses_block_batch_emissions(monkeypatch):
     assert e.shape == u.shape
     assert np.all(np.isfinite(e))
     assert np.all((e > 0.0) & (e < 1.0))
-
-
-def test_equicorr_scar_gof_native_path_does_not_construct_tmgrid(
-        monkeypatch):
-    u = pobs(np.random.default_rng(20260731).standard_normal((18, 4)))
-    copula = EquicorrGaussianCopula(d=4)
-    result = _scar_result(K=31, grid_range=3.0)
-
-    def fail_tmgrid(*args, **kwargs):
-        raise AssertionError(
-            "equicorrelation Gaussian GoF must not construct TMGrid")
-
-    monkeypatch.setattr(TMGrid, "__init__", fail_tmgrid)
-    transformed = equicorr_rosenblatt_transform(
-        copula, u, result, K=31, grid_range=3.0)
-
-    assert transformed.shape == u.shape
-    assert np.all(np.isfinite(transformed))
 
 
 def test_stochastic_student_scar_gof_uses_block_batch_emissions(monkeypatch):
@@ -989,76 +711,6 @@ def test_stochastic_student_scar_gof_uses_block_batch_emissions(monkeypatch):
     assert e.shape == u.shape
     assert np.all(np.isfinite(e))
     assert np.all((e > 0.0) & (e < 1.0))
-
-
-def test_student_scar_gof_native_path_does_not_construct_tmgrid(
-        monkeypatch):
-    u = pobs(np.random.default_rng(20260801).standard_normal((18, 4)))
-    copula = StochasticStudentCopula(d=4, R=_R())
-    result = _scar_result(K=31, grid_range=3.0)
-
-    def fail_tmgrid(*args, **kwargs):
-        raise AssertionError("Student GoF must not construct TMGrid")
-
-    monkeypatch.setattr(TMGrid, "__init__", fail_tmgrid)
-    transformed = stochastic_student_rosenblatt_transform(
-        copula, u, result, K=31, grid_range=3.0)
-
-    assert transformed.shape == u.shape
-    assert np.all(np.isfinite(transformed))
-
-
-def test_forward_weight_block_arrays_match_row_iterator():
-    from pyscarcopula.numerical.gof_blocks import (
-        iter_forward_weight_block_arrays,
-        iter_forward_weight_blocks,
-    )
-
-    u = pobs(np.random.default_rng(20260525).standard_normal((17, 3)))
-    copula = EquicorrGaussianCopula(d=3)
-    grid = TMGrid(0.8, 0.0, 1.0, len(u), 9, 3.0)
-    x_grid = grid.z + grid.mu
-
-    row_weights = []
-    row_fi = []
-    for _k, _local, weights, fi_block in iter_forward_weight_blocks(
-            grid, u, copula, x_grid=x_grid, block_size=4):
-        row_weights.append(weights.copy())
-        row_fi.append(fi_block[_local].copy())
-
-    block_weights = []
-    block_fi = []
-    for _start, _stop, weights_block, fi_block, _u_block in (
-            iter_forward_weight_block_arrays(
-                grid, u, copula, x_grid=x_grid, block_size=4)):
-        block_weights.extend(weights_block)
-        block_fi.extend(fi_block)
-
-    np.testing.assert_allclose(block_weights, row_weights, atol=0.0, rtol=0.0)
-    np.testing.assert_allclose(block_fi, row_fi, atol=0.0, rtol=0.0)
-
-
-def test_student_scar_gof_bypasses_python_block_sizing(monkeypatch):
-    from pyscarcopula.numerical import gof_blocks
-
-    rng = np.random.default_rng(20260521)
-    u = pobs(rng.standard_normal((10, 4)))
-    R = _R()
-    result = _scar_result(K=8, grid_range=3.0)
-    calls = []
-
-    def capture_block_size(K, max_elements=2_000_000, max_rows=512,
-                           element_width=1):
-        calls.append(element_width)
-        return 3
-
-    monkeypatch.setattr(gof_blocks, "forward_block_size", capture_block_size)
-
-    student = StochasticStudentCopula(d=4, R=R)
-    stochastic_student_rosenblatt_transform(
-        student, u, result, K=8, grid_range=3.0)
-
-    assert calls == []
 
 
 def test_multivariate_models_support_top_level_api_except_pair_h():
@@ -1138,7 +790,7 @@ def test_multivariate_direct_predict_honors_all_given_coordinates():
 @pytest.mark.parametrize("horizon", ["current", "next"])
 @pytest.mark.parametrize(
     "method",
-    ["scar-tm-ou", "gas", "scar-p-ou", "scar-m-ou"],
+    ["scar-tm-ou", "gas"],
 )
 @pytest.mark.parametrize("corr_mode", ["fixed", "factor"])
 def test_stochastic_student_direct_dynamic_predict_matches_api(
@@ -1161,16 +813,6 @@ def test_stochastic_student_direct_dynamic_predict_matches_api(
             params=gas_params(0.1, 0.2, 0.7),
             scaling="unit",
             r_last=5.0,
-        )
-    else:
-        result = LatentResult(
-            log_likelihood=0.0,
-            method=method.upper(),
-            copula_name=copula.name,
-            success=True,
-            params=ou_params(0.8, 0.0, 1.0),
-            n_tr=10,
-            M_iterations=1 if method == "scar-m-ou" else None,
         )
     copula.fit_result = result
     copula._last_u = u
@@ -1286,6 +928,14 @@ def test_native_conditional_sampling_preserves_public_seed_reproducibility(
     np.testing.assert_array_equal(first, second)
 
 
+def test_invalid_equicorr_conditional_path_does_not_advance_rng():
+    rng = np.random.default_rng(20260829)
+    before = rng.bit_generator.state
+    with pytest.raises(ValueError, match="equicorrelation domain"):
+        sample_gaussian_conditional(8, 3, 1.0, {0: 0.4}, rng=rng)
+    assert rng.bit_generator.state == before
+
+
 @pytest.mark.parametrize("family", ["gaussian", "student"])
 def test_conditional_sampling_all_fixed_preserves_extreme_valid_values(family):
     given = {
@@ -1348,9 +998,9 @@ def test_fallback_predict_draws_independent_latent_parameter_per_sample():
         captured = {}
         original = copula.sample_conditional
 
-        def spy(n_, r=None, given=None, rng=None, _orig=original):
+        def spy(n_, r=None, given=None, rng=None, _orig=original, **kwargs):
             captured["r"] = np.atleast_1d(np.asarray(r, dtype=np.float64))
-            return _orig(n_, r=r, given=given, rng=rng)
+            return _orig(n_, r=r, given=given, rng=rng, **kwargs)
 
         copula.sample_conditional = spy
         try:
@@ -1366,7 +1016,7 @@ def test_fallback_predict_draws_independent_latent_parameter_per_sample():
 def test_mle_optimizer_failure_does_not_fake_convergence(monkeypatch):
     """M2 regression: failed likelihood evaluations must not yield a zero
     gradient that L-BFGS-B would misread as convergence."""
-    from pyscarcopula.numerical import static_likelihood
+    from pyscarcopula._native import static as static_likelihood
 
     u = _u()
     copula = StochasticStudentCopula(d=4, R=_R())
@@ -1386,7 +1036,7 @@ def test_mle_optimizer_failure_does_not_fake_convergence(monkeypatch):
 def test_mle_optimizer_unexpected_error_propagates(monkeypatch):
     """M2 regression: only expected numerical exceptions may be swallowed
     by the objective wrapper; real bugs must surface."""
-    from pyscarcopula.numerical import static_likelihood
+    from pyscarcopula._native import static as static_likelihood
 
     u = _u()
     copula = StochasticStudentCopula(d=4, R=_R())
@@ -1405,16 +1055,77 @@ def test_mle_optimizer_unexpected_error_propagates(monkeypatch):
 
 def test_student_ppf_table_memory_limit_falls_back_to_exact():
     """M4 regression: over the memory budget the table is skipped and
-    evaluations use the exact stdtrit quantile."""
+    evaluations use the exact native quantile."""
     u = _u()
     table = StudentPPFTable(u, max_table_bytes=1)
     assert table.table is None
     for df in (3.0, 7.5, 300.0):
         np.testing.assert_allclose(
-            table(df), stdtrit(df, table.u), rtol=1e-12, atol=0.0)
+            table(df), student_quantile_beta_oracle(df, table.u),
+            rtol=1e-12, atol=0.0)
     np.testing.assert_allclose(
-        table.rows(4.5, 2, 9), stdtrit(4.5, table.u[2:9]),
+        table.rows(4.5, 2, 9), student_quantile_beta_oracle(4.5, table.u[2:9]),
         rtol=1e-12, atol=0.0)
+
+
+def test_student_ppf_preparation_and_tails_do_not_use_python_math(monkeypatch):
+    import scipy.special
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Python Student quantile or node construction was called")
+
+    monkeypatch.setattr(scipy.special, "stdtrit", forbidden)
+    monkeypatch.setattr(np, "geomspace", forbidden)
+    monkeypatch.setattr(np, "linspace", forbidden)
+    monkeypatch.setattr(np, "clip", forbidden)
+    table = StudentPPFTable(np.array([[0.25, 0.5, 0.75]]))
+    np.testing.assert_allclose(table(1.0), [[-1.0, 0.0, 1.0]], atol=1e-13)
+    assert np.all(np.isfinite(table(5.0)))
+    assert table.rows(5.0, 0, 0).shape == (0, 3)
+
+
+@pytest.mark.parametrize("df", [3.0, 300.0, 999.0, 1000.0, 3000.0,
+                                10000.0, 99999.0, 100000.0, 1e6])
+def test_student_ppf_exact_path_centre_tails_and_large_df(df):
+    probabilities = np.array([[1e-10, 1e-6, 0.01, 0.45, 0.49, 0.4999,
+                               0.5, 0.5001, 0.51, 0.99, 1-1e-6, 1-1e-10]])
+    table = StudentPPFTable(probabilities, max_table_bytes=1)
+    np.testing.assert_allclose(table(df), student_quantile_beta_oracle(df, probabilities),
+                               rtol=2e-13, atol=2e-13)
+
+
+def test_student_ppf_exported_arrays_keep_native_storage_alive():
+    import gc
+
+    table = StudentPPFTable(np.array([[0.25, 0.5, 0.75]]))
+    nodes = table.nodes
+    row = table.table[0]
+    expected = row.copy()
+    del table
+    gc.collect()
+    assert nodes[0] == pytest.approx(2.0 + 1e-6)
+    np.testing.assert_array_equal(row, expected)
+
+
+@pytest.mark.parametrize("operation", ["prepare", "evaluate"])
+def test_student_ppf_propagates_native_unsupported(monkeypatch, operation):
+    from pyscarcopula._native import _extension
+    from pyscarcopula._native.errors import NativeUnsupported
+
+    table = StudentPPFTable(np.array([[0.2, 0.8]]))
+
+    def unsupported(*args, **kwargs):
+        raise NativeUnsupported("sentinel PPF failure")
+
+    module = _extension.load()
+    if operation == "prepare":
+        monkeypatch.setattr(module, "student_prepare_ppf_table", unsupported)
+        call = lambda: StudentPPFTable(table.u)
+    else:
+        monkeypatch.setattr(module, "student_evaluate_ppf_table", unsupported)
+        call = lambda: table(5.0)
+    with pytest.raises(NativeUnsupported, match="sentinel PPF failure"):
+        call()
 
 
 def test_scar_log_likelihood_with_degraded_ppf_cache(monkeypatch):

@@ -1,16 +1,16 @@
 """Test that fit methods converge and recover known parameters."""
-import importlib
 import json
 
 import numpy as np
 import pytest
 from pyscarcopula import GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula
-from pyscarcopula.api import fit, predict, sample
+from pyscarcopula.api import fit
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
-    MLEResult, LatentResult, GASResult, NumericalConfig, LBFGSBConfig,
+    MLEResult, LatentResult, GASResult, NumericalConfig,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 
@@ -37,6 +37,57 @@ class TestMLERecovery:
         rel_err = abs(result.copula_param - true_r) / true_r
         assert rel_err < 0.15, \
             f"MLE recovery: true={true_r}, got={result.copula_param:.4f}"
+
+
+@pytest.mark.parametrize(
+    ("method", "alpha", "options"),
+    [
+        ("mle", np.array([1.4]), {}),
+        (
+            "gas",
+            np.array([0.0, 0.1, 0.8]),
+            {"scaling": "unit", "score_eps": 1e-4},
+        ),
+        (
+            "scar-tm-ou",
+            np.array([0.8, 0.1, 0.7]),
+            {"K": 12, "adaptive": False, "transition_method": "matrix"},
+        ),
+        (
+            "scar-tm-jacobi",
+            np.array([1.0, 0.5, 0.2]),
+            {"spectral_basis_order": 8, "spectral_quad_order": 16},
+        ),
+    ],
+)
+def test_mlog_likelihood_routes_strategy_keywords(
+        method, alpha, options):
+    u = pobs(np.random.default_rng(33).standard_normal((16, 2)))
+    copula = GumbelCopula(rotate=180)
+
+    value = copula.mlog_likelihood(
+        alpha,
+        u,
+        method=method,
+        config=NumericalConfig(n_threads=1),
+        **options,
+    )
+
+    assert np.isfinite(value)
+
+
+def test_mlog_likelihood_rejects_unknown_strict_strategy_keyword():
+    u = pobs(np.random.default_rng(34).standard_normal((8, 2)))
+
+    with pytest.raises(
+            TypeError,
+            match="unexpected GAS keyword.*definitely_unknown"):
+        GumbelCopula(rotate=180).mlog_likelihood(
+            np.array([0.0, 0.1, 0.8]),
+            u,
+            method="gas",
+            definitely_unknown=True,
+        )
 
 
 class TestSCARConvergence:
@@ -122,7 +173,7 @@ class TestSCARNativeExecution:
             "prepare_objective",
             lambda *args, **kwargs: (
                 (_ for _ in ()).throw(
-                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+                    _cpp_scar_ou.NativeUnsupported("test fallback"))),
         )
         monkeypatch.setattr(_cpp_scar_ou, "supported", lambda copula: True)
 
@@ -236,7 +287,7 @@ class TestSCARNativeExecution:
             "prepare_objective",
             lambda *args, **kwargs: (
                 (_ for _ in ()).throw(
-                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+                    _cpp_scar_ou.NativeUnsupported("test fallback"))),
         )
         monkeypatch.setattr(
             _cpp_scar_ou, "neg_loglik_with_grad_info", fake_objective)
@@ -295,13 +346,19 @@ class TestGASConvergence:
 
 
 class TestSmartInit:
-    @pytest.mark.parametrize("smart", [True, False])
-    def test_smart_init_same_optimum(self, crypto_data, smart):
+    def test_smart_init_same_optimum(self, crypto_data):
         u = crypto_data[:500]
-        cop = GumbelCopula(rotate=180)
-        result = fit(cop, u, method='scar-tm-ou',
-                     smart_init=smart, analytical_grad=True)
-        assert result.log_likelihood > 100
+        results = [
+            fit(GumbelCopula(rotate=180), u, method='scar-tm-ou',
+                smart_init=smart, analytical_grad=True)
+            for smart in (True, False)
+        ]
+        assert all(result.success for result in results)
+        assert results[0].log_likelihood == pytest.approx(
+            results[1].log_likelihood, abs=1e-4)
+        np.testing.assert_allclose(
+            results[0].params.values, results[1].params.values,
+            rtol=2e-3, atol=1e-4)
 
     def test_use_gas_returns_gas_initial_point(self, monkeypatch):
         from pyscarcopula.strategy import initial_point
@@ -322,44 +379,38 @@ class TestSmartInit:
         np.testing.assert_allclose(alpha0, gas_alpha)
         assert info['method'] == 'gas'
 
-    def test_gas_initial_point_uses_lightweight_loglik_then_one_filter(
+    def test_gas_initial_point_delegates_grid_and_moments_to_native(
             self, monkeypatch):
         from pyscarcopula.strategy import initial_point
-        gas_module = importlib.import_module(
-            'pyscarcopula.numerical.gas_filter')
 
         u = np.full((8, 2), 0.5)
         cop = GumbelCopula()
         calls = []
+        expected = np.array([1.2, 0.3, 0.4])
 
         monkeypatch.setattr(initial_point, '_mle_mu', lambda *args: 0.2)
 
-        def fake_loglik(omega, gamma, beta, u_arg, copula, scaling):
-            calls.append(('loglik', omega, gamma, beta))
-            return gamma
+        def fake_native(static_mu, u_arg, copula):
+            calls.append((static_mu, u_arg, copula))
+            return expected, {'best_log_likelihood': 3.0}
 
-        def fake_filter(omega, gamma, beta, u_arg, copula, scaling):
-            calls.append(('filter', omega, gamma, beta))
-            return np.linspace(0.0, 0.7, len(u_arg)), np.zeros(len(u_arg)), 0.0
-
-        monkeypatch.setattr(gas_module, 'gas_loglik', fake_loglik)
-        monkeypatch.setattr(gas_module, 'gas_filter', fake_filter)
+        monkeypatch.setattr(
+            initial_point.native_gas, 'ou_initial_point', fake_native)
 
         result = initial_point._gas_initial_point(u, cop)
 
-        assert result.shape == (3,)
-        assert sum(call[0] == 'loglik' for call in calls) == 20
-        assert sum(call[0] == 'filter' for call in calls) == 1
+        np.testing.assert_array_equal(result, expected)
+        assert len(calls) == 1
+        assert calls[0][0] == 0.2
+        assert calls[0][1] is u
+        assert calls[0][2] is cop
 
     def test_stochastic_student_starts_near_static_df_mle(self, monkeypatch):
         from pyscarcopula.copula.multivariate import StochasticStudentCopula
         from pyscarcopula.strategy import initial_point
 
-        class StudentSubclass(StochasticStudentCopula):
-            pass
-
         u = pobs(np.random.default_rng(1).standard_normal((20, 2)))
-        copula = StudentSubclass(d=2, R=np.eye(2))
+        copula = StochasticStudentCopula(d=2, R=np.eye(2))
         df0 = 5.0
         inverse_mu0 = float(copula.inv_transform([df0])[0])
 
@@ -372,10 +423,11 @@ class TestSmartInit:
         alpha0, info = initial_point.smart_initial_point(u, copula)
 
         expected_kappa = -np.log(0.96) * (len(u) - 1)
-        np.testing.assert_allclose(
-            alpha0,
-            [expected_kappa, inverse_mu0, 0.1],
-        )
+        np.testing.assert_allclose(alpha0[:2], [expected_kappa, inverse_mu0])
+        assert 0.0 < info['sigma_x'] <= 2.0
+        assert info['scale_method'] == 'variance_score'
+        assert info['variance_information'] > 0.0
+        assert alpha0[2] > 0.1
         np.testing.assert_allclose(copula.transform(alpha0[1]), [df0])
         assert info['method'] == 'stochastic_student_mle'
         assert info['df_mle'] == df0
@@ -454,7 +506,7 @@ class TestSmartInit:
         copula = StudentSubclass(d=2, R=np.eye(2))
         strategy = SCARTMStrategy()
 
-        with pytest.raises(NotImplementedError, match="StochasticStudent"):
+        with pytest.raises(NativeUnsupported, match="exact registered"):
             strategy.mixture_h(
                 copula,
                 np.full((3, 2), 0.5),
@@ -465,62 +517,3 @@ class TestSmartInit:
                     success=True,
                 ),
             )
-
-
-class TestMCStrategies:
-    @pytest.mark.parametrize("method", ['scar-p-ou', 'scar-m-ou'])
-    def test_mc_fit_supports_smart_init_false(self, method):
-        u = pobs(np.random.default_rng(0).standard_normal((35, 2)))
-        cop = GumbelCopula(rotate=180)
-        cfg = NumericalConfig(
-            scar_optimizer=LBFGSBConfig(maxfun=3, maxiter=3),
-            default_n_tr=20,
-        )
-
-        result = fit(
-            cop, u, method=method, config=cfg, seed=1,
-            smart_init=False, M_iterations=1)
-
-        assert isinstance(result, LatentResult)
-        assert result.params.kappa > 0
-        assert result.params.nu > 0
-        initialization = result.diagnostics['initialization']
-        assert initialization['requested_method'] == 'mle_default'
-        assert initialization['selected_method'] == 'mle_default'
-        assert initialization['attempts'] == [{
-            'method': 'mle_default',
-            'success': True,
-        }]
-
-    def test_scar_p_supports_sample_and_predict(self):
-        u = pobs(np.random.default_rng(1).standard_normal((35, 2)))
-        cop = GumbelCopula(rotate=180)
-        cfg = NumericalConfig(
-            scar_optimizer=LBFGSBConfig(maxfun=3, maxiter=3),
-            default_n_tr=20,
-        )
-        result = fit(
-            cop, u, method='scar-p-ou', config=cfg, seed=1,
-            smart_init=False)
-
-        sim = sample(cop, u, result, 8, rng=np.random.default_rng(2))
-        pred = predict(cop, u, result, 8, rng=np.random.default_rng(3))
-
-        assert sim.shape == (8, 2)
-        assert pred.shape == (8, 2)
-        assert np.all((sim > 0.0) & (sim < 1.0))
-        assert np.all((pred > 0.0) & (pred < 1.0))
-
-    def test_scar_m_uses_config_default_m_iterations(self):
-        u = pobs(np.random.default_rng(2).standard_normal((35, 2)))
-        cop = GumbelCopula(rotate=180)
-        cfg = NumericalConfig(
-            scar_optimizer=LBFGSBConfig(maxfun=3, maxiter=3),
-            default_n_tr=20,
-            default_M_iterations=1,
-        )
-
-        result = fit(cop, u, method='scar-m-ou', config=cfg, seed=1,
-                     smart_init=False)
-
-        assert result.M_iterations == 1

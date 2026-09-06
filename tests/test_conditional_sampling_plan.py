@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from types import SimpleNamespace
 from scipy.stats import (
     cramervonmises,
     cramervonmises_2samp,
@@ -13,7 +14,6 @@ from scipy.stats import (
 from pyscarcopula import (
     BivariateGaussianCopula,
     ClaytonCopula,
-    CVineCopula,
     FrankCopula,
     GumbelCopula,
     IndependentCopula,
@@ -35,7 +35,8 @@ from pyscarcopula.contrib.risk_metrics import (
     _calculate_cvar_fixed,
     _process_chunk_fixed,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import gas as _cpp_gas
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.stattests import rvine_rosenblatt_transform
 from pyscarcopula.strategy._base import get_strategy_for_result
 from pyscarcopula.vine._pair_copula import PairCopula
@@ -113,7 +114,7 @@ def _gaussian_conditional_u_mean(rho, given_u):
 
 
 def _raise_cpp_unsupported(*args, **kwargs):
-    raise _cpp_scar_ou.CppUnsupported("test fallback")
+    raise _cpp_scar_ou.NativeUnsupported("test fallback")
 
 
 class _LinearScoreCopula:
@@ -135,6 +136,7 @@ class _RiskMetricsFakeCopula:
 
     def fit(self, data, method='mle', **kwargs):
         self.mean_ = np.mean(data, axis=0)
+        self.fit_result = SimpleNamespace(success=True)
         return self
 
     def predict(self, n, u=None, rng=None, **kwargs):
@@ -947,7 +949,8 @@ class TestConditionalSamplingPlanLayer:
         assert np.all(samples[:, 1] < 1.0)
 
         u2 = samples[:, 1]
-        z = copula.h(u2, np.full(n, u1_value), np.full(n, float(theta)))
+        _, z = copula.h_pair(
+            np.full(n, u1_value), u2, np.full(n, float(theta)))
 
         ks_stat, _ = kstest(z, 'uniform')
         assert ks_stat < 0.030, (
@@ -956,9 +959,9 @@ class TestConditionalSamplingPlanLayer:
         )
 
         grid = np.array([0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95])
-        theo_cdf = copula.h(grid,
-                            np.full(len(grid), u1_value),
-                            np.full(len(grid), float(theta)))
+        _, theo_cdf = copula.h_pair(
+            np.full(len(grid), u1_value), grid,
+            np.full(len(grid), float(theta)))
         emp_cdf = np.array([np.mean(u2 <= g) for g in grid])
         cdf_err = np.max(np.abs(emp_cdf - theo_cdf))
         assert cdf_err < 0.020, (
@@ -1192,11 +1195,11 @@ class TestConditionalSamplingPlanLayer:
             return np.array([target_x]), np.array([1.0])
 
         monkeypatch.setattr(
-            'pyscarcopula.numerical._cpp_scar_ou.state_distribution',
+            'pyscarcopula._native.scar_ou.state_distribution',
             fake_tm_state_distribution,
         )
         monkeypatch.setattr(
-            'pyscarcopula.numerical._cpp_scar_ou.prepare_objective',
+            'pyscarcopula._native.scar_ou.prepare_objective',
             _raise_cpp_unsupported,
         )
 
@@ -1263,109 +1266,6 @@ class TestConditionalSamplingPlanLayer:
         assert gas_params_refit
         assert np.isfinite(refit.log_likelihood())
         assert any(abs(p.gamma) > 0.2 for p in gas_params_refit)
-
-    @pytest.mark.validation
-    def test_cvine_dynamic_prefix_conditional_matches_predictive_edge_state(self):
-        copula = BivariateGaussianCopula()
-        target_r = 0.85
-        gas_edge = _vine_edge(
-            0,
-            0,
-            copula,
-            GASResult(
-                log_likelihood=0.0,
-                method='GAS',
-                copula_name=copula.name,
-                success=True,
-                params=gas_params(0.0, 0.0, 0.0),
-                scaling='unit',
-                r_last=target_r,
-            ),
-        )
-
-        vine = CVineCopula(candidates=[BivariateGaussianCopula])
-        vine.d = 4
-        vine.method = 'MIXED'
-        vine.edges = [
-            [gas_edge, _mle_gaussian_edge(0, 1, 0.15), _independent_edge(0, 2)],
-            [_independent_edge(1, 0), _independent_edge(1, 1)],
-            [_independent_edge(2, 0)],
-        ]
-
-        samples = vine.predict(
-            2000,
-            given={0: 0.95},
-            rng=np.random.default_rng(121),
-        )
-
-        expected = _gaussian_conditional_u_mean(target_r, 0.95)
-        sample_mean = float(np.mean(samples[:, 1]))
-        assert np.allclose(samples[:, 0], 0.95)
-        assert sample_mean > 0.70
-        assert abs(sample_mean - expected) < 0.04
-        assert abs(np.mean(samples[:, 3]) - 0.5) < 0.04
-
-    def test_cvine_scar_tm_train_pseudo_obs_use_mixture_h(self, monkeypatch):
-        u_train = _mvn_pobs(np.eye(3), 12, seed=122)
-        copula = BivariateGaussianCopula()
-        scar_edge = _vine_edge(
-            0,
-            0,
-            copula,
-            LatentResult(
-                log_likelihood=0.0,
-                method='SCAR-TM-OU',
-                copula_name=copula.name,
-                success=True,
-                params=ou_params(1.0, 0.0, 0.5),
-                K=5,
-                grid_range=3.0,
-            ),
-        )
-        vine = CVineCopula(candidates=[BivariateGaussianCopula])
-        vine.d = 3
-        vine.method = 'MIXED'
-        vine.edges = [
-            [scar_edge, _mle_gaussian_edge(0, 1, 0.0)],
-            [_mle_gaussian_edge(1, 0, 0.0)],
-        ]
-        h_calls = []
-        r_calls = []
-
-        def fake_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
-            h_calls.append((edge.fit_result.method, u_pair.copy(), K, grid_range))
-            if edge is scar_edge:
-                return np.full(len(u2), 0.73)
-            return np.asarray(u2, dtype=np.float64)
-
-        def fake_edge_r_for_predict(edge, n, u_train_pair=None,
-                                    horizon='next', **kwargs):
-            r_calls.append((edge.fit_result.method, u_train_pair, horizon))
-            return np.full(n, 0.0)
-
-        monkeypatch.setattr('pyscarcopula.vine.cvine._edge_h', fake_edge_h)
-        monkeypatch.setattr(
-            'pyscarcopula.vine.cvine._edge_r_for_predict',
-            fake_edge_r_for_predict,
-        )
-
-        samples = vine.predict(
-            5,
-            u=u_train,
-            given={0: 0.4},
-            K=5,
-            grid_range=3.0,
-            rng=np.random.default_rng(123),
-        )
-
-        assert samples.shape == (5, 3)
-        assert any(method == 'SCAR-TM-OU' for method, *_ in h_calls)
-        assert any(
-            method == 'MLE'
-            and v_pair is not None
-            and np.allclose(v_pair[:, 0], 0.73)
-            for method, v_pair, *_ in r_calls
-        )
 
     def test_rvine_arbitrary_conditioning_uses_dag_mcmc_fallback(self):
         u_train = _mvn_pobs(np.eye(4), 400, seed=120)
@@ -1576,11 +1476,11 @@ class TestConditionalSamplingPlanLayer:
             return np.array([0.25]), np.array([1.0])
 
         monkeypatch.setattr(
-            'pyscarcopula.numerical._cpp_scar_ou.state_distribution',
+            'pyscarcopula._native.scar_ou.state_distribution',
             fake_tm_state_distribution,
         )
         monkeypatch.setattr(
-            'pyscarcopula.numerical._cpp_scar_ou.prepare_objective',
+            'pyscarcopula._native.scar_ou.prepare_objective',
             _raise_cpp_unsupported,
         )
         strategy = get_strategy_for_result(result)
@@ -1607,7 +1507,8 @@ class TestConditionalSamplingPlanLayer:
         np.testing.assert_allclose(r_next, copula.transform(np.full(3, 0.25)))
         assert not np.allclose(r_current, r_next)
 
-    def test_gas_sample_uses_score_driven_recursion(self, monkeypatch):
+    def test_gas_sample_routes_score_recursion_to_fused_native(
+            self, monkeypatch):
         copula = BivariateGaussianCopula()
         result = GASResult(
             log_likelihood=0.0,
@@ -1619,21 +1520,24 @@ class TestConditionalSamplingPlanLayer:
             r_last=0.0,
         )
         strategy = get_strategy_for_result(result)
-        seen_r = []
+        calls = []
 
-        def sample_and_record(n, r, rng=None):
-            seen_r.extend(np.asarray(r, dtype=np.float64).tolist())
-            return np.tile(np.array([[0.25, 0.75]], dtype=np.float64), (n, 1))
+        def fused_sample(
+                omega, gamma, beta, draws, model, scaling, score_eps):
+            calls.append((omega, gamma, beta, draws.shape, model, scaling))
+            return np.tile(
+                np.array([[0.25, 0.75]], dtype=np.float64),
+                (len(draws), 1),
+            )
 
-        monkeypatch.setattr(copula, 'sample_at_parameter', sample_and_record)
+        monkeypatch.setattr(_cpp_gas, 'sample_bivariate', fused_sample)
 
         samples = strategy.sample(
             copula, None, result, 4, rng=np.random.default_rng(180))
 
         assert samples.shape == (4, 2)
         np.testing.assert_allclose(samples, np.tile([0.25, 0.75], (4, 1)))
-        assert len(seen_r) == 4
-        assert len(set(np.round(seen_r, 12))) > 1
+        assert calls == [(0.0, 0.2, 0.5, (4, 2), copula, 'unit')]
 
     def test_risk_metrics_worker_chunks_use_reproducible_per_window_rng(self):
         rng = np.random.default_rng(190)

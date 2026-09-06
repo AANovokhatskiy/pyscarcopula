@@ -13,7 +13,9 @@ def _extreme_uv():
 def _assert_unit_interval(values):
     values = np.asarray(values, dtype=np.float64)
     assert np.all(np.isfinite(values))
-    assert np.all((values > 0.0) & (values < 1.0))
+    # A conditional CDF can round to a genuine float64 endpoint in a tail.
+    # Only sampling promises an open interval; h must not invent a 1e-10 floor.
+    assert np.all((values >= 0.0) & (values <= 1.0))
 
 
 def test_gumbel_h_is_finite_for_large_theta_and_extreme_u():

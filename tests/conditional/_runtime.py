@@ -11,7 +11,6 @@ from scipy.stats import norm
 from pyscarcopula import (
     BivariateGaussianCopula,
     ClaytonCopula,
-    CVineCopula,
     EquicorrGaussianCopula,
     FrankCopula,
     GaussianCopula,
@@ -165,14 +164,6 @@ def build_runtime(model_id: str) -> RuntimeHarness:
             model_id, model, u_train, model.fit_result, 3
         )
 
-    if model_id == "vine-legacy-cvine":
-        model = CVineCopula().fit(
-            u_train, method="mle", copulas=specs
-        )
-        return RuntimeHarness(
-            model_id, model, u_train, model.fit_result, 3
-        )
-
     raise KeyError(f"unknown conditional runtime {model_id!r}")
 
 
@@ -191,6 +182,4 @@ def build_unfitted_runtime(model_id: str):
         return StochasticStudentCopula(d=3)
     if model_id == "vine-generic":
         return VineCopula.cvine(d=3, order=[0, 1, 2])
-    if model_id == "vine-legacy-cvine":
-        return CVineCopula()
     raise KeyError(f"unknown conditional runtime {model_id!r}")

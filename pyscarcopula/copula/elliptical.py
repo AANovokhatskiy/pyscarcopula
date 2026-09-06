@@ -1,7 +1,8 @@
 """Bivariate Gaussian copula."""
 
 import numpy as np
-from scipy.stats import norm
+from pyscarcopula._native import model_policy
+from pyscarcopula.numerical._arrays import as_float64_array
 
 from pyscarcopula.copula.base import BivariateCopula
 
@@ -21,59 +22,34 @@ class BivariateGaussianCopula(BivariateCopula):
         must not be interpreted as applying softplus or xtanh mathematics.
     """
 
+    _native_pair_family = "Gaussian"
+
     def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         if rotate != 0:
             raise ValueError("Rotation not supported for Gaussian copula")
         super().__init__(0)
         self._name = "Gaussian copula"
-        self._bounds = [(-0.9999, 0.9999)]
         if transform_type not in ("xtanh", "softplus"):
             raise ValueError(
                 "transform_type must be 'xtanh' or 'softplus', "
                 f"got '{transform_type}'"
             )
         self._transform_type = transform_type
+        self._bounds = model_policy.public_bounds(self)
 
     @property
     def rotatable(self):
         return False
 
     def tau_to_param(self, tau):
-        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        tau = np.atleast_1d(as_float64_array(tau, name="tau"))
         if np.any((tau <= -1.0) | (tau >= 1.0)):
             raise ValueError("Gaussian Kendall tau must be in (-1, 1)")
         return self._native_adapter().tau_to_param(self, tau)
 
     def param_to_tau(self, r):
-        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        r = np.atleast_1d(as_float64_array(r, name="r"))
         if np.any((r <= -1.0) | (r >= 1.0)):
             raise ValueError(
                 "Gaussian correlation parameter must be in (-1, 1)")
         return self._native_adapter().param_to_tau(self, r)
-
-    def sample_at_parameter(self, n, r, rng=None):
-        """Sample from the Gaussian copula."""
-        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        rho = parameter[0] if parameter.size == 1 else parameter
-        if rng is None:
-            rng = np.random.default_rng()
-
-        normal = rng.standard_normal((n, 2))
-        if np.isscalar(rho):
-            rho_value = float(rho)
-            second = (
-                rho_value * normal[:, 0]
-                + np.sqrt(1.0 - rho_value ** 2) * normal[:, 1]
-            )
-        else:
-            rho_values = np.asarray(rho).ravel()
-            if rho_values.size != n:
-                raise ValueError(
-                    f"r must be scalar or array of length {n}, "
-                    f"got {rho_values.size}"
-                )
-            second = (
-                rho_values * normal[:, 0]
-                + np.sqrt(1.0 - rho_values ** 2) * normal[:, 1]
-            )
-        return np.column_stack((norm.cdf(normal[:, 0]), norm.cdf(second)))

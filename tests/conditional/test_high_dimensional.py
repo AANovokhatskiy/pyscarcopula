@@ -27,8 +27,6 @@ from ._high_dimensional import (
     factor_loadings,
     high_dimensional_gaussian_vine,
     high_dimensional_mixed_truncated_vine,
-    legacy_cvine,
-    legacy_prefix_given,
     regular_vine_structure,
     scattered_given,
     suffix_given,
@@ -249,16 +247,6 @@ def _dynamic_result(model, method: str, family: str):
             adaptive=False,
             grid_method="dense",
         )
-    if method in {"SCAR-P-OU", "SCAR-M-OU"}:
-        return LatentResult(
-            log_likelihood=0.0,
-            method=method,
-            copula_name=model.name,
-            success=True,
-            params=ou_params(1.7, 0.35, 0.45),
-            n_tr=16,
-            M_iterations=1 if method == "SCAR-M-OU" else None,
-        )
     raise ValueError(method)
 
 
@@ -328,32 +316,6 @@ def test_d50_stochastic_student_modes_and_methods_public_contract(
         horizon="next",
         predictive_r_mode="grid" if method == "SCAR-TM-OU" else None,
         rng=np.random.default_rng(20267071 + k_free),
-        n_threads=3,
-    )
-    _assert_fixed_bit_exact(samples, given)
-
-
-@pytest.mark.validation
-@pytest.mark.high_dimensional
-@pytest.mark.parametrize("corr_mode", ["fixed", "factor"])
-@pytest.mark.parametrize("method", ["SCAR-P-OU", "SCAR-M-OU"])
-@pytest.mark.parametrize("k_free", [1, 10], ids=lambda value: f"k_free={value}")
-def test_d50_stochastic_student_selected_mc_method_smoke(
-    corr_mode, method, k_free
-):
-    model = _dynamic_model("student", corr_mode)
-    history = np.random.default_rng(20267075).uniform(
-        0.08, 0.92, size=(7, DIMENSION)
-    )
-    given = scattered_given(k_free)
-    samples = api_predict(
-        model,
-        history,
-        _dynamic_result(model, method, "student"),
-        31,
-        given=given,
-        horizon="next",
-        rng=np.random.default_rng(20267076 + k_free),
         n_threads=3,
     )
     _assert_fixed_bit_exact(samples, given)
@@ -490,47 +452,6 @@ def test_d50_mixed_rotated_truncated_rvine_exact_suffix_contract(k_free):
     assert diagnostics["conditional_method"] == "suffix"
     assert diagnostics["matrix_rebuilt"] is False
     assert "mcmc" not in diagnostics
-    _assert_fixed_bit_exact(samples, given)
-
-
-def _legacy_gaussian_correlation(vine) -> np.ndarray:
-    correlation = np.eye(DIMENSION, dtype=np.float64)
-    root_correlations = np.array(
-        [float(edge.param) for edge in vine.edges[0]], dtype=np.float64
-    )
-    correlation[0, 1:] = root_correlations
-    correlation[1:, 0] = root_correlations
-    correlation[1:, 1:] = np.outer(root_correlations, root_correlations)
-    np.fill_diagonal(correlation, 1.0)
-    np.linalg.cholesky(correlation)
-    return correlation
-
-
-@pytest.mark.validation
-@pytest.mark.high_dimensional
-@pytest.mark.parametrize("k_free", FREE_COUNTS, ids=lambda value: f"k_free={value}")
-def test_d50_legacy_gaussian_cvine_matches_mvn(k_free):
-    vine = legacy_cvine("gaussian")
-    given = legacy_prefix_given(k_free)
-    samples = vine.predict(
-        3_000,
-        given=given,
-        rng=np.random.default_rng(20267120 + k_free),
-    )
-    _assert_gaussian_oracle(samples, _legacy_gaussian_correlation(vine), given)
-
-
-@pytest.mark.validation
-@pytest.mark.high_dimensional
-@pytest.mark.parametrize("k_free", FREE_COUNTS, ids=lambda value: f"k_free={value}")
-def test_d50_legacy_rotated_archimedean_cvine_contract(k_free):
-    vine = legacy_cvine("rotated-clayton")
-    given = legacy_prefix_given(k_free)
-    samples = vine.predict(
-        257,
-        given=given,
-        rng=np.random.default_rng(20267130 + k_free),
-    )
     _assert_fixed_bit_exact(samples, given)
 
 

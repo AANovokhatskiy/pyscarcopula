@@ -9,7 +9,6 @@ closed-form oracles from :mod:`tests.conditional._analytical_oracles`.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Callable
 
 import numpy as np
 
@@ -24,7 +23,6 @@ from pyscarcopula import (
     StudentCopula,
 )
 from pyscarcopula.vine import RVineMatrix, cvine_structure, dvine_structure
-from pyscarcopula.vine.cvine import CVineCopula
 
 from ._vine_fixtures import EdgeSpec, fitted_static_vine, peel_order
 
@@ -280,59 +278,6 @@ def suffix_given(vine, k_free: int) -> dict[int, float]:
     }
 
 
-def _legacy_edge(spec: EdgeSpec):
-    # Reuse the deterministic PairCopula construction used by generic-vine
-    # tests.  Tree/index metadata are not consulted by the legacy runtime.
-    from ._vine_fixtures import _pair
-
-    return _pair(spec)
-
-
-def legacy_cvine(
-    family: str,
-    *,
-    gaussian_parameter: Callable[[int], float] | None = None,
-) -> CVineCopula:
-    """Build a low-truncation 50D legacy C-vine without optimizer noise."""
-
-    if gaussian_parameter is None:
-        gaussian_parameter = lambda edge: 0.18 + 0.002 * (edge % 11)
-    vine = CVineCopula()
-    vine.d = DIMENSION
-    vine.method = "MLE"
-    vine._last_u = None
-    edges = []
-    for tree in range(DIMENSION - 1):
-        level = []
-        for edge in range(DIMENSION - tree - 1):
-            if tree > 0:
-                spec = EdgeSpec(IndependentCopula, 0, 0.0)
-            elif family == "gaussian":
-                spec = EdgeSpec(
-                    BivariateGaussianCopula,
-                    0,
-                    float(gaussian_parameter(edge)),
-                )
-            elif family == "rotated-clayton":
-                spec = EdgeSpec(ClaytonCopula, 270, 0.75)
-            else:
-                raise ValueError(f"unknown legacy family {family!r}")
-            level.append(_legacy_edge(spec))
-        edges.append(level)
-    vine.edges = edges
-    return vine
-
-
-def legacy_prefix_given(k_free: int) -> dict[int, float]:
-    k_free = _validate_free_count(k_free)
-    variables = list(range(DIMENSION - k_free))
-    levels = np.full(len(variables), 0.5, dtype=np.float64)
-    return {
-        variable: float(level)
-        for variable, level in zip(variables, levels, strict=True)
-    }
-
-
 __all__ = [
     "DIMENSION",
     "FREE_COUNTS",
@@ -345,8 +290,6 @@ __all__ = [
     "high_dimensional_gaussian_vine",
     "high_dimensional_mixed_truncated_vine",
     "high_dimensional_structure",
-    "legacy_cvine",
-    "legacy_prefix_given",
     "regular_vine_structure",
     "scattered_free_indices",
     "scattered_given",

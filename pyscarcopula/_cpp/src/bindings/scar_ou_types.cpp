@@ -1,10 +1,18 @@
-#include "common.hpp"
+#include "module.hpp"
+
+#include "scar/scar_ou/types.hpp"
 
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
 
 void bind_scar_ou_types(py::module_& m) {
+    py::enum_<scar::OuBackend>(
+        m, "OuBackend", "Numerical SCAR-OU propagation backend.")
+        .value("Spectral", scar::OuBackend::Spectral)
+        .value("LocalGh", scar::OuBackend::LocalGh)
+        .value("Matrix", scar::OuBackend::Matrix);
+
     py::enum_<scar::OuGridMethod>(
         m, "OuGridMethod", "Native matrix-transition storage.")
         .value("Auto", scar::OuGridMethod::Auto)
@@ -41,6 +49,9 @@ void bind_scar_ou_types(py::module_& m) {
             "spectral_quad_order",
             &scar::OuNumericalConfig::spectral_quad_order)
         .def_readwrite("n_threads", &scar::OuNumericalConfig::n_threads)
+        .def_readwrite(
+            "corr_gradient_block_bytes",
+            &scar::OuNumericalConfig::corr_gradient_block_bytes)
         .def_readwrite(
             "grid_method", &scar::OuNumericalConfig::grid_method);
 }

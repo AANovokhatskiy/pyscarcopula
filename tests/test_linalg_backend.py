@@ -4,13 +4,13 @@ import os
 import numpy as np
 import pytest
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 
 DIMENSIONS = (20, 80, 150, 300)
 
 
 def _module():
-    import pyscarcopula._scar_cpp as module
+    import pyscarcopula._native._scar_cpp as module
 
     return module
 

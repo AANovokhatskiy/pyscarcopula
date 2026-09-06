@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scar/core/checked_arithmetic.hpp"
 #include "scar/numerical_constants.hpp"
 
 #include <algorithm>
@@ -28,30 +29,6 @@ inline constexpr std::size_t kHermiteRuleCacheMaxBytes =
 
 inline double clip_pseudo_observation(double value) noexcept {
     return std::clamp(value, kPseudoObsEps, 1.0 - kPseudoObsEps);
-}
-
-inline bool checked_size_mul(
-    std::size_t lhs,
-    std::size_t rhs,
-    std::size_t& result) noexcept {
-
-    if (lhs != 0 && rhs > std::numeric_limits<std::size_t>::max() / lhs) {
-        return false;
-    }
-    result = lhs * rhs;
-    return true;
-}
-
-inline bool checked_size_add(
-    std::size_t lhs,
-    std::size_t rhs,
-    std::size_t& result) noexcept {
-
-    if (rhs > std::numeric_limits<std::size_t>::max() - lhs) {
-        return false;
-    }
-    result = lhs + rhs;
-    return true;
 }
 
 inline bool checked_nonnegative_size(

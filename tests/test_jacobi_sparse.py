@@ -749,6 +749,31 @@ def test_sparse_sampling_memory_failure_precedes_rng_draw():
         rng.random(8), np.random.default_rng(4).random(8))
 
 
+def test_sparse_sampling_counts_fixed_draw_boundary_copies_before_rng():
+    tau, weights, sparse = jacobi_sparse_local_transition(
+        1.2, 0.4, 0.25, n_obs=10, quad_order=32)
+    n = 10
+    path_bytes = n * np.dtype(np.float64).itemsize
+    budget_without_returned_numpy_copy = (
+        2 * sparse.retained_bytes
+        + 2 * (tau.nbytes + weights.nbytes)
+        + 3 * path_bytes
+    )
+    rng = np.random.default_rng(41)
+
+    with pytest.raises(MemoryError, match="memory_budget_bytes"):
+        sample_sparse_jacobi_trajectory(
+            tau,
+            weights,
+            sparse,
+            n,
+            rng=rng,
+            memory_budget_bytes=budget_without_returned_numpy_copy,
+        )
+    np.testing.assert_array_equal(
+        rng.random(8), np.random.default_rng(41).random(8))
+
+
 def test_sparse_transition_type_rejects_unsorted_active_indices():
     with pytest.raises(ValueError, match="strictly increasing"):
         SparseJacobiTransition(

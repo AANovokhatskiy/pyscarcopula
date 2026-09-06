@@ -37,7 +37,7 @@ plugins:
 
 markdown_extensions:
   - pymdownx.highlight:
-      anchor_linenums: true
+      line_spans: false
   - pymdownx.superfences
   - pymdownx.arithmatex:
       generic: true
@@ -53,8 +53,8 @@ nav:
   - Home: index.md
   - Getting Started:
     - Installation: getting-started/installation.md
-    - Choosing a Model: getting-started/choosing-a-model.md
     - Quick Start: getting-started/quickstart.md
+    - Choosing a Model: getting-started/choosing-a-model.md
   - User Guide:
     - Models:
       - Bivariate Copulas: guide/bivariate.md
@@ -70,8 +70,15 @@ nav:
       - Parameter Transforms: guide/transforms.md
   - Performance and Scaling:
     - Performance Tuning: guide/performance.md
-    - Numerical Backends: guide/numerical-backends.md
     - CPU Parallelism: guide/parallelism.md
+  - Numerical Reference:
+    - Numerical Backends: guide/numerical-backends.md
+    - Optimizer Controls: reference/optimizers.md
+    - SCAR OU Numerics: reference/scar-ou.md
+    - SCAR Jacobi Numerics: reference/scar-jacobi.md
+    - Student Quantiles: reference/student-quantiles.md
+    - Multivariate Numerics: reference/multivariate-numerics.md
+    - Vine Numerics: reference/vine-numerics.md
   - Developer Guide:
     - Developer Architecture: guide/architecture.md
     - Validation:
@@ -79,6 +86,11 @@ nav:
   - API Reference:
     - Core Copulas and Fitting: api/copulas.md
     - Multivariate and Factor Models: api/multivariate_models.md
+    - Static Gaussian and Student: api/static-models.md
+    - Factor Operators: api/factor.md
+    - Equicorrelation Gaussian: api/equicorrelation.md
+    - Stochastic Student: api/stochastic-student.md
+    - Configuration and Results: api/configuration.md
     - Vines and Prediction: api/vine.md
     - Diagnostics: api/diagnostics.md
     - Persistence: api/persistence.md

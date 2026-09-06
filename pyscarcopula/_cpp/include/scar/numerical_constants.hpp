@@ -19,5 +19,9 @@ inline constexpr double kPseudoObservationEps = 1e-10;
 // quantiles. This is intentionally wider than the internal h-function guard.
 inline constexpr double kRosenblattOutputEps = 1e-6;
 
+// Boundary applied only to newly sampled free conditional coordinates.
+// Coordinates supplied by the caller remain exact.
+inline constexpr double kConditionalSampleEps = 1e-12;
+
 }  // namespace numerical
 }  // namespace scar

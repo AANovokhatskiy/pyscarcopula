@@ -7,12 +7,11 @@ import pytest
 
 from pyscarcopula import ClaytonCopula
 from pyscarcopula.copula._rotation import transposed_bivariate_copula
-from pyscarcopula.numerical import _cpp_extension, _cpp_rvine
-from pyscarcopula.numerical._cpp_extension import CppError, CppUnsupported
+from pyscarcopula._native import _extension as _cpp_extension, vine as _cpp_rvine
+from pyscarcopula._native.errors import NativeError, NativeUnsupported
 from pyscarcopula.vine._edge_adapter import edge_copula
 from pyscarcopula.vine._helpers import _clip_unit
 from pyscarcopula.vine._rvine_dag import (
-    _execute_conditional_plan_python,
     build_runtime_rvine_dag,
     plan_conditional_sample,
 )
@@ -20,11 +19,9 @@ from pyscarcopula.vine._rvine_sampling_plan import (
     build_rvine_sampling_plan,
 )
 from pyscarcopula.vine._rvine_suffix import (
-    _sample_suffix_given_with_r_python,
     build_suffix_conditional_plan,
     given_suffix_start_col,
 )
-
 from rvine_runtime_cases import (
     configured_mixed_family_vine,
     scalar_parameters,
@@ -103,15 +100,39 @@ def test_common_binding_owns_plan_and_preserves_gas_alias():
     assert hasattr(module, "RVineDensityPlan")
 
 
-def test_stage_six_advertises_all_rosenblatt_entry_points():
+def test_common_binding_advertises_all_rosenblatt_entry_points():
     module = _cpp_extension.load()
     assert hasattr(module, "rvine_sample")
     assert hasattr(module, "rvine_conditional_sample")
     assert hasattr(module, "rvine_log_pdf_rows")
     assert hasattr(module, "rvine_mcmc_chunk")
+    assert hasattr(module, "rvine_mcmc_policy")
+    assert hasattr(module, "rvine_mcmc_default_steps")
     assert not hasattr(module, "rvine_mcmc")
     assert hasattr(module, "rvine_rosenblatt_transform")
     assert hasattr(module, "dense_student_rosenblatt_transform")
+
+
+def test_native_mcmc_policy_owns_defaults_and_85_percent_threshold():
+    module = _cpp_extension.load()
+    assert _cpp_rvine.mcmc_default_steps(1) == (80, 40)
+    assert _cpp_rvine.mcmc_default_steps(4) == (120, 40)
+
+    plan = module.RVineDensityPlan()
+    plan.dimension = 1
+    plan.node_count = 1
+    plan.edge_indices = [0] * 100
+    plan.affected_operation_offsets = [0, 85]
+    policy = module.rvine_mcmc_policy(
+        plan, [0], 2, True, "auto", 1024**3)
+    assert policy["status"] == 0
+    assert policy["density_algorithm"] == "incremental"
+
+    plan.affected_operation_offsets = [0, 86]
+    policy = module.rvine_mcmc_policy(
+        plan, [0], 2, True, "auto", 1024**3)
+    assert policy["status"] == 0
+    assert policy["density_algorithm"] == "full_recompute"
 
 
 def test_common_traversal_serializer_preserves_every_flat_array():
@@ -226,7 +247,7 @@ def test_edge_pack_rejects_invalid_paths_before_native_call(
         )
 
 
-def test_exact_type_gate_rejects_subclass_unless_class_opts_in():
+def test_exact_type_gate_rejects_all_subclasses():
     module = _cpp_extension.load()
 
     class CustomClayton(ClaytonCopula):
@@ -236,11 +257,12 @@ def test_exact_type_gate_rejects_subclass_unless_class_opts_in():
         __pyscarcopula_native_rvine__ = True
 
     assert not _cpp_rvine.native_copula_supported(CustomClayton())
-    with pytest.raises(CppUnsupported, match="exact built-in"):
+    with pytest.raises(NativeUnsupported, match="exact registered built-in"):
         _cpp_rvine.compile_copula_spec(module, CustomClayton())
     opted_in = NativeEquivalentClayton()
-    assert _cpp_rvine.native_copula_supported(opted_in)
-    assert _cpp_rvine.compile_copula_spec(module, opted_in).dim == 2
+    assert not _cpp_rvine.native_copula_supported(opted_in)
+    with pytest.raises(NativeUnsupported, match="exact registered built-in"):
+        _cpp_rvine.compile_copula_spec(module, opted_in)
 
 
 def test_conditional_and_density_compilers_emit_flat_indexed_programs():
@@ -304,78 +326,72 @@ def test_conditional_and_density_compilers_emit_flat_indexed_programs():
         native_density, len(active_keys))
 
 
-def test_dag_compiler_semantics_match_python_oracle():
+def test_conditional_trace_captures_canonical_fixed_suffix_inputs():
     module = _cpp_extension.load()
     vine = configured_mixed_family_vine()
-    active_keys = tuple(sorted(vine.pair_copulas))
-    parameters = scalar_parameters(vine)
-    given = {2: 0.4}
-    plan = plan_conditional_sample(
-        build_runtime_rvine_dag(vine.matrix, vine._edge_map),
-        given,
-        vine.d,
-    )
-    native = _cpp_rvine.compile_conditional_plan(
-        module, plan, active_keys, given)
-    uniforms = np.random.default_rng(421).uniform(
-        0.05, 0.95, size=(7, vine.d))
-    payload = {
-        key: {"edge": vine.pair_copulas[key], "r": parameters[key]}
-        for key in active_keys
-    }
-
-    expected = _execute_conditional_plan_python(
-        plan,
-        payload,
-        given,
-        len(uniforms),
-        np.random.default_rng(0),
-        uniforms=uniforms,
-    )
-    actual = _execute_flat_conditional(
-        native, vine, active_keys, parameters, given, uniforms)
-    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
-
-
-def test_suffix_compiler_uses_common_opcodes_and_matches_python_oracle():
-    module = _cpp_extension.load()
-    vine = configured_mixed_family_vine()
-    active_keys = tuple(sorted(vine.pair_copulas))
-    parameters = scalar_parameters(vine)
-    given = {}
+    peel_order = [
+        int(vine.matrix[vine.d - 1 - column, column])
+        for column in range(vine.d)
+    ]
+    fixed = peel_order[-2:]
+    given = {fixed[0]: 0.37, fixed[1]: 0.71}
     start_col = given_suffix_start_col(vine.d, given, vine.matrix)
     plan = build_suffix_conditional_plan(
         vine.d, start_col, vine.matrix, given)
-    native = _cpp_rvine.compile_conditional_plan(
-        module, plan, active_keys, given)
-    uniforms = np.random.default_rng(812).uniform(
-        0.05, 0.95, size=(8, vine.d))
-
-    assert {2, 3, 4}.issubset(set(native.opcodes))
-    assert module.validate_rvine_conditional_plan(native, len(active_keys))
-    expected = _sample_suffix_given_with_r_python(
-        vine.d,
-        len(uniforms),
-        parameters,
-        np.random.default_rng(0),
-        given,
-        start_col,
-        vine.matrix,
+    trace = _cpp_rvine.conditional_trace(
+        module,
         vine.pair_copulas,
-        uniforms=uniforms,
+        plan,
+        5,
+        given,
+        scalar_parameters(vine),
     )
-    actual = _execute_flat_conditional(
-        native, vine, active_keys, parameters, given, uniforms)
-    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
+
+    first_step = next(step for step in plan if step["action"] == "h_pair")
+    variables = sorted((int(first_step["leaf"]), int(first_step["partner"])))
+    expected = np.tile([given[variables[0]], given[variables[1]]], (5, 1))
+    np.testing.assert_array_equal(trace[0], expected)
+
+
+def test_pseudo_observation_trace_contains_native_rosenblatt_nodes():
+    module = _cpp_extension.load()
+    vine = configured_mixed_family_vine()
+    observations = np.random.default_rng(2026082901).uniform(
+        0.02, 0.98, size=(9, vine.d))
+    pseudo = _cpp_rvine.pseudo_observations(
+        module,
+        vine.pair_copulas,
+        vine.d,
+        vine.trees,
+        vine._edge_map,
+        vine.matrix,
+        observations,
+    )
+    residual_keys = _cpp_rvine.rosenblatt_residual_node_keys(vine.matrix)
+    residuals = _cpp_rvine.rosenblatt(
+        module,
+        vine.pair_copulas,
+        vine.d,
+        vine.trees,
+        vine._edge_map,
+        vine.matrix,
+        observations,
+    )
+
+    for variable in range(vine.d):
+        np.testing.assert_array_equal(
+            pseudo[(variable, frozenset())], observations[:, variable])
+    for column, key in enumerate(residual_keys):
+        np.testing.assert_array_equal(pseudo[key], residuals[:, column])
 
 
 @pytest.mark.parametrize(
     ("status", "error"),
     [
         (2, ValueError),
-        (3, CppUnsupported),
+        (3, NativeUnsupported),
         (7, FloatingPointError),
-        (99, CppError),
+        (99, NativeError),
     ],
 )
 def test_common_status_mapper_preserves_failure_context(status, error):

@@ -21,7 +21,6 @@
         "supports_native_point_ops": true,
         "supports_gas": false,
         "supports_scar_ou": false,
-        "supports_scar_mc": false,
         "supports_latent_grid": false,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": false
@@ -43,8 +42,7 @@
       "conditional_entrypoints": ["predict", "api.predict"],
       "exactness": "exact_given_predictive_state",
       "methods": [
-        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
-        "SCAR-P-OU", "SCAR-M-OU"
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI"
       ],
       "rotations": [0],
       "correlation_modes": [],
@@ -56,7 +54,6 @@
         "supports_native_point_ops": true,
         "supports_gas": true,
         "supports_scar_ou": true,
-        "supports_scar_mc": true,
         "supports_latent_grid": true,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": true
@@ -78,8 +75,7 @@
       "conditional_entrypoints": ["predict", "api.predict"],
       "exactness": "exact_given_predictive_state",
       "methods": [
-        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
-        "SCAR-P-OU", "SCAR-M-OU"
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI"
       ],
       "rotations": [0, 90, 180, 270],
       "correlation_modes": [],
@@ -91,7 +87,6 @@
         "supports_native_point_ops": true,
         "supports_gas": true,
         "supports_scar_ou": true,
-        "supports_scar_mc": true,
         "supports_latent_grid": true,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": true
@@ -113,8 +108,7 @@
       "conditional_entrypoints": ["predict", "api.predict"],
       "exactness": "exact_given_predictive_state",
       "methods": [
-        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
-        "SCAR-P-OU", "SCAR-M-OU"
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI"
       ],
       "rotations": [0, 90, 180, 270],
       "correlation_modes": [],
@@ -126,7 +120,6 @@
         "supports_native_point_ops": true,
         "supports_gas": true,
         "supports_scar_ou": true,
-        "supports_scar_mc": true,
         "supports_latent_grid": true,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": true
@@ -148,8 +141,7 @@
       "conditional_entrypoints": ["predict", "api.predict"],
       "exactness": "exact_given_predictive_state",
       "methods": [
-        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
-        "SCAR-P-OU", "SCAR-M-OU"
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI"
       ],
       "rotations": [0],
       "correlation_modes": [],
@@ -161,7 +153,6 @@
         "supports_native_point_ops": true,
         "supports_gas": true,
         "supports_scar_ou": true,
-        "supports_scar_mc": true,
         "supports_latent_grid": true,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": true
@@ -183,8 +174,7 @@
       "conditional_entrypoints": ["predict", "api.predict"],
       "exactness": "exact_given_predictive_state",
       "methods": [
-        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
-        "SCAR-P-OU", "SCAR-M-OU"
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI"
       ],
       "rotations": [0, 90, 180, 270],
       "correlation_modes": [],
@@ -196,7 +186,6 @@
         "supports_native_point_ops": true,
         "supports_gas": true,
         "supports_scar_ou": true,
-        "supports_scar_mc": true,
         "supports_latent_grid": true,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": true
@@ -230,7 +219,6 @@
         "supports_native_point_ops": false,
         "supports_gas": false,
         "supports_scar_ou": false,
-        "supports_scar_mc": false,
         "supports_latent_grid": false,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": false
@@ -267,7 +255,6 @@
         "supports_native_point_ops": false,
         "supports_gas": false,
         "supports_scar_ou": false,
-        "supports_scar_mc": false,
         "supports_latent_grid": false,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": false
@@ -276,7 +263,7 @@
         "sample_conditional": ["n", "given", "rng", "n_threads"],
         "predict": [
           "n", "u", "rng", "given", "horizon",
-          "predictive_r_mode", "predict_config"
+          "predictive_r_mode", "predict_config", "n_threads"
         ]
       },
       "notes": "The output uses the original-df marginal CDF after drawing from the conditional t law."
@@ -302,7 +289,6 @@
         "supports_native_point_ops": false,
         "supports_gas": true,
         "supports_scar_ou": true,
-        "supports_scar_mc": false,
         "supports_latent_grid": true,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": true
@@ -313,7 +299,7 @@
         ],
         "predict": [
           "n", "u", "rng", "given", "horizon", "predictive_r_mode",
-          "predict_config", "memory_budget_bytes"
+          "predict_config", "memory_budget_bytes", "n_threads"
         ]
       },
       "notes": "SCAR-TM prediction needs an independent full-history filtering and mixture-CDF oracle."
@@ -328,7 +314,7 @@
         "sample_conditional", "predict", "api.predict"
       ],
       "exactness": "exact_given_parameter_mixture",
-      "methods": ["MLE", "GAS", "SCAR-TM-OU", "SCAR-P-OU", "SCAR-M-OU"],
+      "methods": ["MLE", "GAS", "SCAR-TM-OU"],
       "rotations": [],
       "correlation_modes": ["fixed", "shrinkage", "cholesky", "factor"],
       "factor_estimation_modes": ["two-stage", "joint_mle_only"],
@@ -339,7 +325,6 @@
         "supports_native_point_ops": false,
         "supports_gas": true,
         "supports_scar_ou": true,
-        "supports_scar_mc": true,
         "supports_latent_grid": true,
         "supports_conditional_sampling": true,
         "has_dynamic_scalar_parameter": true
@@ -364,8 +349,7 @@
       "conditional_entrypoints": ["predict", "api.predict"],
       "exactness": "exact_suffix_and_approximate_arbitrary",
       "methods": [
-        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
-        "SCAR-P-OU", "SCAR-M-OU"
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI"
       ],
       "rotations": [],
       "correlation_modes": [],
@@ -384,32 +368,6 @@
         ]
       },
       "notes": "RVineCopula is an alias of this runtime. Diagnostics distinguish suffix from dag_mcmc."
-    },
-    {
-      "id": "vine-legacy-cvine",
-      "class_module": "pyscarcopula",
-      "class_name": "CVineCopula",
-      "category": "vine_legacy",
-      "dimension": "d>=2_after_fit",
-      "conditional_entrypoints": ["predict", "api.predict"],
-      "exactness": "cvine_specific_prefix_and_general",
-      "methods": [
-        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
-        "SCAR-P-OU", "SCAR-M-OU"
-      ],
-      "rotations": [],
-      "correlation_modes": [],
-      "factor_estimation_modes": [],
-      "structures": ["cvine"],
-      "oracles": ["conditional_mvn", "independent", "reference_cvine"],
-      "capability_flags": {},
-      "signatures": {
-        "predict": [
-          "n", "u", "rng", "given", "horizon",
-          "predictive_r_mode", "predict_config", "kwargs"
-        ]
-      },
-      "notes": "Legacy runtime intentionally has different conditional algorithms and diagnostics from VineCopula.cvine."
     }
   ],
   "unsupported_cases": [
@@ -460,14 +418,6 @@
       "configuration": {"method": "SCAR-TM-OU"},
       "expected_exception": "TypeError",
       "reason": "StudentCopula is static MLE only."
-    },
-    {
-      "id": "equicorr-scar-p-ou",
-      "model_id": "multivariate-equicorr-gaussian",
-      "probe": "equicorr_scar_p_ou",
-      "configuration": {"method": "SCAR-P-OU"},
-      "expected_exception": "TypeError",
-      "reason": "EquicorrGaussianCopula does not expose SCAR-MC fitting."
     },
     {
       "id": "equicorr-scar-tm-jacobi",
@@ -528,14 +478,6 @@
       "configuration": {"corr_mode": "cholesky", "method": "GAS"},
       "expected_exception": "NotImplementedError",
       "reason": "GAS joint static correlation supports shrinkage, not Cholesky."
-    },
-    {
-      "id": "stochastic-student-shrinkage-scar-p-ou",
-      "model_id": "multivariate-stochastic-student",
-      "probe": "stochastic_student_shrinkage_scar_p_ou",
-      "configuration": {"corr_mode": "shrinkage", "method": "SCAR-P-OU"},
-      "expected_exception": "NotImplementedError",
-      "reason": "SCAR-MC does not jointly estimate data-derived static correlation."
     }
   ]
 }

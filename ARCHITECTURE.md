@@ -4,14 +4,17 @@
 
 ```text
 pyscarcopula/
-|-- __init__.py              # Public re-exports and BLAS thread policy
+|-- __init__.py              # Public re-exports and native extension loading
 |-- api.py                   # Top-level fit/predict/sample helpers
 |-- _types.py                # Results and numerical configuration
+|-- _native/                 # Mandatory extension facade and support policy
+|   |-- pair.py, multivariate.py, static.py
+|   |-- gas.py, scar_ou.py, jacobi.py, model_policy.py, statistics.py, vine.py
+|   `-- registry.py, errors.py, threads.py, _extension.py
 |-- io.py                    # JSON model persistence
 |-- stattests.py             # Goodness-of-fit orchestration
 |-- copula/
-|   |-- _protocol.py         # Common, bivariate, multivariate protocols
-|   |-- base.py              # CopulaBase, BivariateCopula, capabilities
+|   |-- base.py              # CopulaBase and BivariateCopula
 |   |-- gumbel.py, frank.py, joe.py, clayton.py
 |   |-- elliptical.py        # Bivariate Gaussian copula
 |   `-- multivariate/
@@ -21,17 +24,12 @@ pyscarcopula/
 |-- strategy/
 |   |-- _base.py             # Strategy registry and capability validation
 |   |-- mle.py, gas.py, scar_tm.py
-|   `-- scar_jacobi.py, scar_mc.py
-|-- numerical/
-|   |-- copula_native.py, multivariate_native.py
-|   |-- static_likelihood.py, gas_filter.py
-|   |-- _cpp_scar_ou.py, _cpp_gas.py, _cpp_gas_rvine.py
-|   |-- jacobi_tm.py         # Retained Python Jacobi orchestration
-|   `-- mc_samplers.py       # Retained Python SCAR-MC/EIS orchestration
+|   `-- scar_jacobi.py
+|-- numerical/               # Public numerical configuration helpers
+|   `-- _arrays.py, _scar_ou_config.py, _transition_methods.py
 |-- vine/
 |   |-- vine.py               # Canonical generic VineCopula runtime
 |   |-- rvine.py              # RVineCopula compatibility module alias
-|   |-- cvine.py              # Legacy CVineCopula implementation
 |   |-- _structure.py         # RVineMatrix and C/D structure factories
 |   |-- _vine_fit.py          # Shared fixed-structure edge fitting
 |   |-- _rvine_sampling_plan.py # Canonical unconditional traversal plan
@@ -39,213 +37,133 @@ pyscarcopula/
 `-- contrib/                 # Marginals and risk analytics
 ```
 
+This file is the repository source map and dependency contract. The
+published [Developer Architecture](docs/guide/architecture.md) explains
+runtime ownership and the development workflow. Numerical algorithms are
+documented in the [numerical reference](docs/guide/numerical-backends.md).
+
 ## Copula Hierarchy
 
-All built-in copulas derive from `CopulaBase`.
-
-```text
-CopulaBase
-|-- BivariateCopula
-|   |-- ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula
-|   |-- BivariateGaussianCopula
-|   `-- IndependentCopula
-`-- MultivariateCopula
-    |-- GaussianCopula, StudentCopula
-    |-- EquicorrGaussianCopula
-    `-- StochasticStudentCopula
-```
-
-`BivariateCopula` supplies pair operations used by vines: density, `h`,
-inverse-`h`, rotation handling, and scalar-parameter transforms.
-`MultivariateCopula` supplies row-density and sampling contracts without
-pretending to be a vine pair copula.
-
-The runtime-checkable protocols in `copula/_protocol.py` describe structural
-typing. They do not grant native support by themselves.
+`CopulaBase` branches into pair-oriented `BivariateCopula` and row-oriented
+`MultivariateCopula`. See the [class hierarchy](docs/guide/architecture.md#class-hierarchy)
+for concrete models. Vine topology belongs to `vine/`, not to the pair classes.
 
 ## Capabilities And Strategies
 
-Class hierarchy answers what a model is. `CopulaCapabilities` answers which
-built-in strategies and numerical operations it supports:
-
-- `supports_pair_ops`
-- `supports_native_mle`
-- `supports_gas`
-- `supports_scar_ou`
-- `supports_latent_grid`
-- `supports_conditional_sampling`
-- `has_dynamic_scalar_parameter`
-
-The strategy registry in `strategy/_base.py` validates these capabilities
-before fitting. Strategy classes own optimization and result construction;
-copula classes own model metadata, parameter transforms, and sampling.
-
-The main dependency flow is:
+The dependency flow is:
 
 ```text
-api.py -> strategy/ -> numerical native adapters -> C++ extension
-                    -> copula model metadata
-vine/vine.py -> structure selection or fixed RVineMatrix
-             -> _vine_fit.py + bivariate copula contract
-stattests/ -> fitted strategy outputs + retained GoF orchestration
+api.py -> strategy/ -> _native facade -> C++ computational APIs
+                   -> copula metadata and state
+vine/vine.py -> structure selection -> _vine_fit.py -> pair strategy
+stattests.py -> native Rosenblatt/filter operations -> GoF reporting
 ```
+
+Exact-type native descriptors and operation-level capability queries decide
+support. A custom subclass cannot opt into numerical execution merely by
+inheriting methods. Strategies own optimization and result construction;
+models own their metadata and fitted state. Numerical policy values, domain
+bounds, penalties, and transforms have native owners.
 
 ## Static Multivariate Correlation Policy
 
-`GaussianCopula` and `StudentCopula` use `method="mle"` as the public label
-for a static fit. The label does not imply that every correlation parameter
-is part of one joint optimizer vector. `CorrelationPolicy` records the actual
-procedure independently through canonical `corr_mode` and `corr_estimator`
-values.
-
-- `fixed` retains the fast compatibility path. A constructor-supplied `R` is
-  held fixed; without `R`, Gaussian uses normal-score correlation and Student
-  uses a Kendall plug-in correlation.
-- `shrinkage` jointly optimizes one correlation weight.
-- `cholesky` jointly optimizes all `d*(d-1)/2` dense correlation parameters
-  and is guarded for small dimensions.
-- `factor` stores compact loadings. Gaussian and two-stage Student fits use a
-  plug-in loading estimate; static Student additionally supports identified
-  joint loading optimization.
-
-`corr_estimator` distinguishes `supplied`, `gaussian_score`,
-`kendall_plugin`, `joint_mle`, `factor_two_stage`, and `factor_joint`.
-`corr_plugin_n_params` and `corr_n_params` remain separate, while
-`corr_effective_n_params` is the count consumed by AIC/BIC. Worker
-reconstruction copies constructor policy rather than fitted mutable state;
-JSON persistence retains fitted raw parameters and compact factor state.
+`CorrelationPolicy` separates the public MLE method label from `corr_mode`
+and `corr_estimator`. See [correlation estimation](docs/guide/mathematical-contracts.md#static-elliptical-correlation-estimation)
+for fixed, shrinkage, cholesky, factor, and parameter-count contracts.
+The Python adapter carries raw optimizer coordinates; native evaluators own
+correlation parameterization, identifiability, and gradient pullbacks.
 
 ## Native Boundary
 
-The pybind11 C++ extension is mandatory. Built-in point operations, static
-likelihoods, GAS filtering, multivariate conditional linear algebra,
-sequential GAS R-vine sampling, dense Student Rosenblatt transforms, and
-SCAR-TM-OU likelihood/gradient/forward operations have one production
-implementation in C++.
+`pyscarcopula/_cpp/build_support/sources.py` is the canonical source manifest:
+`SCAR_COMPUTE_SOURCES` contains Python-free computation and
+`PYTHON_BINDING_SOURCES` contains pybind adapters. `setup.py` combines them
+into `pyscarcopula._native._scar_cpp`. Only `_native/_extension.py` imports
+that binary in production; all other callers use `_native` domain facades.
 
-Python remains responsible for:
+Native source ownership (relative to `pyscarcopula/_cpp`):
 
-- optimizer orchestration and result construction;
-- correlation parameterization and chain rules around native evaluators;
-- RNG and generation of fixed draws used by native conditional sampling;
-- Jacobi filtering orchestration;
-- SCAR-MC/EIS orchestration;
-- goodness-of-fit and contribution analytics.
-
-For dense static and GAS Student GoF, Python owns dispatch and the `df`
-trajectory. In the differential-validated native domain (`df >= 0.1`, a
-symmetric unit-diagonal SPD correlation with condition number at most `1e4`),
-it transfers the complete observation matrix and either a scalar or per-row
-`df` path in one call. C++ factors the fixed correlation once, executes all
-sequential conditionals without the GIL, and may parallelize independent rows.
-Inputs outside that domain are rejected by a pre-call capability gate: `auto`
-preserves the SciPy oracle's low-`df`, invalid-input, and ill-conditioned-matrix
-semantics, while `native_strict` reports `CppUnsupported`. Native runtime
-errors are not retried. Factor-correlation and latent SCAR Rosenblatt paths
-keep their specialized native implementations.
-
-There is no GAS or SCAR-TM-OU backend selector and no Python likelihood
-fallback.
-
-SCAR-TM-OU joint Stochastic Student fits can hold a prepared native evaluator
-for one optimizer loop. That object owns the copied observations, native
-copula specification, Student PPF cache, and reusable gradient workspaces.
-Python still owns the raw correlation parameterization and updates only the
-native Student factor between objective calls. Direct functional adapters
-remain available for one-off evaluations.
-
-Gaussian and Student multivariate conditional kernels accept read-only native
-views. C-contiguous NumPy `float64` inputs remain alive for the complete
-synchronous binding call, including the section executed without the GIL, and
-are not copied into C++ vectors. Non-contiguous arrays and other dtypes retain
-pybind11's `forcecast` fallback. Every numeric input still receives one finite
-validation pass before the GIL is released.
-
-Static and prepared SCAR-OU equicorrelation evaluators cache per-row `sum(z)`
-and `sum(z^2)` statistics for their owned observation snapshots. Repeated
-objective, gradient, and forward calls therefore reuse both the per-row normal
-scores and the statistics across every latent-grid node.
-
-Unconditional generic R-vine sampling compiles the natural-order matrix,
-semantic trees, and edge map into one model-independent
-`RVineTraversalPlan`. The Python reference sampler and the native sequential
-GAS sampler execute that same plan. Model-specific parameter generation and
-state updates remain in their strategy executors; the plan owns only topology,
-node dependencies, edge orientation, and operation order.
-
-Arbitrary-given R-vine MCMC also compiles, once per density plan, the
-topologically ordered operations and nodes affected by each original
-coordinate. The native incremental executor caches node values and individual
-edge log-density contributions per chain, recomputes only that closure for a
-proposal, and then sums all edge contributions in their original order. A
-rejected proposal never changes the accepted cache. Its accepted/proposal
-caches are row-chunked under the same preflight memory budget as states,
-log-densities, and replay draws. The adapter selects the incremental path only
-for structurally profitable closures that fit the budget. Otherwise it uses
-the preserved full-recompute oracle only when that driver's complete state,
-proposal, density-workspace, and draw footprint also fits; if neither path
-fits, preflight fails before consuming RNG state or allocating MCMC buffers.
-Algorithm and workspace measurements are internal native diagnostics, while
-the public MCMC diagnostics schema remains unchanged. Single-chain calls
-retain full recomputation because the incremental cache setup does not
-amortize there.
-
-## Custom Python Extensions
-
-User-defined Python copulas may implement the public protocols for their own
-sampling, diagnostics, custom strategies, or other Python workflows. This
-does not make them executable by native production strategies.
-
-Built-in GAS and SCAR-TM-OU accept only copula families explicitly represented
-by the native support matrix. Unknown classes fail before optimization instead
-of calling arbitrary Python density methods from the native evaluator.
-
-New estimation methods can still be registered in Python:
-
-```python
-from pyscarcopula.strategy._base import register_strategy
-
-@register_strategy("MY-METHOD")
-class MyStrategy:
-    def __init__(self, config=None, **kwargs):
-        self.config = config
-
-    def fit(self, copula, u, **kwargs):
-        ...
+```text
+include/scar/copula/spec.hpp                 generic metadata boundary
+include/scar/copula/model_storage.hpp        typed model-storage variant
+src/copula/pair/                             pair families and dispatch
+src/copula/multivariate/correlation/         dense and factor operators
+src/copula/multivariate/gaussian/            Gaussian density/conditional
+src/copula/multivariate/equicorrelation/     equicorrelation model/kernel
+src/copula/multivariate/student/             Student distribution, quantile,
+                                             PPF cache, density, conditional,
+                                             factor grid, and Rosenblatt code
 ```
+
+The foundation under `include/scar/core` and `include/scar/math` owns views,
+checked sizes, thread validation, transforms, common probability functions,
+and typed status vocabulary. It depends only on foundation headers. Model
+state belongs to typed model storage; universal metadata does not own
+model-specific mutable workspaces.
+
+The dependency rules enforced by `tools/check_cpp_architecture.py` are:
+
+- Every C++ source and public header belongs to one logical target; includes
+  follow the declared downward target graph. Header and domain cycles fail.
+- Pair headers do not depend on Student, factor, or SCAR-OU implementations;
+  Gaussian headers do not depend on Student implementation headers.
+- Dense and factor correlation have separate contracts. Factor kernels must
+  not acquire an implicit dense `d*d` workspace.
+- Each binder includes its own computational API. Shared `bindings/array.*`
+  owns model-neutral NumPy conversion and lifetime helpers;
+  `bindings/module.hpp` declares registration entry points. Domain DTO
+  conversion remains in its owning binder.
+- Binders obtain buffer metadata before releasing the GIL, keep owning arrays
+  alive through the synchronous call, then reacquire the GIL before Python
+  serialization. They do not implement filtering or result-dependent policy.
+- `_native/errors.py` translates typed statuses centrally. Only structured
+  numerical failure can select a native optimizer penalty. Unsupported
+  operations and unexpected failures propagate; a status-OK non-finite
+  objective raises `FloatingPointError`.
+- Foundation CDF, beta/gamma, and transform formulas have one owner.
+  Production Python modules do not retain duplicated numerical function bodies
+  or unused numerical alternatives as importable reference implementations.
+
+Python owns optimization coordination, raw RNG draws, request assembly,
+GoF reporting, and persistence. C++ owns numerical trajectories, quantiles,
+densities, conditionals, filtering, gradients, and vine plan execution.
+Test oracles are independent test implementations and never production fallbacks.
+
+### Build and validation entry points
+
+```bash
+python tools/check_cpp_architecture.py
+python tools/build_cpp_tests.py
+```
+
+The standalone build compiles every computational translation unit and every
+public header in isolation, then links and runs the model suites without
+Python, NumPy, or pybind11 headers/libraries. `--sanitize address-undefined`
+and `--sanitize thread` instrument that executable separately from the extension.
+
+`build_support/build_parallel.py` owns compilation parallelism. Both builds
+default to one job; `PYSCA_CPP_BUILD_JOBS=N` opts in. CLI overrides are
+`build_ext --parallel N` and `build_cpp_tests.py --build-jobs N`. Linking is
+sequential. Compiler provisioning belongs to the environment; builds do not
+modify `PATH`. Runtime thread policy is a separate contract.
 
 ## State And Persistence
 
-The top-level API can be used directly:
+Model methods store fit results and owned training snapshots. Fit transactions
+restore previous state on exceptions; callers inspect returned candidates'
+success flags. Constructor policy survives refits. Native plans/evaluators are
+transient and rebuilt after loading.
 
-```python
-from pyscarcopula.api import fit, predict
+`io.py` uses an explicit model/configuration/result registry for JSON model
+persistence; payload class paths cannot select arbitrary imports. Standalone
+factor correlation additionally supports NPZ and memory-mapped storage. See
+[Persistence](docs/api/persistence.md) for supported formats and examples.
 
-result = fit(copula, u, method="scar-tm-ou")
-samples = predict(copula, u, result, n=1000)
-```
-
-Model methods are convenience wrappers that store `fit_result` and the last
-fitting data.
-
-Persistence uses a single JSON representation. The loader restores the same
-canonical class paths and state layout written by the current package.
-
-For generic vines, `RVineMatrix` is the canonical public structure. The model
-stores a separate natural-order matrix for numerical traversal:
-
-```text
-VineCopula(structure=None)          -> Dissmann auto selection
-VineCopula(structure=RVineMatrix)   -> fixed structure, no MST selection
-VineCopula.cvine(...) / .dvine(...) -> fixed RVineMatrix factories
-```
-
-`RVineCopula` is the same runtime type as `VineCopula`.
-`CVineCopula` remains a separate legacy implementation.
+`RVineMatrix` owns public vine structure, with a separate natural-order
+traversal representation. `RVineCopula` is the same runtime type as `VineCopula`.
 
 ## BLAS Thread Policy
 
-Package import does not mutate BLAS thread environment variables. Applications
-that need a specific BLAS thread policy should configure their execution
-environment before importing NumPy/SciPy, or use a runtime thread limiter such
-as `threadpoolctl`.
+Import does not mutate BLAS environment variables. Native runtime scheduling,
+process ownership, locks, and reproducibility are documented centrally in
+[CPU Parallelism](docs/guide/parallelism.md).

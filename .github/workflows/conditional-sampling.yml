@@ -8,9 +8,9 @@ on:
       - "tests/conditional/**"
       - "tests/conftest.py"
       - "tools/benchmark_conditional_sampling.py"
-      - "tools/calibrate_conditional_statistical_gates.py"
       - "tools/write_release_metadata.py"
       - "pyproject.toml"
+      - "tools/run_in_workspace.py"
       - "setup.py"
   push:
     branches: [master]
@@ -20,12 +20,10 @@ on:
       - "tests/conditional/**"
       - "tests/conftest.py"
       - "tools/benchmark_conditional_sampling.py"
-      - "tools/calibrate_conditional_statistical_gates.py"
       - "tools/write_release_metadata.py"
       - "pyproject.toml"
+      - "tools/run_in_workspace.py"
       - "setup.py"
-  schedule:
-    - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
       layer:
@@ -37,7 +35,7 @@ on:
           - all
           - pr-smoke
           - validation
-          - nightly
+          - external-high-dimensional
           - benchmark
 
 permissions:
@@ -63,10 +61,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - name: Install project and test dependencies
         run: python -m pip install -e ".[test]"
       - name: Run contracts and deterministic smoke cases
@@ -95,17 +97,20 @@ jobs:
     name: Distributional validation
     if: >-
       github.event_name == 'push' ||
-      github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
        (inputs.layer == 'all' || inputs.layer == 'validation'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - name: Install project and test dependencies
         run: python -m pip install -e ".[test]"
       - name: Run analytical, dynamic, vine, and d=50 validation
@@ -130,20 +135,23 @@ jobs:
           if-no-files-found: warn
           retention-days: 21
 
-  nightly-external-high-dimensional:
-    name: Nightly external and high-dimensional
+  one-time-external-high-dimensional:
+    name: One-time external and high-dimensional
     if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' &&
-       (inputs.layer == 'all' || inputs.layer == 'nightly'))
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.layer == 'all' || inputs.layer == 'external-high-dimensional')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - name: Install pinned external reference environment
         run: python -m pip install -e ".[test,external]"
       - name: Run external and d=50 conditional matrix
@@ -151,29 +159,19 @@ jobs:
           python -m pytest -q tests/conditional
           --strict-markers --run-validation
           -m "(external or high_dimensional) and not benchmark"
-          --junitxml=build/conditional-sampling/nightly.xml
-      - name: Calibrate statistical false-failure rate on 20 oracle seeds
-        run: >-
-          python tools/calibrate_conditional_statistical_gates.py
-          --runs 20 --max-failure-rate 0.01
-          --output build/conditional-sampling/calibration.json
-      - name: Write coverage inventory
-        run: >-
-          python tools/conditional_sampling_audit.py
-          --include-conditional-contracts
-          --output build/conditional-sampling/inventory.json
+          --junitxml=build/conditional-sampling/external-high-dimensional.xml
       - name: Write runner metadata
         if: always()
         run: >-
           python tools/write_release_metadata.py
-          --configuration conditional-nightly-external-d50
+          --configuration conditional-one-time-external-d50
           --status "${{ job.status }}"
-          --output build/conditional-sampling/nightly-metadata.json
-      - name: Upload nightly evidence
+          --output build/conditional-sampling/external-high-dimensional-metadata.json
+      - name: Upload external and high-dimensional evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: conditional-nightly
+          name: conditional-external-high-dimensional
           path: build/conditional-sampling/*
           if-no-files-found: warn
           retention-days: 30
@@ -194,10 +192,14 @@ jobs:
       PYSCA_RUN_BENCHMARKS: "1"
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - name: Install project and test dependencies
         run: python -m pip install -e ".[test]"
       - name: Run benchmark contract cases

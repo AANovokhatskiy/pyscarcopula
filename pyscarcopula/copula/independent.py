@@ -11,7 +11,8 @@ is set to independent, saving all fit/TM/GAS computation.
 """
 
 import numpy as np
-from pyscarcopula.copula.base import BivariateCopula, CopulaCapabilities
+from pyscarcopula.copula.base import BivariateCopula
+from pyscarcopula._native import model_policy
 
 
 class IndependentCopula(BivariateCopula):
@@ -24,12 +25,14 @@ class IndependentCopula(BivariateCopula):
     are set to independent, eliminating all fit/forward-pass cost.
     """
 
+    _native_pair_family = "Independent"
+
     def __init__(self, rotate: int = 0):
         # rotation is meaningless for independence, but accept it
         # to keep the interface uniform
         super().__init__(0)
         self._name = "Independent copula"
-        self._bounds = []  # no parameters
+        self._bounds = model_policy.public_bounds(self)
 
     # ── transform (trivial) ──────────────────────────────────────
 
@@ -66,14 +69,14 @@ class IndependentCopula(BivariateCopula):
     # ── sampling ─────────────────────────────────────────────────
 
     def sample_at_parameter(self, n, r=None, rng=None):
-        if rng is None:
-            rng = np.random.default_rng()
-        return rng.uniform(0, 1, size=(n, 2))
+        return super().sample_at_parameter(
+            n, 0.0 if r is None else r, rng=rng)
 
     # ── log-likelihood ───────────────────────────────────────────
 
     def log_likelihood(self, u, r=None):
-        return 0.0
+        from pyscarcopula._native import static as static_likelihood
+        return static_likelihood.prepare(self, u).log_likelihood(0.0)
 
     # ── grid evaluations (all trivial) ───────────────────────────
 
@@ -91,7 +94,13 @@ class IndependentCopula(BivariateCopula):
 
     # ── fit (instant) ────────────────────────────────────────────
 
-    def fit(self, data, method='mle', to_pobs=False, **kwargs):
+    def fit(
+            self,
+            data,
+            method='mle',
+            to_pobs=False,
+            config=None,
+            **kwargs):
         """
         'Fit' the independence copula.
 
@@ -105,21 +114,29 @@ class IndependentCopula(BivariateCopula):
 
         from pyscarcopula._utils import pobs
         from pyscarcopula.numerical._arrays import as_float64_array
-        from pyscarcopula.strategy._base import validate_copula_data
+        from pyscarcopula.strategy._base import (
+            partition_strategy_fit_kwargs,
+            validate_copula_data,
+            validate_raw_copula_data,
+        )
 
-        u = as_float64_array(data, name="data")
+        partition_strategy_fit_kwargs(
+            normalized_method,
+            kwargs,
+        )
         if to_pobs:
+            u = validate_raw_copula_data(self, data)
             u = pobs(u)
+        else:
+            u = as_float64_array(data, name="data")
         u = validate_copula_data(self, u)
-        if u.shape[0] == 0:
-            raise ValueError("copula data must contain at least one observation")
-        return self._fit_validated(u)
+        return self._fit_validated(u.copy())
 
     def _fit_validated(self, u):
         """Fit already validated pair data without rescanning vine edges."""
         from pyscarcopula._types import IndependentResult
         result = IndependentResult(
-            log_likelihood=0.0,
+            log_likelihood=self.log_likelihood(u),
             method='MLE',
             copula_name=self._name,
             success=True,
@@ -127,9 +144,3 @@ class IndependentCopula(BivariateCopula):
         self.fit_result = result
         self._last_u = u
         return result
-    _capabilities = CopulaCapabilities(
-        dimension=2,
-        supports_pair_ops=True,
-        supports_native_point_ops=True,
-        supports_conditional_sampling=True,
-    )

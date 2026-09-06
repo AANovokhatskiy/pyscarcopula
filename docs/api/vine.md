@@ -10,7 +10,7 @@ Usage examples and conceptual details live in the user guide:
 
 ## Public Options
 
-`CVineCopula.predict(...)` and `VineCopula.predict(...)` both support:
+`VineCopula.predict(...)` supports:
 
 - `given={var_index: u_value}` for conditional generation in
   pseudo-observation space;
@@ -19,7 +19,7 @@ Usage examples and conceptual details live in the user guide:
   parameter sampling. No other string values are supported;
 - `rng=np.random.default_rng(seed)` for reproducible Monte Carlo output.
 
-`VineCopula.predict(...)` additionally supports:
+It also supports:
 
 - `predict_config=PredictConfig(...)`;
 - `dynamic_conditioning='ignore'|'given_only'`;
@@ -118,22 +118,6 @@ tree edge sets or the proximity condition.
         - predict
         - summary
         - to_rvine_matrix
-
-## CVineCopula
-
-`CVineCopula` is the supported legacy implementation. Prefer
-`VineCopula.cvine(...)` for new code. It does not currently emit a runtime
-deprecation warning; its C-vine-specific conditional algorithms intentionally
-differ from the generic matrix-based conditional runtime.
-
-::: pyscarcopula.vine.cvine.CVineCopula
-    options:
-      members:
-        - fit
-        - log_likelihood
-        - sample
-        - predict
-        - summary
 
 ## RVineCopula compatibility name
 

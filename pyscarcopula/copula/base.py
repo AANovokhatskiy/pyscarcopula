@@ -7,7 +7,6 @@ Kendall-tau helpers where needed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 from os import PathLike
 from typing import Any, TypeVar
 
@@ -15,87 +14,13 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from pyscarcopula._types import FitResult, PredictConfig
-from pyscarcopula._utils import pobs, broadcast as _broadcast  # noqa: F401
+from pyscarcopula._native import model_policy, statistics
+from pyscarcopula._utils import broadcast as _broadcast  # noqa: F401
+from pyscarcopula.numerical._arrays import as_float64_array
 
 
 FloatArray = NDArray[np.float64]
 CopulaT = TypeVar("CopulaT", bound="CopulaBase")
-
-
-def _xtanh_transform(x, offset):
-    values = np.asarray(x, dtype=np.float64)
-    return values * np.tanh(values) + offset
-
-
-def _xtanh_dtransform(x):
-    values = np.asarray(x, dtype=np.float64)
-    tanh_values = np.tanh(values)
-    return tanh_values + values * (1.0 - tanh_values * tanh_values)
-
-
-def _inv_xtanh_transform(r, offset):
-    """Return the historical modulus-based latent approximation for xtanh.
-
-    ``x * tanh(x) + offset`` is even, so it has no globally unique inverse.
-    This helper intentionally preserves the established positive-branch
-    approximation ``abs(r) + offset``. It is an initialization convention,
-    not a round-trip inverse of :func:`_xtanh_transform`.
-    """
-    values = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
-    return np.abs(values) + offset
-
-
-def _softplus_transform(x, offset):
-    values = np.asarray(x, dtype=np.float64)
-    return np.logaddexp(0.0, values) + offset
-
-
-def _softplus_dtransform(x):
-    values = np.asarray(x, dtype=np.float64)
-    out = np.empty_like(values)
-    positive = values >= 0.0
-    out[positive] = 1.0 / (1.0 + np.exp(-values[positive]))
-    exp_values = np.exp(values[~positive])
-    out[~positive] = exp_values / (1.0 + exp_values)
-    return out
-
-
-def _softplus_inv_transform(r, offset):
-    values = np.asarray(r, dtype=np.float64) - offset
-    return np.where(
-        values > 20.0,
-        values,
-        np.where(
-            values <= 0.0,
-            np.log(1e-300),
-            np.where(
-                values < 1e-8,
-                np.log(values),
-                np.log(np.expm1(values)),
-            ),
-        ),
-    )
-
-
-@dataclass(frozen=True)
-class CopulaCapabilities:
-    """Immutable strategy and numerical capability descriptor.
-
-    Capability flags are consumed by validation and strategy dispatch. They
-    describe supported operations; they do not imply that a model has already
-    been fitted.
-    """
-
-    dimension: int | None = None
-    supports_pair_ops: bool = False
-    supports_native_point_ops: bool = False
-    supports_native_mle: bool = False
-    supports_gas: bool = False
-    supports_scar_ou: bool = False
-    supports_scar_mc: bool = False
-    supports_latent_grid: bool = False
-    supports_conditional_sampling: bool = False
-    has_dynamic_scalar_parameter: bool = False
 
 
 class CopulaBase:
@@ -111,8 +36,6 @@ class CopulaBase:
         Human-readable model name used in results and diagnostics.
     """
 
-    _capabilities = CopulaCapabilities()
-
     def __init__(self, *, name: str = "Copula") -> None:
         self._name = name
         self.fit_result: FitResult | None = None
@@ -126,11 +49,6 @@ class CopulaBase:
     def dimension(self) -> int | None:
         """Required data width, or ``None`` when not fixed by the class."""
         return None
-
-    @property
-    def capabilities(self) -> CopulaCapabilities:
-        """Capabilities used for strategy and numerical dispatch."""
-        return replace(self._capabilities, dimension=self.dimension)
 
     def validate_dimension(self, data: ArrayLike) -> np.ndarray:
         """Validate and return a two-dimensional data array.
@@ -176,15 +94,32 @@ class CopulaBase:
     ) -> float:
         """Evaluate a strategy's negative log-likelihood objective.
 
-        This low-level optimizer hook accepts parameters in the strategy's
-        unconstrained representation.
+        Parameters use the strategy's objective representation (physical
+        ``[kappa, mu, nu]`` for SCAR-TM-OU). Fit arguments such as ``alpha0``,
+        ``initial_mle_result`` and ``maxiter`` are not accepted here.
         """
-        from pyscarcopula.strategy._base import get_strategy
+        from pyscarcopula.strategy._base import (
+            get_strategy,
+            partition_strategy_operation_kwargs,
+        )
 
-        u = np.asarray(u, dtype=np.float64)
-        alpha = np.atleast_1d(np.asarray(alpha, dtype=np.float64))
-        strategy = get_strategy(method, **kwargs)
-        return strategy.objective(self, u, alpha, **kwargs)
+        u = as_float64_array(u, name="u")
+        alpha = np.atleast_1d(as_float64_array(alpha, name="alpha"))
+        config = kwargs.pop("config", None)
+        constructor_kwargs, objective_kwargs = (
+            partition_strategy_operation_kwargs(method, "objective", kwargs)
+        )
+        strategy = get_strategy(
+            method,
+            config=config,
+            **constructor_kwargs,
+        )
+        return strategy.objective(
+            self,
+            u,
+            alpha,
+            **objective_kwargs,
+        )
 
     def fit(
         self,
@@ -213,13 +148,13 @@ class CopulaBase:
         """
         from pyscarcopula.api import fit as _api_fit
 
-        u = np.asarray(data, dtype=np.float64)
-        if to_pobs:
-            u = pobs(u)
-        result = _api_fit(self, u, method=method, **kwargs)
-        self.fit_result = result
-        self._last_u = u
-        return result
+        return _api_fit(
+            self,
+            data,
+            method=method,
+            to_pobs=to_pobs,
+            **kwargs,
+        )
 
     def predict(
         self,
@@ -325,14 +260,14 @@ class BivariateCopula(CopulaBase):
 
     Built-in families use the shared native adapter for density, derivatives,
     transforms, conditional distributions, inverse conditionals, and grids.
-    Subclasses retain family metadata, sampling, and Kendall-tau behavior.
+    Subclasses retain family metadata and Kendall-tau behavior. Python owns
+    RNG draws; the fixed-draw sampling transform is native.
 
     Estimation methods (via .fit()):
         'mle'        — constant parameter (1 param)
         'scar-tm-ou' — transfer matrix (3 params: kappa, mu, nu)
         'scar-tm-jacobi' - TM for Jacobi Kendall-tau dynamics
         'gas'        — GAS score-driven (3 params: omega, gamma, beta)
-        'scar-p-ou'  — MC p-sampler, 'scar-m-ou' — MC m-sampler with EIS
 
     Parameters
     ----------
@@ -342,27 +277,14 @@ class BivariateCopula(CopulaBase):
 
     _scar_optimizer_config = 'bivariate_scar_optimizer'
     _scar_log_optimizer_config = 'bivariate_log_scar_optimizer'
-    _scar_stationary_scale_bounds = (0.001, 10_000.0)
+    _scar_stationary_scale_bounds = model_policy.stationary_scale_bounds()
     _scar_static_df_mle_initialization = False
     _supports_scar_mixture_h = True
-    _capabilities = CopulaCapabilities(
-        dimension=2,
-        supports_pair_ops=True,
-        supports_native_point_ops=True,
-        supports_gas=True,
-        supports_scar_ou=True,
-        supports_scar_mc=True,
-        supports_latent_grid=True,
-        supports_conditional_sampling=True,
-        has_dynamic_scalar_parameter=True,
-    )
-
     def __init__(self, rotate: int = 0):
         if rotate not in (0, 90, 180, 270):
             raise ValueError(f"rotate must be 0/90/180/270, got {rotate}")
         super().__init__(name="BivariateCopula")
         self._rotate = rotate
-        self._bounds = [(-np.inf, np.inf)]
 
     @property
     def dimension(self):
@@ -392,7 +314,7 @@ class BivariateCopula(CopulaBase):
     # ── transform ──────────────────────────────────────────────────
     @staticmethod
     def _native_adapter():
-        from pyscarcopula.numerical import copula_native
+        from pyscarcopula._native import pair as copula_native
 
         return copula_native
 
@@ -450,26 +372,7 @@ class BivariateCopula(CopulaBase):
         """d(log c)/dr with rotation applied."""
         return self._native_adapter().dlog_pdf_dr(self, u1, u2, r)
 
-    def _apply_rotation(self, u1, u2):
-        rot = self._rotate
-        if rot == 0:
-            return u1, u2
-        elif rot == 90:
-            return 1.0 - u1, u2
-        elif rot == 180:
-            return 1.0 - u1, 1.0 - u2
-        else:
-            return u1, 1.0 - u2
-
     # ── sampling ──────────────────────────────────────────────────
-    def psi(self, t, r):
-        """Inverse generator (Laplace-Stieltjes)."""
-        return np.exp(-t)
-
-    def V(self, n, r, rng=None):
-        """Sample from F = LS^{-1}(psi). Override per copula."""
-        return np.ones(n)
-
     def sample_at_parameter(self, n, r, rng=None):
         """
         Sample at an explicitly supplied copula parameter.
@@ -479,31 +382,38 @@ class BivariateCopula(CopulaBase):
 
         r: scalar or array (n,).
         Returns (n, 2).
+
         """
+        if isinstance(n, (bool, np.bool_)) or not isinstance(n, (int, np.integer)) or n < 0:
+            raise ValueError("n must be a non-negative integer")
         if rng is None:
             rng = np.random.default_rng()
 
-        _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if _r.size == 1:
-            _r = np.full(n, _r[0])
+        parameter = np.atleast_1d(
+            as_float64_array(r, name="r")).ravel()
+        family = self._native_pair_family
+        if parameter.size == 1:
+            parameter = np.full(n, parameter[0])
+        elif parameter.size != n:
+            raise ValueError(
+                f"r must be scalar or array of length {n}, "
+                f"got {parameter.size}")
 
-        x = rng.uniform(0, 1, size=(n, 2))
-        V_data = np.clip(self.V(n, _r, rng=rng), 1e-50, None)
-
-        u = np.empty((n, 2))
-        u[:, 0] = self.psi(-np.log(x[:, 0]) / V_data, _r)
-        u[:, 1] = self.psi(-np.log(x[:, 1]) / V_data, _r)
-
-        rot = self._rotate
-        if rot == 90:
-            u[:, 0] = 1.0 - u[:, 0]
-        elif rot == 180:
-            u[:, 0] = 1.0 - u[:, 0]
-            u[:, 1] = 1.0 - u[:, 1]
-        elif rot == 270:
-            u[:, 1] = 1.0 - u[:, 1]
-
-        return u
+        if family == "Gaussian":
+            draws = rng.standard_normal((n, 2))
+            return self._native_adapter().sample_from_rng_draws(
+                self,
+                draws,
+                np.empty((0, 0), dtype=np.float64),
+                parameter,
+            )
+        if family in {"Clayton", "Gumbel", "Frank", "Joe", "Independent"}:
+            draws = rng.uniform(0, 1, size=(n, 2))
+        else:
+            raise ValueError(
+                f"unsupported native pair sampling family: {family}")
+        return self._native_adapter().sample_from_uniforms(
+            self, draws, parameter)
 
     # ── h-functions ───────────────────────────────────────────────
     def h_unrotated(self, u, v, r):
@@ -527,12 +437,13 @@ class BivariateCopula(CopulaBase):
     # ── log-likelihood ────────────────────────────────────────────
     def log_likelihood(self, u, r):
         """u: (T, 2), r: scalar or (T,)."""
-        r_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        r_arr = np.atleast_1d(
+            as_float64_array(r, name="r")).ravel()
         if r_arr.size == 1:
-            from pyscarcopula.numerical import static_likelihood
+            from pyscarcopula._native import static as static_likelihood
             return static_likelihood.prepare(self, u).log_likelihood(
                 float(r_arr[0]))
-        return np.sum(self.log_pdf(u[:, 0], u[:, 1], r))
+        return statistics.sum_values(self.log_pdf(u[:, 0], u[:, 1], r))
 
     # ── evaluate pdf on a grid of latent states (for transfer matrix) ──
     def pdf_on_grid(self, u_row, z_grid):
@@ -540,7 +451,7 @@ class BivariateCopula(CopulaBase):
         c(u_row; Psi(z_j)) for each z_j in z_grid.
         u_row: (2,), z_grid: (K,). Returns (K,).
         """
-        u = np.asarray(u_row, dtype=np.float64).reshape(1, 2)
+        u = as_float64_array(u_row, name="u_row").reshape(1, 2)
         return self._native_adapter().pdf_grid(self, u, z_grid)[0]
 
     def pdf_and_grad_on_grid(self, u_row, z_grid):
@@ -552,7 +463,7 @@ class BivariateCopula(CopulaBase):
         u_row: (2,), z_grid: (K,).
         Returns (fi, dfi_dz) each of shape (K,).
         """
-        u = np.asarray(u_row, dtype=np.float64).reshape(1, 2)
+        u = as_float64_array(u_row, name="u_row").reshape(1, 2)
         fi, dfi_dz = self._native_adapter().pdf_and_grad_grid(
             self, u, z_grid)
         return fi[0], dfi_dz[0]
@@ -586,86 +497,3 @@ class BivariateCopula(CopulaBase):
     # ══════════════════════════════════════════════════════════════
     # Fit — delegates to api.fit() / strategy
     # ══════════════════════════════════════════════════════════════
-
-    def predict(self, n, u=None, rng=None, given=None, horizon='next',
-                predictive_r_mode=None, predict_config=None):
-        """Sample n observations for next-step prediction.
-
-        Delegates to api.predict() which dispatches to the correct
-        strategy (MLE/SCAR-TM/GAS/SCAR-MC). For bivariate copulas,
-        ``given`` may fix coordinate 0 or 1 in pseudo-observation space;
-        the remaining coordinate is sampled conditionally through the
-        fitted copula h-function.
-
-        Parameters
-        ----------
-        n : int
-            Number of predictive samples.
-        u : (T, 2) array-like or None
-            Prediction history. If ``None``, use data from the last
-            :meth:`fit` call.
-        rng : numpy.random.Generator or None
-            Random number generator.
-        given : dict[int, float] or None
-            Optional fixed pseudo-observation coordinate. Keys must be 0 or 1,
-            values must lie in ``(0, 1)``. If both coordinates are fixed, the
-            returned samples repeat those values.
-        horizon : {'current', 'next'}
-            Predictive state timing for GAS and SCAR-TM.
-        predictive_r_mode : {'grid', 'histogram'} or None
-            SCAR-TM predictive parameter sampling mode.
-        predict_config : PredictConfig or None
-            Optional bundled prediction configuration.
-
-        Returns
-        -------
-        (n, 2) pseudo-observations
-        """
-        if self.fit_result is None:
-            raise ValueError("Fit first")
-
-        from pyscarcopula.api import predict as _api_predict
-
-        u_data = u if u is not None else getattr(self, '_last_u', None)
-        if u_data is None:
-            raise ValueError(
-                "No data for predict. "
-                "Either call fit() first or pass u= explicitly.")
-        return _api_predict(
-            self, u_data, self.fit_result, n,
-            rng=rng, given=given, horizon=horizon,
-            predictive_r_mode=predictive_r_mode,
-            predict_config=predict_config)
-
-    def sample(self, n, u=None, rng=None):
-        """Generate n observations reproducing the fitted model.
-
-        Delegates to api.sample() which dispatches to the correct
-        strategy. fit(copula, sample(...)) should recover
-        similar parameters.
-
-        Parameters
-        ----------
-        n : int
-            Number of observations.
-        u : (T, 2) array-like or None
-            Reference fitted history. If ``None``, use data from the last
-            :meth:`fit` call.
-        rng : numpy.random.Generator or None
-            Random number generator.
-
-        Returns
-        -------
-        (n, 2) pseudo-observations
-        """
-        if self.fit_result is None:
-            raise ValueError("Fit first")
-
-        from pyscarcopula.api import sample as _api_sample
-
-        u_data = u if u is not None else getattr(self, '_last_u', None)
-        if u_data is None:
-            raise ValueError(
-                "No data for sample. "
-                "Either call fit() first or pass u= explicitly.")
-        return _api_sample(self, u_data, self.fit_result, n, rng=rng)

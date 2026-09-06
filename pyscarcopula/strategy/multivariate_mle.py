@@ -8,9 +8,82 @@ from typing import Callable, Mapping, Sequence
 import numpy as np
 from scipy.optimize import minimize
 
+from pyscarcopula._native import model_policy
+from pyscarcopula._types import LBFGSBConfig
 from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
 from pyscarcopula.copula.multivariate.correlation_policy import FloatArray
-from pyscarcopula.numerical._cpp_extension import CppError
+from pyscarcopula.numerical._arrays import as_float64_array, as_float64_scalar
+
+
+def sampling_model_from_result(copula, result):
+    """Build independent sampling state from a static result's physical values."""
+    from pyscarcopula._native.registry import native_id_for
+
+    family = native_id_for(copula)
+    if family == "EquicorrGaussian":
+        # Its sampler takes rho explicitly and has no fitted correlation state.
+        return copula
+    if family not in {"Gaussian", "Student", "StochasticStudent"}:
+        raise TypeError("result requires a static multivariate model")
+    correlation = result.correlation_matrix
+    if correlation is None:
+        loadings = result.model_parameters.get("factor_loadings")
+        if loadings is None:
+            raise ValueError("static result is missing its correlation state")
+        dimension, rank = loadings.shape
+        options = dict(
+            corr_mode="factor", factor_rank=rank, factor_loadings=loadings,
+            factor_uniqueness_min=np.finfo(np.float64).tiny)
+    else:
+        dimension = correlation.shape[0]
+        # A static result contains physical correlation state. Student's
+        # shape setter validates that state without projecting it again.
+        options = {} if family == "Student" else dict(R=correlation)
+    if copula.dimension is not None and copula.dimension != dimension:
+        raise ValueError("static result dimension does not match the model")
+    snapshot = type(copula)(d=dimension, **options)
+    if family == "Gaussian" and correlation is not None:
+        snapshot.corr = correlation.copy()
+    if family == "Student":
+        snapshot.shape = correlation
+        snapshot.df = as_float64_scalar(
+            result.copula_param, name="copula_param")
+    return snapshot
+
+
+def log_likelihood_from_result(copula, u, result, *, n_threads=1):
+    """Evaluate an owned static result without reading fitted model state."""
+    from pyscarcopula._native import static as static_likelihood
+    from pyscarcopula._native.registry import native_id_for
+    from pyscarcopula.copula.multivariate.factor_correlation import FactorCorrelation
+    from pyscarcopula.copula.multivariate.factor_student import FactorStudentEvaluator
+
+    family = native_id_for(copula)
+    if family == "EquicorrGaussian":
+        return static_likelihood.prepare(
+            copula, u, n_threads=n_threads).log_likelihood(result.copula_param)
+    if family not in {"Gaussian", "Student", "StochasticStudent"}:
+        raise TypeError("result requires a static multivariate model")
+    correlation = result.correlation_matrix
+    loadings = result.model_parameters.get("factor_loadings")
+    if correlation is None:
+        if loadings is None:
+            raise ValueError("static result is missing its correlation state")
+        # The result already contains physical loadings. Do not impose the
+        # prototype's possibly different optimization uniqueness constraint.
+        operator = FactorCorrelation(
+            loadings, uniqueness_min=np.finfo(np.float64).tiny).prepare()
+        if family != "Gaussian":
+            return FactorStudentEvaluator(operator, u).evaluate(
+                result.copula_param, n_threads=n_threads).log_likelihood
+        evaluator = static_likelihood.prepare_factor_gaussian(
+            operator, u, n_threads=n_threads)
+    else:
+        prepare = (static_likelihood.prepare_gaussian if family == "Gaussian"
+                   else static_likelihood.prepare_student)
+        evaluator = prepare(correlation, u, n_threads=n_threads)
+    return evaluator.log_likelihood(
+        0.0 if family == "Gaussian" else result.copula_param)
 
 
 @dataclass(frozen=True)
@@ -76,26 +149,49 @@ class StaticMLEOutcome:
         }
 
 
-_EXPECTED_NUMERICAL_ERRORS = (
-    FloatingPointError,
-    OverflowError,
-    ValueError,
-    np.linalg.LinAlgError,
-    CppError,
-)
+def make_student_static_mle_evaluator(
+        initial_correlation, policy, observations, *, n_threads, fail_value):
+    """Create the shared dense Student df/correlation native evaluator."""
+    from pyscarcopula._native import static as static_likelihood
+
+    n_corr = policy.optimized_n_params
+    fixed_evaluator = (
+        static_likelihood.prepare_student(
+            initial_correlation, observations, n_threads=n_threads)
+        if n_corr == 0 else None)
+
+    def evaluate(parameters):
+        correlation = (
+            initial_correlation.copy()
+            if n_corr == 0
+            else policy.trial_correlation(parameters[1:]))
+        evaluator = fixed_evaluator
+        if evaluator is None:
+            evaluator = static_likelihood.prepare_student(
+                correlation, observations, n_threads=n_threads)
+            value, df_gradient, corr_gradient = (
+                evaluator.objective_and_joint_gradient(
+                    float(parameters[0]), fail_value=fail_value))
+        else:
+            value, df_gradient = evaluator.objective_and_gradient(
+                float(parameters[0]), fail_value=fail_value)
+        gradient = np.empty_like(parameters)
+        gradient[0] = df_gradient[0]
+        if n_corr:
+            gradient[1:] = policy.raw_gradient(
+                parameters[1:], correlation, corr_gradient)
+        return StaticMLEEvaluation(
+            objective=value,
+            gradient=gradient,
+            correlation=correlation,
+            state={"df": float(parameters[0])},
+        )
+
+    return evaluate
 
 
-def _failure_value_and_gradient(
-        parameters: FloatArray,
-        initial_parameters: FloatArray,
-        fail_value: float) -> tuple[float, FloatArray]:
-    direction = parameters - initial_parameters
-    norm = float(np.linalg.norm(direction))
-    if not np.isfinite(norm) or norm == 0.0:
-        direction = np.ones_like(initial_parameters)
-    else:
-        direction = direction / norm
-    return fail_value, direction * np.sqrt(fail_value)
+class _RejectedEvaluation(FloatingPointError):
+    """A status-ok evaluator result that violates the optimizer contract."""
 
 
 def _validate_evaluation(
@@ -112,7 +208,7 @@ def _validate_evaluation(
             not np.isfinite(value)
             or value >= fail_value
             or np.any(~np.isfinite(gradient))):
-        raise FloatingPointError(
+        raise _RejectedEvaluation(
             "static MLE objective returned a non-finite/failure result")
     correlation = evaluation.correlation
     if correlation is not None:
@@ -161,19 +257,20 @@ def run_static_multivariate_mle(
         fail_value: float) -> StaticMLEOutcome:
     """Optimize and independently validate one static multivariate problem.
 
-    Expected numerical failures are translated to a large objective with a
-    non-zero gradient. Unexpected exceptions propagate to expose programming
-    errors. No model object is accepted by this function, so objective calls
-    cannot publish fitted state accidentally.
+    Typed native failures propagate through the shared status-to-exception
+    policy. Structured numerical failures and rejected numeric results use the
+    C++-owned optimizer penalty. No model object is accepted by this function,
+    so objective calls cannot publish fitted state accidentally.
     """
-    x0 = np.asarray(
-        problem.initial_parameters, dtype=np.float64).reshape(-1).copy()
+    optimizer_options = LBFGSBConfig().options(**optimizer_options)
+    x0 = as_float64_array(
+        problem.initial_parameters, name="initial_parameters").reshape(-1).copy()
     if np.any(~np.isfinite(x0)):
         raise ValueError("initial_parameters must contain only finite values")
     bounds = tuple(problem.bounds)
     if len(bounds) != x0.size:
         raise ValueError("bounds must match initial_parameters")
-    fail_value = float(fail_value)
+    fail_value = as_float64_scalar(fail_value, name="fail_value")
     if not np.isfinite(fail_value) or fail_value <= 0.0:
         raise ValueError("fail_value must be positive and finite")
 
@@ -194,15 +291,24 @@ def run_static_multivariate_mle(
         try:
             evaluation = strict_evaluate(parameters)
             return evaluation.objective, evaluation.gradient.copy()
-        except _EXPECTED_NUMERICAL_ERRORS:
-            return _failure_value_and_gradient(parameters, x0, fail_value)
+        except _RejectedEvaluation:
+            return model_policy.optimizer_failure_evaluation(
+                parameters, x0, fail_value, directional_gradient=True)
+        except FloatingPointError as error:
+            return model_policy.optimizer_numerical_failure_evaluation(
+                error, parameters, x0, fail_value,
+                directional_gradient=True)
 
+    initial_evaluation = None
     try:
         initial_evaluation = strict_evaluate(x0)
         initial_objective = initial_evaluation.objective
-    except _EXPECTED_NUMERICAL_ERRORS:
-        initial_evaluation = None
-        initial_objective = fail_value
+    except _RejectedEvaluation:
+        initial_objective, _ = model_policy.optimizer_failure_evaluation(
+            x0, x0, fail_value, directional_gradient=True)
+    except FloatingPointError as error:
+        initial_objective = model_policy.optimizer_failure_objective(
+            error, fail_value)
 
     if x0.size:
         optimizer_result = minimize(
@@ -230,12 +336,13 @@ def run_static_multivariate_mle(
     final_evaluation = None
     try:
         final_evaluation = strict_evaluate(final_parameters)
-    except _EXPECTED_NUMERICAL_ERRORS:
-        pass
-
-    final_objective = (
-        fail_value
-        if final_evaluation is None else final_evaluation.objective)
+        final_objective = final_evaluation.objective
+    except _RejectedEvaluation:
+        final_objective, _ = model_policy.optimizer_failure_evaluation(
+            final_parameters, x0, fail_value, directional_gradient=True)
+    except FloatingPointError as error:
+        final_objective = model_policy.optimizer_failure_objective(
+            error, fail_value)
     projected_gradient = (
         None
         if final_evaluation is None

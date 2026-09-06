@@ -1,7 +1,10 @@
 #include "scar/ou.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "scar/copula/rotation.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -19,14 +22,6 @@ bool valid_method(const std::string& method) {
         || method == "matrix";
 }
 
-int expected_dimension(const CopulaSpec& copula) {
-    if (copula.family == CopulaFamily::Student
-        || copula.family == CopulaFamily::EquicorrGaussian) {
-        return copula.dim;
-    }
-    return 2;
-}
-
 }  // namespace
 
 PreparedScarOuEvaluator::PreparedScarOuEvaluator(
@@ -37,22 +32,24 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     OuNumericalConfig config,
     std::string method)
     : copula_(std::move(copula)),
+      emission_(PreparedDynamicEmission::borrow(copula_)),
       observations_(std::move(observations)),
       n_obs_(n_obs),
       dim_(dim),
       config_(config),
-      method_(std::move(method)) {
+      method_(std::move(method)),
+      evaluator_(&emission_) {
 
     // Prepared objects own the observation memory so ObservationView remains
-    // valid across repeated optimizer callbacks after the pybind constructor
-    // returns.
+    // valid across repeated evaluator calls.
     if (!valid_method(method_)) {
         throw std::invalid_argument("unsupported transition_method");
     }
     if (n_obs_ < 0 || dim_ < 2) {
         throw std::invalid_argument("invalid observation shape");
     }
-    const int expected_dim = expected_dimension(copula_);
+    const int expected_dim =
+        copula_.model_descriptor().expected_dimension();
     if (dim_ != expected_dim) {
         throw std::invalid_argument(
             "u dimension does not match CopulaSpec dimension");
@@ -74,8 +71,8 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
         throw std::invalid_argument("u must contain only finite values");
     }
     if (copula_.family == CopulaFamily::EquicorrGaussian) {
-        copula_.equicorr_sum_cache.resize(n_obs_size, 0.0);
-        copula_.equicorr_sum_squares_cache.resize(n_obs_size, 0.0);
+        copula_.equicorr_sum_scores().resize(n_obs_size, 0.0);
+        copula_.equicorr_sum_squares().resize(n_obs_size, 0.0);
         for (std::size_t row = 0; row < n_obs_size; ++row) {
             scar_internal::EquicorrStats stats;
             if (!scar_internal::equicorr_sufficient_statistics(
@@ -85,28 +82,29 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
                 throw std::invalid_argument(
                     "failed to prepare equicorrelation statistics");
             }
-            copula_.equicorr_sum_cache[row] = stats.sum;
-            copula_.equicorr_sum_squares_cache[row] = stats.sum_squares;
+            copula_.equicorr_sum_scores()[row] = stats.sum;
+            copula_.equicorr_sum_squares()[row] = stats.sum_squares;
         }
     }
     if (copula_.family == CopulaFamily::Gaussian) {
-        copula_.gaussian_z1_cache.resize(n_obs_size, 0.0);
-        copula_.gaussian_z2_cache.resize(n_obs_size, 0.0);
+        copula_.pair_gaussian_first_scores().resize(n_obs_size, 0.0);
+        copula_.pair_gaussian_second_scores().resize(n_obs_size, 0.0);
         for (std::size_t row = 0; row < n_obs_size; ++row) {
             double u1 = 0.0;
             double u2 = 0.0;
-            scar_internal::apply_rotation(
+            scar::copula::apply_rotation(
                 observations_[2 * row],
                 observations_[2 * row + 1],
                 static_cast<int>(copula_.rotation),
                 u1,
                 u2);
-            const double x1 = scar_internal::normal_quantile(u1);
-            const double x2 = scar_internal::normal_quantile(u2);
-            copula_.gaussian_z1_cache[row] = x1;
-            copula_.gaussian_z2_cache[row] = x2;
+            const double x1 = scar::math::normal_quantile(u1);
+            const double x2 = scar::math::normal_quantile(u2);
+            copula_.pair_gaussian_first_scores()[row] = x1;
+            copula_.pair_gaussian_second_scores()[row] = x2;
         }
     }
+    emission_.refresh();
 }
 
 PreparedScarOuEvaluator::PreparedScarOuEvaluator(
@@ -116,10 +114,12 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     OuNumericalConfig config,
     std::string method)
     : copula_(std::move(copula)),
+      emission_(PreparedDynamicEmission::borrow(copula_)),
       n_obs_(0),
       dim_(copula_.dim),
       config_(config),
-      method_(std::move(method)) {
+      method_(std::move(method)),
+      evaluator_(&emission_) {
 
     if (!valid_method(method_)) {
         throw std::invalid_argument("unsupported transition_method");
@@ -148,9 +148,10 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
                 "prepared statistics must contain finite valid values");
         }
     }
-    copula_.equicorr_sum_cache = std::move(equicorr_sums);
-    copula_.equicorr_sum_squares_cache =
+    copula_.equicorr_sum_scores() = std::move(equicorr_sums);
+    copula_.equicorr_sum_squares() =
         std::move(equicorr_sum_squares);
+    emission_.refresh();
 }
 
 void PreparedScarOuEvaluator::update_student_factor(
@@ -183,8 +184,9 @@ void PreparedScarOuEvaluator::update_student_factor(
             throw std::invalid_argument("l_inv must contain only finite values");
         }
     }
-    copula_.l_inv = l_inv;
-    copula_.log_det = log_det;
+    copula_.dense_inverse_cholesky() = l_inv;
+    copula_.dense_log_determinant() = log_det;
+    emission_.refresh();
 }
 
 ObservationView PreparedScarOuEvaluator::view() const noexcept {
@@ -193,6 +195,22 @@ ObservationView PreparedScarOuEvaluator::view() const noexcept {
         static_cast<std::size_t>(n_obs_),
         dim_,
     };
+}
+
+void PreparedScarOuEvaluator::configure_student_emission_cache(
+    const StudentEmissionCacheConfig& config) {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+    emission_.configure_student_emission_cache(view(), config);
+}
+
+void PreparedScarOuEvaluator::clear_student_emission_cache() {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+    emission_.clear_student_emission_cache();
+}
+
+StudentEmissionCacheDiagnostics PreparedScarOuEvaluator::student_emission_cache_info() const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+    return emission_.student_emission_cache_info();
 }
 
 LogLikResult PreparedScarOuEvaluator::loglik(
@@ -210,6 +228,9 @@ GradLogLikResult PreparedScarOuEvaluator::neg_loglik_with_grad(
 GradLogLikResult PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr(
     const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
+    if (emission_.student_emission_cache_info().active) {
+        throw std::invalid_argument("clear Student emission cache before requesting correlation gradients");
+    }
     return call_full_corr(params);
 }
 
@@ -218,39 +239,38 @@ PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr_directional(
     const OuParams& params,
     const std::vector<double>& corr_direction) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
+    if (emission_.student_emission_cache_info().active) {
+        throw std::invalid_argument("clear Student emission cache before requesting correlation gradients");
+    }
     return call_directional_corr(params, corr_direction);
 }
 
-std::vector<double> PreparedScarOuEvaluator::predictive_mean(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
+ScarOuVectorResult PreparedScarOuEvaluator::predictive_mean(
+    const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
-    return call_predictive_mean(params, backend, status);
+    return call_predictive_mean(params);
 }
 
-std::vector<double> PreparedScarOuEvaluator::mixture_h(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
+ScarOuVectorResult PreparedScarOuEvaluator::mixture_h(
+    const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
     if (observations_.empty()) {
-        status = SCAR_INVALID_FAMILY;
-        return {};
+        ScarOuVectorResult result;
+        result.status = Status::InvalidFamily;
+        return result;
     }
-    return call_mixture_h(params, backend, status);
+    return call_mixture_h(params);
 }
 
-std::vector<double> PreparedScarOuEvaluator::mixture_h_pair(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
+ScarOuVectorResult PreparedScarOuEvaluator::mixture_h_pair(
+    const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
     if (observations_.empty()) {
-        status = SCAR_INVALID_FAMILY;
-        return {};
+        ScarOuVectorResult result;
+        result.status = Status::InvalidFamily;
+        return result;
     }
-    return call_mixture_h_pair(params, backend, status);
+    return call_mixture_h_pair(params);
 }
 
 StateDistribution PreparedScarOuEvaluator::state_distribution(
@@ -337,64 +357,44 @@ GradLogLikResult PreparedScarOuEvaluator::call_directional_corr(
         params, copula_, u, config_, corr_direction);
 }
 
-std::vector<double> PreparedScarOuEvaluator::call_predictive_mean(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
-
+ScarOuVectorResult PreparedScarOuEvaluator::call_predictive_mean(
+    const OuParams& params) const {
     const ObservationView u = view();
     if (method_ == "local") {
-        backend = OuBackend::LocalGh;
         return evaluator_.predictive_mean_local_gh(
-            params, copula_, u, config_, status);
+            params, copula_, u, config_);
     }
     if (method_ == "matrix") {
-        backend = OuBackend::Matrix;
         return evaluator_.predictive_mean_matrix(
-            params, copula_, u, config_, status);
+            params, copula_, u, config_);
     }
-    return evaluator_.predictive_mean_auto(
-        params, copula_, u, config_, backend, status);
+    return evaluator_.predictive_mean_auto(params, copula_, u, config_);
 }
 
-std::vector<double> PreparedScarOuEvaluator::call_mixture_h(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
-
+ScarOuVectorResult PreparedScarOuEvaluator::call_mixture_h(
+    const OuParams& params) const {
     const ObservationView u = view();
     if (method_ == "local") {
-        backend = OuBackend::LocalGh;
-        return evaluator_.mixture_h_local_gh(
-            params, copula_, u, config_, status);
+        return evaluator_.mixture_h_local_gh(params, copula_, u, config_);
     }
     if (method_ == "matrix") {
-        backend = OuBackend::Matrix;
-        return evaluator_.mixture_h_matrix(
-            params, copula_, u, config_, status);
+        return evaluator_.mixture_h_matrix(params, copula_, u, config_);
     }
-    return evaluator_.mixture_h_auto(
-        params, copula_, u, config_, backend, status);
+    return evaluator_.mixture_h_auto(params, copula_, u, config_);
 }
 
-std::vector<double> PreparedScarOuEvaluator::call_mixture_h_pair(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
-
+ScarOuVectorResult PreparedScarOuEvaluator::call_mixture_h_pair(
+    const OuParams& params) const {
     const ObservationView u = view();
     if (method_ == "local") {
-        backend = OuBackend::LocalGh;
         return evaluator_.mixture_h_pair_local_gh(
-            params, copula_, u, config_, status);
+            params, copula_, u, config_);
     }
     if (method_ == "matrix") {
-        backend = OuBackend::Matrix;
         return evaluator_.mixture_h_pair_matrix(
-            params, copula_, u, config_, status);
+            params, copula_, u, config_);
     }
-    return evaluator_.mixture_h_pair_auto(
-        params, copula_, u, config_, backend, status);
+    return evaluator_.mixture_h_pair_auto(params, copula_, u, config_);
 }
 
 StateDistribution PreparedScarOuEvaluator::call_state_distribution(

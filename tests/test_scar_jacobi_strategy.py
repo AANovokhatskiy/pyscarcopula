@@ -1,4 +1,6 @@
+from dataclasses import replace
 from pathlib import Path
+import warnings
 
 import numpy as np
 import pytest
@@ -10,7 +12,8 @@ from pyscarcopula import (
     GumbelCopula,
     JoeCopula,
 )
-from pyscarcopula._types import LatentResult, jacobi_params
+from pyscarcopula._native import jacobi as jacobi_native
+from pyscarcopula._types import LatentResult, PredictiveState, jacobi_params
 from pyscarcopula.api import (
     fit,
     log_likelihood,
@@ -287,6 +290,19 @@ def test_scar_jacobi_rejects_empty_data():
         )
 
 
+@pytest.mark.parametrize("alpha0", [None, np.array([1.0, 0.4, 0.25])])
+def test_scar_jacobi_rejects_singleton_before_initialization_or_optimizer(
+        monkeypatch, alpha0):
+    def unexpected(*args, **kwargs):
+        pytest.fail("singleton must be rejected before model preparation")
+
+    monkeypatch.setattr(scar_jacobi.SCARJacobiStrategy, "_initial_point", unexpected)
+    monkeypatch.setattr(scar_jacobi.SCARJacobiStrategy, "_prepared_evaluator", unexpected)
+    monkeypatch.setattr(scar_jacobi, "minimize", unexpected)
+    with pytest.raises(ValueError, match="at least two observations"):
+        fit(GumbelCopula(), [[0.4, 0.6]], method="scar-tm-jacobi", alpha0=alpha0)
+
+
 @pytest.mark.parametrize(
     "alpha0",
     [
@@ -436,6 +452,7 @@ def test_scar_jacobi_fit_accepts_spectral_matrix_analytical_gradient():
         method='scar-tm-jacobi',
         analytical_grad=True,
         transition_method='spectral_matrix',
+        clip_negative=True,
         basis_order=3,
         quad_order=18,
         alpha0=np.array([1.0, 0.35, 0.5]),
@@ -454,8 +471,8 @@ def test_scar_jacobi_final_validation_uses_plain_objective(monkeypatch):
         return 123.0, np.zeros(3, dtype=np.float64)
 
     monkeypatch.setattr(
-        scar_jacobi,
-        "jacobi_matrix_neg_loglik_with_grad",
+        jacobi_native.PreparedScarJacobiEvaluator,
+        "neg_loglik_with_grad",
         inconsistent_gradient,
     )
     copula = GumbelCopula()
@@ -473,20 +490,50 @@ def test_scar_jacobi_final_validation_uses_plain_objective(monkeypatch):
         maxfun=12,
     )
 
-    expected = scar_jacobi.jacobi_matrix_loglik(
-        result.params.kappa,
-        result.params.m,
-        result.params.xi,
+    expected = jacobi_native.PreparedScarJacobiEvaluator(
         u,
         copula,
         basis_order=3,
         quad_order=18,
         transition_method="local_fixed",
+    ).loglik(
+        result.params.kappa,
+        result.params.m,
+        result.params.xi,
     )
     assert result.log_likelihood == pytest.approx(expected)
     assert not result.success
     assert not result.diagnostics["final_objective_consistent"]
     assert "inconsistent gradient objective" in result.message
+
+
+def test_scar_jacobi_fit_reuses_one_prepared_native_evaluator(monkeypatch):
+    original = jacobi_native.PreparedScarJacobiEvaluator
+    constructed = []
+
+    class CountingEvaluator(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            constructed.append(self)
+
+    monkeypatch.setattr(
+        jacobi_native, "PreparedScarJacobiEvaluator", CountingEvaluator)
+    result = fit(
+        GumbelCopula(),
+        _u_sample(),
+        method="scar-tm-jacobi",
+        analytical_grad=True,
+        transition_method="local_fixed",
+        basis_order=3,
+        quad_order=18,
+        alpha0=np.array([1.0, 0.35, 0.5]),
+        maxiter=2,
+        maxfun=12,
+    )
+
+    assert np.isfinite(result.log_likelihood)
+    assert len(constructed) == 1
+    assert constructed[0].preparation_count >= 1
 
 
 def test_scar_jacobi_local_fixed_reports_fully_analytical_gradient():
@@ -533,18 +580,28 @@ def test_scar_jacobi_local_reports_semi_analytical_gradient():
     assert result.diagnostics["transition_backend"] == "local"
 
 
-def test_scar_jacobi_spectral_coeff_rejects_requested_gradient():
-    with pytest.raises(
-            NotImplementedError,
-            match="spectral_coeff Jacobi backend"):
-        fit(
-            GumbelCopula(),
-            _u_sample(),
-            method='scar-tm-jacobi',
-            analytical_grad=True,
-            transition_method='spectral_coeff',
-            smart_init=False,
-        )
+def test_scar_jacobi_spectral_coeff_uses_native_objective_gradient():
+    result = fit(
+        GumbelCopula(),
+        _u_sample(),
+        method='scar-tm-jacobi',
+        analytical_grad=True,
+        transition_method='spectral_coeff',
+        basis_order=3,
+        quad_order=16,
+        alpha0=np.array([1.0, 0.35, 0.5]),
+        maxiter=1,
+        maxfun=8,
+        smart_init=False,
+    )
+
+    assert np.isfinite(result.log_likelihood)
+    assert result.diagnostics["gradient_kind"] == "native_finite_difference"
+    assert result.diagnostics["setup_derivative"] == (
+        "numerical_finite_difference")
+    assert result.diagnostics["filter_derivative"] == (
+        "numerical_finite_difference")
+    assert result.diagnostics["transition_backend"] == "spectral_coeff"
 
 
 def test_scar_jacobi_fit_clips_initial_point_to_bounds():
@@ -861,13 +918,17 @@ def test_scar_jacobi_predictive_state_cache_reused(monkeypatch):
     )
     strategy = get_strategy_for_result(result)
     calls = {'n': 0}
-    original = scar_jacobi.jacobi_matrix_state_distribution
+    original = jacobi_native.PreparedScarJacobiEvaluator.state_distribution
 
-    def counted(*args, **kwargs):
+    def counted(self, *args, **kwargs):
         calls['n'] += 1
-        return original(*args, **kwargs)
+        return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(scar_jacobi, 'jacobi_matrix_state_distribution', counted)
+    monkeypatch.setattr(
+        jacobi_native.PreparedScarJacobiEvaluator,
+        'state_distribution',
+        counted,
+    )
     cache = {}
 
     first = strategy.predictive_state(
@@ -909,6 +970,35 @@ def test_scar_jacobi_mixture_h_populates_state_cache():
     for tau_grid, prob in cache.values():
         assert tau_grid.shape == prob.shape
         np.testing.assert_allclose(np.sum(prob), 1.0, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("argument", ["observation", "z_grid", "prob"])
+@pytest.mark.parametrize("dtype", [np.complex64, object])
+def test_strategy_conditioning_rejects_complex_before_preparation(
+        monkeypatch, argument, dtype):
+    state = PredictiveState(
+        method="SCAR-TM-JACOBI", horizon="next", kind="grid",
+        z_grid=np.array([0.2, 0.8]), prob=np.array([0.5, 0.5]))
+    observation = np.array([[0.5, 0.5]])
+    source = observation if argument == "observation" else getattr(state, argument)
+    invalid = np.array(
+        [np.complex64(value + 1j) for value in source.flat], dtype=dtype
+    ).reshape(source.shape)
+    if argument == "observation":
+        observation = invalid
+    else:
+        state = replace(state, **{argument: invalid})
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("complex input reached native evaluator preparation")
+
+    strategy = scar_jacobi.SCARJacobiStrategy()
+    monkeypatch.setattr(strategy, "_prepared_evaluator", unexpected)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match="complex"):
+            strategy.condition_state(GumbelCopula(), state, observation, None)
+    assert not caught
 
 
 def test_scar_jacobi_condition_state_reweights_grid_distribution():

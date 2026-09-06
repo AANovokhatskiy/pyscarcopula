@@ -9,8 +9,9 @@ from scipy.stats import chi2, norm
 from pyscarcopula import (
     BivariateGaussianCopula,
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
-    IndependentCopula, CVineCopula, EquicorrGaussianCopula,
+    IndependentCopula, EquicorrGaussianCopula,
     GaussianCopula, StudentCopula, StochasticStudentCopula,
+    VineCopula,
 )
 from pyscarcopula.api import (
     fit, log_likelihood, mixture_h, predict, predictive_mean, sample,
@@ -22,11 +23,15 @@ from pyscarcopula._types import (
     LBFGSBConfig, IndependentResult, MultivariateMLEResult,
 )
 from pyscarcopula.numerical.gas_filter import gas_predict_param
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.numerical.predictive_tm import (
     sample_grid_distribution, tm_state_distribution,
 )
 from pyscarcopula.strategy.gas import GASStrategy
+from pyscarcopula.strategy._base import (
+    get_strategy,
+    partition_strategy_fit_kwargs,
+)
 
 
 class TestPublicPackageSurface:
@@ -35,8 +40,15 @@ class TestPublicPackageSurface:
         assert "__version__" in pyscarcopula.__all__
 
     def test_multivariate_models_exported_from_package_root(self):
-        assert EquicorrGaussianCopula.__name__ == 'EquicorrGaussianCopula'
-        assert StochasticStudentCopula.__name__ == 'StochasticStudentCopula'
+        from pyscarcopula.copula.multivariate import (
+            EquicorrGaussianCopula as EquicorrImplementation,
+            StochasticStudentCopula as StudentImplementation,
+        )
+        for name, implementation in (
+                ('EquicorrGaussianCopula', EquicorrImplementation),
+                ('StochasticStudentCopula', StudentImplementation)):
+            assert getattr(pyscarcopula, name) is implementation
+            assert name in pyscarcopula.__all__
 
 
 class LinearScoreCopula:
@@ -89,30 +101,144 @@ class TestFitResultTypes:
         with pytest.raises(error, match="real values|pseudo-observations"):
             fit(copula, invalid_data, method="scar-tm-ou")
 
+    @pytest.mark.parametrize("invalid_value", [np.nan, np.inf, -np.inf])
+    @pytest.mark.parametrize("stateful", [False, True])
+    def test_fit_to_pobs_rejects_nonfinite_raw_data_before_ranking(
+            self, invalid_value, stateful):
+        raw = np.random.default_rng(2027).standard_normal((20, 2))
+        raw[4, 1] = invalid_value
+        copula = ClaytonCopula()
+
+        with pytest.raises(ValueError, match="finite"):
+            if stateful:
+                copula.fit(raw, method="mle", to_pobs=True)
+            else:
+                fit(copula, raw, method="mle", to_pobs=True)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [np.array(0.5), np.array([0.2, 0.3])],
+    )
+    @pytest.mark.parametrize("stateful", [False, True])
+    def test_fit_to_pobs_rejects_non_2d_data_before_ranking(
+            self, raw, stateful):
+        copula = ClaytonCopula()
+
+        with pytest.raises(ValueError, match="copula data must be 2D"):
+            if stateful:
+                copula.fit(raw, method="mle", to_pobs=True)
+            else:
+                fit(copula, raw, method="mle", to_pobs=True)
+
+    def test_stateful_fit_rejects_complex_data(self):
+        data = np.array([[0.2 + 7.0j, 0.3], [0.4, 0.5]])
+
+        with pytest.raises(TypeError, match="real values"):
+            ClaytonCopula().fit(data, method="mle")
+
+    @pytest.mark.parametrize("stateful", [False, True])
+    def test_bivariate_mle_rejects_unknown_keywords(
+            self, random_u2, stateful):
+        copula = ClaytonCopula()
+
+        with pytest.raises(
+                TypeError,
+                match="unexpected MLE keyword.*definitely_unknown"):
+            if stateful:
+                copula.fit(
+                    random_u2,
+                    method="mle",
+                    definitely_unknown=True,
+                )
+            else:
+                fit(
+                    copula,
+                    random_u2,
+                    method="mle",
+                    definitely_unknown=True,
+                )
+
+    @pytest.mark.parametrize(
+        "method",
+        ["gas", "scar-tm-ou", "scar-tm-jacobi"],
+    )
+    @pytest.mark.parametrize("stateful", [False, True])
+    def test_bivariate_dynamic_fit_rejects_unknown_keywords(
+            self, random_u2, method, stateful):
+        copula = ClaytonCopula()
+
+        with pytest.raises(
+                TypeError,
+                match=f"unexpected {method.upper()} keyword.*definitely_unknown"):
+            if stateful:
+                copula.fit(
+                    random_u2,
+                    method=method,
+                    definitely_unknown=True,
+                )
+            else:
+                fit(
+                    copula,
+                    random_u2,
+                    method=method,
+                    definitely_unknown=True,
+                )
+
+        assert copula.fit_result is None
+        assert getattr(copula, "_last_u", None) is None
+
+    @pytest.mark.parametrize(
+        "method",
+        ["gas", "scar-tm-ou", "scar-tm-jacobi"],
+    )
+    def test_dynamic_strategy_rejects_unknown_constructor_and_fit_keywords(
+            self, random_u2, method):
+        with pytest.raises(
+                TypeError,
+                match=f"unexpected {method.upper()} keyword.*definitely_unknown"):
+            get_strategy(method, definitely_unknown=True)
+
+        strategy = get_strategy(method)
+        with pytest.raises(
+                TypeError,
+                match=f"unexpected {method.upper()} keyword.*definitely_unknown"):
+            strategy.fit(
+                ClaytonCopula(),
+                random_u2,
+                definitely_unknown=True,
+            )
+
+    def test_strategy_fit_kwargs_are_partitioned_by_explicit_contract(self):
+        constructor_kwargs, fit_kwargs = partition_strategy_fit_kwargs(
+            "scar-tm-jacobi",
+            {
+                "spectral_basis_order": 8,
+                "alpha0": np.array([1.0, 0.5, 0.2]),
+                "maxiter": 3,
+            },
+        )
+
+        assert constructor_kwargs == {"spectral_basis_order": 8}
+        assert set(fit_kwargs) == {"alpha0", "maxiter"}
+
     def test_gas_returns_gas_result(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='gas')
         assert isinstance(result, GASResult)
         assert result.scaling == 'unit'
 
-    def test_vine_fit_result(self):
-        u4 = pobs(np.random.default_rng(0).standard_normal((200, 4)))
-        vine = CVineCopula()
-        vine.fit(u4, method='mle')
-        assert vine.fit_result.log_likelihood is not None
-        assert vine.fit_result.success
 
     def test_vine_logL_equals_edge_sum(self):
         u4 = pobs(np.random.default_rng(1).standard_normal((200, 4)))
-        vine = CVineCopula()
+        vine = VineCopula.cvine(d=4)
         vine.fit(u4, method='mle')
         edge_sum = sum(e.fit_result.log_likelihood
-                       for tree in vine.edges for e in tree)
+                       for e in vine.pair_copulas.values())
         assert abs(vine.fit_result.log_likelihood - edge_sum) < 1e-8
 
     def test_top_level_vine_log_likelihood_dispatches_to_vine(self):
         u4 = pobs(np.random.default_rng(30).standard_normal((80, 4)))
-        vine = CVineCopula()
+        vine = VineCopula.cvine(d=4)
         result = fit(vine, u4, method='mle')
 
         assert log_likelihood(vine, u4, result) == pytest.approx(
@@ -127,13 +253,17 @@ class TestPredictiveMean:
         assert r_t.shape == (200,)
         assert np.all(r_t == r_t[0])
 
-    def test_scar_varying(self, random_u2):
+    def test_scar_predictive_mean_is_causal_and_uses_observations(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='scar-tm-ou')
         r_t = predictive_mean(cop, random_u2, result)
         assert r_t.shape == (200,)
-        # Should vary (not constant like MLE)
-        assert np.std(r_t) > 0
+        changed = random_u2.copy()
+        changed[100:] = [0.2, 0.8]
+        after = predictive_mean(cop, changed, result)
+        np.testing.assert_array_equal(r_t[:100], after[:100])
+        assert np.all(np.isfinite(after))
+        assert np.max(np.abs(r_t[101:] - after[101:])) > 1e-6
 
     def test_top_level_api_rejects_public_posterior_cache(self, random_u2):
         cop = GumbelCopula(rotate=180)
@@ -338,6 +468,21 @@ class TestIndependentCopula:
         assert copula._last_u.shape == raw.shape
         assert np.all((copula._last_u > 0.0) & (copula._last_u < 1.0))
 
+    @pytest.mark.parametrize("invalid_value", [np.nan, np.inf, -np.inf])
+    def test_direct_fit_to_pobs_rejects_nonfinite_before_ranking(
+            self, invalid_value):
+        raw = np.array([[10.0, -2.0], [30.0, 5.0], [20.0, 1.0]])
+        raw[1, 0] = invalid_value
+
+        with pytest.raises(ValueError, match="finite"):
+            IndependentCopula().fit(raw, to_pobs=True)
+
+    def test_direct_fit_rejects_unknown_mle_keywords(self, random_u2):
+        with pytest.raises(
+                TypeError,
+                match="unexpected MLE keyword.*maxiterr"):
+            IndependentCopula().fit(random_u2, maxiterr=1)
+
     def test_top_level_fit_zero_logL(self):
         cop = IndependentCopula()
         u = np.random.default_rng(102).random((100, 2))
@@ -470,7 +615,7 @@ class TestTransformType:
     def test_gaussian_transform_type_is_compatibility_only(self):
         import warnings
 
-        from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+        from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -497,7 +642,7 @@ class TestTransformType:
         assert xtanh_spec.transform == module.Transform.GaussianTanh
 
     def test_vine_constructor_flow_keeps_gaussian_transform_fixed(self):
-        from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+        from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension
         from pyscarcopula.vine._rvine_dissmann import _make_fixed_copula
 
         module = _cpp_extension.load()
@@ -510,7 +655,7 @@ class TestTransformType:
 
     def test_vine_softplus(self):
         u4 = pobs(np.random.default_rng(0).standard_normal((150, 4)))
-        vine = CVineCopula()
+        vine = VineCopula.cvine(d=4)
         vine.fit(u4, method='mle', transform_type='softplus')
         assert vine.fit_result.log_likelihood is not None
 
@@ -588,23 +733,19 @@ class TestEquicorrGaussian:
             EquicorrGaussianCopula(d=1)
 
     def test_multivariate_mle_uses_model_optimizer_config(self, monkeypatch):
-        captured = {}
+        from scipy.optimize import minimize
 
-        class DummyResult:
-            x = np.array([0.0])
-            fun = 0.0
-            success = True
-            nfev = 1
-            message = 'ok'
+        captured = {}
 
         def fake_minimize(
                 fun, x0, jac=None, method=None, bounds=None, options=None):
             captured['options'] = options
             captured['jac'] = jac
-            return DummyResult()
+            return minimize(
+                fun, x0, jac=jac, method=method, bounds=bounds, options=options)
 
         monkeypatch.setattr(
-            'pyscarcopula.copula.multivariate.equicorr.minimize',
+            'pyscarcopula.strategy.multivariate_mle.minimize',
             fake_minimize)
 
         u = pobs(np.random.default_rng(46).standard_normal((40, 4)))
@@ -845,6 +986,12 @@ class TestConditionalPredict:
         result = self._gas_sampling_result(cop)
         allocation_attempted = False
 
+        class FailRng:
+            def standard_normal(self, *args, **kwargs):
+                nonlocal allocation_attempted
+                allocation_attempted = True
+                raise AssertionError("allocation must not be attempted")
+
         def fail_empty(*args, **kwargs):
             nonlocal allocation_attempted
             allocation_attempted = True
@@ -857,7 +1004,8 @@ class TestConditionalPredict:
                 random_u2,
                 result,
                 10,
-                memory_budget_bytes=10 * 2 * 8 - 1,
+                rng=FailRng(),
+                memory_budget_bytes=10 * 6 * 8 - 1,
             )
         assert not allocation_attempted
 
@@ -885,7 +1033,7 @@ class TestConditionalPredict:
 
     @pytest.mark.parametrize(
         ("operation", "required"),
-        [(sample, 4 * 2 * 8), (predict, 4 * 3 * 8)],
+        [(sample, 4 * 6 * 8), (predict, 4 * 3 * 8)],
     )
     def test_gas_sampling_accepts_sufficient_memory_budget(
             self, operation, required, random_u2):
@@ -950,9 +1098,9 @@ class TestConditionalPredict:
             scaling='unit',
         )
 
-        with pytest.raises(CppUnsupported, match="C\\+\\+ bivariate GAS"):
+        with pytest.raises(NativeUnsupported, match="exact registered"):
             GASStrategy().predict(cop, u, result, 4, horizon='next')
-        with pytest.raises(CppUnsupported, match="C\\+\\+ bivariate GAS"):
+        with pytest.raises(NativeUnsupported, match="exact registered"):
             gas_predict_param(omega, gamma, beta, u, cop, horizon='current')
 
     def test_gas_fit_forwards_optimizer_options(self, monkeypatch):
@@ -965,7 +1113,9 @@ class TestConditionalPredict:
             nfev = 1
             message = 'ok'
 
-        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+        def fake_minimize(
+                fun, x0, method=None, jac=None, bounds=None, options=None):
+            assert jac is True
             captured.append(options)
             return DummyResult()
 
@@ -983,9 +1133,12 @@ class TestConditionalPredict:
         assert captured[0]['gtol'] == pytest.approx(2e-4)
         assert captured[0]['maxls'] == 33
         assert captured[0]['ftol'] == pytest.approx(1e-11)
-        assert captured[0]['maxfun'] == 4000
-        assert captured[0]['eps'] == pytest.approx(1e-5)
+        assert captured[0]['maxfun'] == 4000 // 4
+        assert 'eps' not in captured[0]
+        assert 'finite_diff_rel_step' not in captured[0]
         assert captured[1]['ftol'] == pytest.approx(1e-12)
+        assert captured[1]['maxfun'] == 4000 // 4
+        assert result.nfev == 8  # two native providers, four scalar calls each
         assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 
         result = GASStrategy().fit(
@@ -1007,7 +1160,9 @@ class TestConditionalPredict:
             nfev = 1
             message = 'ok'
 
-        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+        def fake_minimize(
+                fun, x0, method=None, jac=None, bounds=None, options=None):
+            assert jac is True
             captured.append(options)
             return DummyResult()
 
@@ -1036,11 +1191,11 @@ class TestConditionalPredict:
         )
 
         assert captured[0]['ftol'] == pytest.approx(1e-9)
-        assert captured[0]['maxfun'] == 222
+        assert captured[0]['maxfun'] == 222 // 4
         assert captured[1]['ftol'] == pytest.approx(1e-12)
-        assert captured[1]['maxfun'] == 222
+        assert captured[1]['maxfun'] == 222 // 4
         assert captured[2]['ftol'] == pytest.approx(1e-12)
-        assert captured[2]['maxfun'] == 111
+        assert captured[2]['maxfun'] == 111 // 4
 
     def test_gas_post_fit_uses_result_score_eps(self, monkeypatch):
         captured = {}

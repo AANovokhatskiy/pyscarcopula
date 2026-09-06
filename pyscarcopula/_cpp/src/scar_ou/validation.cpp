@@ -1,9 +1,10 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
-#include "scar/detail/copula.hpp"
+#include "scar/core/threading.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
+#include "scar/scar_ou/quadrature.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -13,27 +14,46 @@
 
 namespace scar::evaluator_detail {
 
-const double* observation_data(const CopulaSpec& copula, ObservationView u) {
-    const int expected_dim =
-        (copula.family == CopulaFamily::Student
-         || copula.family == CopulaFamily::EquicorrGaussian)
-        ? copula.dim
-        : 2;
+const double* observation_data(
+    const PreparedDynamicEmission& emission,
+    ObservationView u) {
+
+    const int expected_dim = emission.expected_dimension();
     if (u.dim != expected_dim) {
         throw std::invalid_argument("u dimension does not match CopulaSpec::dim");
     }
     const bool prepared_equicorr =
-        copula.family == CopulaFamily::EquicorrGaussian
-        && copula.equicorr_sum_cache.size() == u.size()
-        && copula.equicorr_sum_squares_cache.size() == u.size();
+        emission.kind() == DynamicEmissionKind::Equicorrelation
+        && emission.has_cached_observations(u.size());
     if (!u.empty() && u.data() == nullptr && !prepared_equicorr) {
         throw std::invalid_argument("u data pointer must not be null");
     }
     return u.data();
 }
 
-bool supported_ou_copula(const CopulaSpec& copula) {
-    return scar_internal::copula_is_supported_for_ou(copula);
+Result<std::size_t> rosenblatt_output_size(
+    ObservationView u,
+    int expected_dimension) noexcept {
+
+    Result<std::size_t> result;
+    std::size_t output_size = 0;
+    if (expected_dimension < 2 || u.dim != expected_dimension) {
+        result.status = Status::InvalidSize;
+        result.failure.coordinate = u.dim;
+        return result;
+    }
+    if (!scar_internal::checked_shape_size(
+            u.size(),
+            static_cast<std::size_t>(expected_dimension),
+            output_size)) {
+        result.status = Status::InvalidSize;
+        return result;
+    }
+    return success(output_size);
+}
+
+bool supported_ou_copula(const PreparedDynamicEmission& emission) {
+    return emission.is_supported_for_ou();
 }
 
 bool valid_ou_params(const OuParams& params) {
@@ -52,8 +72,8 @@ bool finite_config_doubles(const OuNumericalConfig& config) {
     return std::isfinite(config.grid_range)
         && std::isfinite(config.r_gh)
         && std::isfinite(config.auto_small_kdt)
-        && config.n_threads >= 1
-        && config.n_threads <= 256
+        && scar_internal::valid_thread_count(config.n_threads)
+        && config.corr_gradient_block_bytes >= 24U
         && valid_grid_method;
 }
 
@@ -118,48 +138,44 @@ bool adaptive_grid_exceeds_limit(
             || K_min_value > static_cast<double>(INT_MAX));
 }
 
-bool recoverable_numerical_status(int status) {
-    return status == SCAR_NUMERICAL_FAILURE;
+bool recoverable_numerical_status(Status status) {
+    return status == Status::NumericalFailure;
 }
 
 bool auto_loglik_accepted(const LogLikResult& result) {
-    return result.status == SCAR_OK
+    return result.is_ok()
         && std::isfinite(result.log_likelihood)
         && result.log_likelihood > -1e9;
 }
 
 bool auto_grad_accepted(const GradLogLikResult& result) {
-    return result.status == SCAR_OK
+    return result.is_ok()
         && std::isfinite(result.neg_log_likelihood)
         && result.neg_log_likelihood < 1e9;
 }
 
 LogLikResult invalid_loglik(int status, OuBackend backend) {
-    return {
-        -std::numeric_limits<double>::infinity(),
-        backend,
-        status,
-        -1,
-        {},
-        SCAR_FALLBACK_NONE,
-    };
+    LogLikResult out;
+    out.log_likelihood = -std::numeric_limits<double>::infinity();
+    out.backend = backend;
+    out.status = status_from_int(status);
+    return out;
 }
 
 GradLogLikResult invalid_grad(int status, OuBackend backend) {
-    return {
-        1e10,
-        std::vector<double>{0.0, 0.0, 0.0},
-        backend,
-        status,
-        -1,
-        {},
-        SCAR_FALLBACK_NONE,
-        {},
-    };
+    GradLogLikResult out;
+    out.neg_log_likelihood = 1e10;
+    out.neg_gradient = {0.0, 0.0, 0.0};
+    out.backend = backend;
+    out.status = status_from_int(status);
+    return out;
 }
 
 StateDistribution invalid_state_distribution(int status, OuBackend backend) {
-    return {{}, {}, backend, status};
+    StateDistribution out;
+    out.backend = backend;
+    out.status = status_from_int(status);
+    return out;
 }
 
 OuNumericalConfig with_default_quad_order(OuNumericalConfig config) {
@@ -170,7 +186,7 @@ OuNumericalConfig with_default_quad_order(OuNumericalConfig config) {
             return config;
         }
         config.spectral_quad_order =
-            std::max(2 * config.spectral_basis_order + 16, 48);
+            ou_default_quad_order(config.spectral_basis_order).value;
     }
     return config;
 }
@@ -205,7 +221,7 @@ void set_auto_fallback(
     int matrix_reason) {
 
     result.fallback_chain = chain;
-    result.fallback_from = chain.empty()
+    result.failure.fallback_from = chain.empty()
         ? -1
         : static_cast<int>(chain.back());
     result.matrix_fallback_reason = matrix_reason;
@@ -217,7 +233,7 @@ void set_auto_fallback(
     int matrix_reason) {
 
     result.fallback_chain = chain;
-    result.fallback_from = chain.empty()
+    result.failure.fallback_from = chain.empty()
         ? -1
         : static_cast<int>(chain.back());
     result.matrix_fallback_reason = matrix_reason;

@@ -19,8 +19,8 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
-from pyscarcopula._native_smoke import parallel_runtime_child_probe
-from pyscarcopula.numerical import _cpp_extension, _cpp_scar_ou
+from pyscarcopula._native import _extension as _cpp_extension, scar_ou as _cpp_scar_ou
+from pyscarcopula._native.smoke import parallel_runtime_child_probe
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
@@ -35,10 +35,122 @@ def _run_clean_interpreter(source):
     return json.loads(completed.stdout)
 
 
+@pytest.fixture
+def clean_prepared_runtime():
+    module = _cpp_extension.load()
+    module._parallel_runtime_shutdown()
+    try:
+        yield module
+    finally:
+        module._parallel_runtime_shutdown()
+
+
+@pytest.mark.parametrize("blocks,workers", [
+    (0, 4), (1, 4), (3, 4), (4, 4), (5, 4),
+    (17, 1), (17, 2), (17, 4), (257, 4),
+])
+def test_prepared_runtime_preserves_blocks_and_limits_runners(
+    clean_prepared_runtime, blocks, workers,
+):
+    module = clean_prepared_runtime
+    begin = -7
+    end = begin if blocks == 0 else begin + 1024
+    result = dict(module._parallel_execution_probe(begin, end, blocks, workers))
+    assert result["planned_blocks"] == result["completed_blocks"] == blocks
+    if blocks == 0:
+        assert result["begins"] == result["ends"] == result["worker_slots"] == []
+        assert result["peak_active_callbacks"] == 0
+        assert not result["caller_executed"]
+    else:
+        quotient, remainder = divmod(end - begin, blocks)
+        boundaries = [begin]
+        for block in range(blocks):
+            boundaries.append(boundaries[-1] + quotient + (block < remainder))
+        assert result["begins"] == boundaries[:-1]
+        assert result["ends"] == boundaries[1:]
+        runners = min(blocks, workers)
+        quotient, remainder = divmod(blocks, runners)
+        assert result["worker_slots"] == [
+            slot for slot in range(runners)
+            for _ in range(quotient + (slot < remainder))
+        ]
+        assert 1 <= result["peak_active_callbacks"] <= runners
+        assert result["caller_executed"] is (blocks == 1)
+    runtime = dict(result["runtime"])
+    if blocks <= 1:
+        assert not runtime["initialized"]
+        assert runtime["batches_submitted"] == runtime["tasks_submitted"] == 0
+    else:
+        assert runtime["worker_count"] == min(blocks, workers)
+        assert runtime["batches_submitted"] == 1
+        assert runtime["tasks_submitted"] == min(blocks, workers)
+
+
+def test_prepared_runtime_budget_is_independent_of_resident_pool(clean_prepared_runtime):
+    module = clean_prepared_runtime
+    before = dict(module._parallel_for_blocks_probe(64, 1, 32))["runtime"]
+    result = dict(module._parallel_execution_probe(-11, 989, 257, 4))
+    after = dict(result["runtime"])
+    assert result["completed_blocks"] == 257
+    assert result["worker_slots"] == [0] * 65 + [1] * 64 + [2] * 64 + [3] * 64
+    assert 1 <= result["peak_active_callbacks"] <= 4
+    assert not result["caller_executed"]
+    assert after["worker_count"] == before["worker_count"] == 32
+    assert after["worker_start_events"] == before["worker_start_events"]
+    assert after["batches_submitted"] == before["batches_submitted"] + 1
+    assert after["tasks_submitted"] == before["tasks_submitted"] + 4
+
+
+@pytest.mark.parametrize("args,error", [
+    ((1, 0, 0, 4), ValueError),
+    ((0, 0, 1, 4), ValueError),
+    ((0, 2, 0, 4), ValueError),
+    ((0, 2, 3, 4), ValueError),
+    ((0, 2, 2, 0), ValueError),
+    ((0, 2, 2, 257), ValueError),
+    ((-(1 << 63), (1 << 63) - 1, 2, 4), OverflowError),
+    ((0, (1 << 63) - 1, 1 << 61, 4), OverflowError),
+])
+def test_prepared_runtime_rejects_invalid_plan_before_pool_creation(
+    clean_prepared_runtime, args, error,
+):
+    module = clean_prepared_runtime
+    with pytest.raises(error):
+        module._parallel_execution_probe(*args)
+    runtime = dict(module._parallel_runtime_info())
+    assert not runtime["initialized"]
+    assert runtime["batches_submitted"] == runtime["tasks_submitted"] == 0
+
+
+def test_prepared_runtime_accepts_independent_concurrent_plans(clean_prepared_runtime):
+    module = clean_prepared_runtime
+    plans = [(3, 1), (17, 2), (257, 4), (37, 4)]
+
+    def call(item):
+        index, (blocks, workers) = item
+        begin = index * 2000
+        return dict(module._parallel_execution_probe(begin, begin + 1024, blocks, workers))
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(call, enumerate(plans)))
+    for index, ((blocks, workers), result) in enumerate(zip(plans, results)):
+        assert result["planned_blocks"] == result["completed_blocks"] == blocks
+        assert result["begins"][0] == index * 2000
+        assert result["ends"][-1] == index * 2000 + 1024
+        assert result["ends"][:-1] == result["begins"][1:]
+        assert set(result["worker_slots"]) == set(range(workers))
+        assert 1 <= result["peak_active_callbacks"] <= workers
+        assert not result["caller_executed"]
+    runtime = dict(module._parallel_runtime_info())
+    assert runtime["worker_count"] == 4
+    assert runtime["batches_submitted"] == 4
+    assert runtime["tasks_submitted"] == 11
+
+
 def test_n_threads_one_never_initializes_runtime():
     payload = _run_clean_interpreter(
         "import json\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "result = dict(m._parallel_for_blocks_probe(100, 1, 1))\n"
@@ -69,11 +181,11 @@ def test_runtime_resource_counters_track_reuse_without_worker_growth():
 def test_spawned_interpreter_n_threads_one_ignores_parent_pool():
     payload = _run_clean_interpreter(
         "import json, subprocess, sys\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "m._parallel_for_blocks_probe(32, 1, 4)\n"
         "source = ('import json\\n' "
-        "+ 'from pyscarcopula.numerical import _cpp_extension\\n' "
+        "+ 'from pyscarcopula._native import _extension as _cpp_extension\\n' "
         "+ 'm = _cpp_extension.load()\\n' "
         "+ 'm._parallel_for_blocks_probe(16, 1, 1)\\n' "
         "+ 'print(json.dumps(dict(m._parallel_runtime_info())))\\n')\n"
@@ -140,7 +252,7 @@ def test_runtime_shutdown_is_idempotent_and_pool_can_be_recreated():
 def test_repeated_interpreter_process_teardown_after_parallel_work():
     source = (
         "import json\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "m._parallel_for_blocks_probe(32, 1, 4)\n"
         "print(json.dumps(dict(m._parallel_runtime_info())))\n"
@@ -186,7 +298,7 @@ def test_import_time_environment_cannot_enable_parallelism():
         "os.environ['PYSCARCOPULA_NUM_THREADS'] = '8'\n"
         "from pyscarcopula import NumericalConfig\n"
         "from pyscarcopula._types import DEFAULT_CONFIG\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "print(json.dumps({\n"
         "    'config': NumericalConfig().n_threads,\n"
@@ -268,18 +380,13 @@ def test_dynamic_fit_diagnostics_record_resolved_thread_count(method, kwargs):
 
 
 def test_concurrent_mutating_operations_are_serialized_per_model(monkeypatch):
+    from scipy.optimize import minimize
+
     first_entered = threading.Event()
     release_first = threading.Event()
     second_attempted = threading.Event()
     call_lock = threading.Lock()
     calls = 0
-
-    class DummyResult:
-        x = np.array([0.0])
-        fun = 0.0
-        success = True
-        nfev = 1
-        message = "ok"
 
     def fake_minimize(*args, **kwargs):
         nonlocal calls
@@ -289,10 +396,10 @@ def test_concurrent_mutating_operations_are_serialized_per_model(monkeypatch):
         if current == 1:
             first_entered.set()
             assert release_first.wait(timeout=5)
-        return DummyResult()
+        return minimize(*args, **kwargs)
 
     monkeypatch.setattr(
-        "pyscarcopula.copula.multivariate.equicorr.minimize",
+        "pyscarcopula.strategy.multivariate_mle.minimize",
         fake_minimize,
     )
     model = EquicorrGaussianCopula(d=3)
@@ -340,7 +447,7 @@ def test_prepared_evaluator_serializes_concurrent_calls():
     np.testing.assert_array_equal(values, [expected] * len(values))
 
 
-@pytest.mark.parametrize("d", [2, 4])
+@pytest.mark.parametrize("d", [2, 4, 10])
 def test_student_scar_matrix_gradient_uses_internal_threads_bitwise(d):
     T = 32
     rng = np.random.default_rng(607 + d)
@@ -466,7 +573,7 @@ def test_forked_child_n_threads_one_ignores_inherited_pool():
     # inherited std::thread handles cannot affect the pytest process.
     payload = _run_clean_interpreter(
         "import json, os\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "m._parallel_for_blocks_probe(32, 1, 4)\n"
         "read_fd, write_fd = os.pipe()\n"
@@ -492,7 +599,7 @@ def test_forked_child_n_threads_one_ignores_inherited_pool():
 def test_forked_child_recreates_pool_for_parallel_work():
     payload = _run_clean_interpreter(
         "import json, os\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "m._parallel_for_blocks_probe(32, 1, 4)\n"
         "parent_pid = os.getpid()\n"
@@ -535,6 +642,28 @@ def test_forkserver_child_uses_process_local_runtime(n_threads):
     process.join(timeout=20)
     assert process.exitcode == 0
     info = queue.get(timeout=5)
+    if n_threads == 1:
+        assert info["initialized"] is False
+    else:
+        assert info["initialized"] is True
+        assert info["owner_pid"] == process.pid
+        assert info["worker_count"] == 2
+
+
+@pytest.mark.parametrize("n_threads", [1, 2])
+def test_spawn_child_uses_process_local_runtime(n_threads):
+    module = _cpp_extension.load()
+    module._parallel_for_blocks_probe(16, 1, 4)
+    context = multiprocessing.get_context("spawn")
+    queue = context.Queue()
+    process = context.Process(
+        target=parallel_runtime_child_probe, args=(queue, n_threads))
+    process.start()
+    process.join(timeout=20)
+    assert process.exitcode == 0
+    info = queue.get(timeout=5)
+    queue.close()
+    queue.join_thread()
     if n_threads == 1:
         assert info["initialized"] is False
     else:

@@ -2,8 +2,9 @@
 Goodness-of-fit tests for copula models (bivariate and vine).
 
 Bivariate:
-    MLE:  e2 = h(u2, u1, r)
-    SCAR: e2 = E[h(u2, u1, Psi(x_k)) | u_{1:k-1}]  (mixture)
+    MLE:  e2 = h_{2|1}(u2 | u1; r)
+    SCAR: e2 = E[h_{2|1}(u2 | u1; Psi(x_k)) | u_{1:k-1}]  (mixture)
+    Directions refer to the original column order, including rotated copulas.
 
 C-Vine (d dimensions):
     Rosenblatt transform through the tree:
@@ -21,7 +22,7 @@ U[0,1].  It is not a separate omnibus test of componentwise or serial
 independence.
 
 Usage:
-    from pyscarcopula.stattests import gof_test, vine_gof_test
+    from pyscarcopula.stattests import gof_test, rvine_gof_test
 """
 
 import numpy as np
@@ -29,13 +30,14 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Callable
-from scipy.stats import chi2, norm, cramervonmises
+from scipy.stats import cramervonmises
 
 from pyscarcopula._parallel import (
     create_worker_model,
     get_copula_constructor,
     resolve_parallelism,
     spawn_seed_sequences,
+    validate_model_fit_kwargs,
     with_n_threads,
 )
 from pyscarcopula._utils import (
@@ -45,11 +47,13 @@ from pyscarcopula._utils import (
 )
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
+    as_float64_scalar,
     as_pseudo_observation_array,
     validate_float64_allocation,
     validate_positive_int,
 )
-from pyscarcopula.numerical._rvine_backend import dispatch_rvine_backend
+from pyscarcopula._native import _extension as _cpp_extension
+from pyscarcopula._native.errors import NativeUnsupported
 
 
 @dataclass(frozen=True)
@@ -105,12 +109,8 @@ def cvm_test(e):
     if d == 0:
         raise ValueError("e must contain at least one dimension")
 
-    # Avoid inf in norm.ppf at exactly 0 or 1
-    e = clip_pseudo_observations(e)
-
-    z = norm.ppf(e)                       # (T, d)
-    q = np.sum(z * z, axis=1)             # (T,)
-    y = chi2.cdf(q, df=d)                 # should be U[0,1] under H0
+    from pyscarcopula._native import multivariate as multivariate_native
+    y = multivariate_native.radial_uniform_summary(e)
 
     return cramervonmises(y, "uniform")
 
@@ -160,10 +160,13 @@ def _validated_boolean(name, value):
 
 def rosenblatt_transform_mle(copula, u, r):
     """Rosenblatt for constant copula parameter (MLE). Returns (T, 2)."""
+    u = as_pseudo_observation_array(u, name="u")
+    r = as_float64_scalar(r, name="r")
     T = len(u)
     e = np.empty((T, 2))
     e[:, 0] = u[:, 0]
-    e[:, 1] = copula.h(u[:, 1], u[:, 0], np.full(T, float(r)))
+    _, e[:, 1] = copula.h_pair(
+        u[:, 0], u[:, 1], np.full(T, r))
     return clip_rosenblatt_output(e)
 
 
@@ -172,7 +175,7 @@ def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0,
                               pts_per_sigma=4, transition_method='matrix',
                               max_K=None, r_gh=3.0, gh_order=5):
     """Mixture Rosenblatt for SCAR (bivariate). Returns (T, 2)."""
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
     kappa, mu, nu = alpha
@@ -194,11 +197,13 @@ def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0,
     return e
 
 
-def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
+def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit',
+                             score_eps=1e-4):
     """Rosenblatt for GAS (bivariate). Returns (T, 2)."""
     from pyscarcopula.numerical.gas_filter import gas_rosenblatt
     omega, gamma, beta = gas_params
-    return gas_rosenblatt(omega, gamma, beta, u, copula, scaling)
+    return gas_rosenblatt(
+        omega, gamma, beta, u, copula, scaling, score_eps)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -215,18 +220,16 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     Dispatches based on model type:
       - BivariateCopula  -> bivariate Rosenblatt (MLE or SCAR mixture)
       - VineCopula       -> generic regular-vine Rosenblatt
-      - CVineCopula      -> legacy C-vine Rosenblatt
       - GaussianCopula   -> Cholesky-based Rosenblatt
       - StudentCopula    -> conditional t-distribution Rosenblatt
 
     Parameters
     ----------
-    model : BivariateCopula, VineCopula, CVineCopula, GaussianCopula,
-        or StudentCopula
+    model : BivariateCopula, VineCopula, GaussianCopula, or StudentCopula
     data : (T, d) array
     to_pobs : bool
-    K : int — grid size (SCAR only)
-    grid_range : float (SCAR only)
+    K : int — grid size (SCAR-TM-OU only)
+    grid_range : float (SCAR-TM-OU only)
     fit_result : FitResult or None
         If provided, use this instead of model.fit_result.
         Enables the stateless API: gof_test(copula, u, fit_result=result)
@@ -237,7 +240,10 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     n_bootstrap : int
         Number of bootstrap replications.
     bootstrap_refit : bool
-        If True, re-estimate the model on each bootstrap sample.
+        If True, re-estimate the model on each bootstrap sample. An
+        unsuccessful refit is retried once on the same sample, starting
+        from its finite endpoint when available. If the retry fails,
+        calibration raises instead of including an invalid statistic.
     bootstrap_fit_kwargs : dict or None
         Extra keyword arguments for each bootstrap fit.
     rng : int, Generator, SeedSequence, or None
@@ -254,7 +260,6 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     """
     from pyscarcopula.copula.base import BivariateCopula
     from pyscarcopula.copula.multivariate import GaussianCopula, StudentCopula
-    from pyscarcopula.vine.cvine import CVineCopula
     from pyscarcopula.vine.vine import VineCopula
     from pyscarcopula.copula.multivariate import (
         EquicorrGaussianCopula,
@@ -330,9 +335,9 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
             rvine_fit_result = model
         return _bootstrap_gof(
             'rvine',
-            rvine_fit_result,
-            u,
             model,
+            u,
+            rvine_fit_result,
             float(result.statistic),
             K=K,
             grid_range=grid_range,
@@ -342,11 +347,6 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
             rng=rng,
             n_jobs=n_jobs,
         )
-    elif isinstance(model, CVineCopula):
-        if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is not implemented for CVineCopula.")
-        return vine_gof_test(model, data, to_pobs, K, grid_range)
     elif isinstance(model, GaussianCopula):
         if bootstrap:
             return _gof_static_multivariate(
@@ -361,7 +361,8 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
                 rng,
                 n_jobs,
             )
-        return gaussian_gof_test(model, data, to_pobs)
+        return gaussian_gof_test(
+            model, data, to_pobs, fit_result=fit_result)
     elif isinstance(model, StudentCopula):
         if bootstrap:
             return _gof_static_multivariate(
@@ -376,7 +377,8 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
                 rng,
                 n_jobs,
             )
-        return student_gof_test(model, data, to_pobs)
+        return student_gof_test(
+            model, data, to_pobs, fit_result=fit_result)
     else:
         raise TypeError(f"Unsupported model type: {type(model).__name__}")
 
@@ -436,7 +438,8 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
     if method == 'GAS':
         scaling = getattr(fit_result, 'scaling', 'unit')
         return rosenblatt_transform_gas(
-            copula, u, fit_result.params.values, scaling)
+            copula, u, fit_result.params.values, scaling,
+            score_eps=getattr(fit_result, 'score_eps', 1e-4))
 
     if getattr(fit_result, 'params', None) is None:
         raise ValueError(
@@ -444,8 +447,12 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
 
     from pyscarcopula.strategy._base import get_strategy_for_result
 
-    strategy = get_strategy_for_result(
-        fit_result, K=K, grid_range=grid_range)
+    # K/grid_range are OU-grid settings. Jacobi restores its own quadrature
+    # settings from the result and must not receive unrelated OU options.
+    grid_kwargs = (
+        {} if method == 'SCAR-TM-JACOBI'
+        else {'K': K, 'grid_range': grid_range})
+    strategy = get_strategy_for_result(fit_result, **grid_kwargs)
     e = np.empty((len(u), 2), dtype=np.float64)
     e[:, 0] = u[:, 0]
     e[:, 1] = strategy.rosenblatt_e2(copula, u, fit_result)
@@ -453,12 +460,19 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
 
 
 def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
-    """Warm-start bootstrap refits from the original fitted parameters."""
+    """Restore fitted defaults while retaining explicit refit settings."""
     out = dict(fit_kwargs)
+    method = fit_result.method.upper()
+    if method == 'GAS' and out.get('score_eps') is None:
+        from pyscarcopula._types import DEFAULT_CONFIG
+
+        config = out.get('config')
+        out['score_eps'] = (
+            config.gas_score_eps if config is not None else
+            getattr(fit_result, 'score_eps', DEFAULT_CONFIG.gas_score_eps))
     if 'alpha0' in out or 'gamma0' in out:
         return out
 
-    method = fit_result.method.upper()
     if method == 'MLE' and hasattr(fit_result, 'copula_param'):
         out['alpha0'] = np.array([fit_result.copula_param], dtype=np.float64)
     else:
@@ -497,7 +511,7 @@ def _fit_result_diagnostics(result):
     return row
 
 
-def _bootstrap_strategy(fit_result, config):
+def _bootstrap_strategy(fit_result, config, **constructor_kwargs):
     if (
             fit_result.method.upper() == 'MLE'
             and not hasattr(fit_result, 'copula_param')):
@@ -505,7 +519,8 @@ def _bootstrap_strategy(fit_result, config):
 
     from pyscarcopula.strategy._base import get_strategy_for_result
 
-    return get_strategy_for_result(fit_result, config=config)
+    return get_strategy_for_result(
+        fit_result, config=config, **constructor_kwargs)
 
 
 def _bootstrap_capture_none(copula, fit_result):
@@ -529,7 +544,11 @@ def _bootstrap_refit_bivariate(
         copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
         K, grid_range, n_threads, config):
     copula = create_worker_model(copula_class, constructor_kwargs)
-    strategy = _bootstrap_strategy(fit_result, config)
+    from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
+
+    strategy_kwargs, fit_kwargs = partition_strategy_fit_kwargs(
+        fit_result.method, fit_kwargs)
+    strategy = _bootstrap_strategy(fit_result, config, **strategy_kwargs)
     if strategy is None:
         result = copula.fit(
             u_boot, method='mle', to_pobs=False, **fit_kwargs)
@@ -573,7 +592,7 @@ def _bootstrap_prepare_gaussian(
     return copula
 
 
-def _bootstrap_simulate_gaussian(
+def _bootstrap_simulate_static_multivariate(
         copula, u, fit_result, rng, K, grid_range, n_threads, config):
     return copula.sample(len(u), rng=rng, n_threads=n_threads)
 
@@ -703,9 +722,9 @@ def _bootstrap_prepare_equicorr(
     return copula
 
 
-def _bootstrap_simulate_equicorr(
+def _bootstrap_simulate_dynamic_multivariate(
         copula, u, fit_result, rng, K, grid_range, n_threads, config):
-    return copula.sample(len(u), u=u, rng=rng)
+    return copula.sample(len(u), u=u, rng=rng, n_threads=n_threads)
 
 
 def _bootstrap_refit_dynamic(
@@ -726,11 +745,17 @@ def _bootstrap_refit_dynamic(
     if hasattr(copula, '_ensure_corr_initialized'):
         copula._ensure_corr_initialized(u_boot)
 
-    from pyscarcopula.strategy._base import get_strategy_for_result
+    from pyscarcopula.strategy._base import (
+        get_strategy_for_result,
+        partition_strategy_fit_kwargs,
+    )
 
+    strategy_kwargs, fit_kwargs = partition_strategy_fit_kwargs(
+        fit_result.method, fit_kwargs)
     strategy = get_strategy_for_result(
         fit_result,
         config=config,
+        **strategy_kwargs,
     )
     result = strategy.fit(
         copula,
@@ -803,12 +828,6 @@ def _bootstrap_prepare_stochastic_student(
     return copula
 
 
-def _bootstrap_simulate_stochastic_student(
-        copula, u, fit_result, rng, K, grid_range, n_threads, config):
-    return copula.sample(
-        len(u), u=u, rng=rng, n_threads=n_threads)
-
-
 def _bootstrap_statistic_stochastic_student(
         copula, u_boot, fit_result, K, grid_range):
     e_boot = stochastic_student_rosenblatt_transform(
@@ -836,14 +855,14 @@ _BOOTSTRAP_ADAPTERS = {
     'gaussian': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_gaussian,
-        simulate=_bootstrap_simulate_gaussian,
+        simulate=_bootstrap_simulate_static_multivariate,
         refit=_bootstrap_refit_static_multivariate,
         statistic=_bootstrap_statistic_gaussian,
     ),
     'student': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_student,
-        simulate=_bootstrap_simulate_fitted_model,
+        simulate=_bootstrap_simulate_static_multivariate,
         refit=_bootstrap_refit_static_multivariate,
         statistic=_bootstrap_statistic_student,
     ),
@@ -857,14 +876,14 @@ _BOOTSTRAP_ADAPTERS = {
     'equicorr': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_equicorr,
-        simulate=_bootstrap_simulate_equicorr,
+        simulate=_bootstrap_simulate_dynamic_multivariate,
         refit=_bootstrap_refit_dynamic,
         statistic=_bootstrap_statistic_equicorr,
     ),
     'stochastic_student': _BootstrapAdapter(
         capture=_bootstrap_capture_stochastic_student,
         prepare=_bootstrap_prepare_stochastic_student,
-        simulate=_bootstrap_simulate_stochastic_student,
+        simulate=_bootstrap_simulate_dynamic_multivariate,
         refit=_bootstrap_refit_dynamic,
         statistic=_bootstrap_statistic_stochastic_student,
     ),
@@ -911,6 +930,7 @@ def _bootstrap_gof_worker(task):
         )
 
         fit_start = time.perf_counter()
+        refit_attempts = []
         if bootstrap_refit:
             copula, boot_result = adapter.refit(
                 copula_class,
@@ -923,6 +943,28 @@ def _bootstrap_gof_worker(task):
                 n_threads,
                 config,
             )
+            refit_attempts.append(_fit_result_diagnostics(boot_result))
+            if (not refit_attempts[-1]['bootstrap_fit_success'] or
+                    not np.isfinite(refit_attempts[-1][
+                        'bootstrap_fit_log_likelihood'])):
+                # Reuse the sample and seed stream: drawing replacement
+                # data would condition the bootstrap on fit success.
+                retry_kwargs = dict(refit_kwargs)
+                candidate_start = _bootstrap_fit_kwargs(boot_result, {})
+                for key in ('alpha0', 'gamma0'):
+                    if key in candidate_start and np.all(
+                            np.isfinite(candidate_start[key])):
+                        retry_kwargs[key] = candidate_start[key]
+                copula, boot_result = adapter.refit(
+                    copula_class, constructor_kwargs, u_boot, fit_result,
+                    retry_kwargs, K, grid_range, n_threads, config)
+                refit_attempts.append(_fit_result_diagnostics(boot_result))
+                if (not refit_attempts[-1]['bootstrap_fit_success'] or
+                        not np.isfinite(refit_attempts[-1][
+                            'bootstrap_fit_log_likelihood'])):
+                    raise RuntimeError(
+                        "refit did not converge after 2 attempts: " +
+                        refit_attempts[-1]['bootstrap_fit_message'])
         else:
             boot_result = fit_result
         fit_elapsed = time.perf_counter() - fit_start
@@ -942,12 +984,14 @@ def _bootstrap_gof_worker(task):
             'bootstrap_total_time_sec': float(
                 time.perf_counter() - iter_start),
             'bootstrap_refit': bool(bootstrap_refit),
+            'bootstrap_refit_attempts': tuple(refit_attempts),
+            'bootstrap_refit_retries': max(0, len(refit_attempts) - 1),
         }
         row.update(_fit_result_diagnostics(boot_result))
         return statistic, row
     except Exception as exc:
         raise RuntimeError(
-            f"bootstrap iteration {iteration + 1} failed") from exc
+            f"bootstrap iteration {iteration + 1} failed: {exc}") from exc
 
 
 def _bootstrap_gof(
@@ -964,6 +1008,15 @@ def _bootstrap_gof(
         {} if bootstrap_fit_kwargs is None
         else dict(bootstrap_fit_kwargs)
     )
+    if 'to_pobs' in fit_kwargs:
+        raise TypeError(
+            "bootstrap_fit_kwargs cannot override to_pobs; "
+            "bootstrap samples are already pseudo-observations")
+    validate_model_fit_kwargs(copula, fit_result.method, fit_kwargs)
+    if fit_result.method.upper() == 'GAS':
+        # Resolve fitted defaults before with_n_threads adds a default config;
+        # only a config supplied by the caller overrides the fitted score step.
+        fit_kwargs = _bootstrap_fit_kwargs(fit_result, fit_kwargs)
     n_threads, parallel_diagnostics = resolve_parallelism(
         n_jobs, n_bootstrap, None, (fit_kwargs,))
     fit_kwargs = with_n_threads(fit_kwargs, n_threads)
@@ -1136,242 +1189,49 @@ def _gof_dynamic_multivariate(
 # Vine Rosenblatt transform
 # ══════════════════════════════════════════════════════════════════
 
-def _vine_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
-    """Delegate to the shared pair-edge runtime."""
-    from pyscarcopula.vine._rvine_edges import _edge_h
-    return _edge_h(
-        edge,
-        u2,
-        u1,
-        u_pair=u_pair,
-        K=K,
-        grid_range=grid_range,
-    )
-
-
-def vine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
-    """
-    Rosenblatt transform for a fitted C-vine copula.
-
-    Each edge in the vine is an independent bivariate copula
-    (possibly with its own latent OU process). The vine Rosenblatt
-    simply applies h-functions level by level, reusing the bivariate
-    approach on every edge — no vine-specific modifications needed.
-
-    ```
-    v[0][i] = u_i
-    v[j+1][i] = h(v[j][i+1] | v[j][0]; edge_{j,i})
-    e_0 = u_0
-    e_{j+1} = h(v[j][1] | v[j][0]; edge_{j,0})
-    ```
-
-    Parameters
-    ----------
-    vine : CVineCopula (fitted)
-    u : (T, d) pseudo-observations
-    K : int — grid size for SCAR mixture
-    grid_range : float
-
-    Returns
-    -------
-    e : (T, d) — should be iid U[0,1]^d under correct model
-    """
-    T, d = u.shape
-    v = [[None] * d for _ in range(d)]
-    for i in range(d):
-        v[0][i] = clip_pseudo_observations(u[:, i].copy())
-
-    e = np.empty((T, d))
-    e[:, 0] = v[0][0]
-
-    for j in range(d - 1):
-        n_edges = d - j - 1
-
-        # e_{j+1}: first edge of tree j
-        u1 = clip_pseudo_observations(v[j][0])
-        u2 = clip_pseudo_observations(v[j][1])
-        u_pair = np.column_stack((u1, u2))
-        edge = vine.edges[j][0]
-        e[:, j + 1] = clip_pseudo_observations(
-            _vine_edge_h(edge, u2, u1, u_pair, K, grid_range))
-
-        # Propagate v to next level (all edges, same approach)
-        if j < d - 2:
-            for i in range(n_edges):
-                u1 = clip_pseudo_observations(v[j][0])
-                u2 = clip_pseudo_observations(v[j][i + 1])
-                u_pair = np.column_stack((u1, u2))
-                edge_i = vine.edges[j][i]
-                v[j + 1][i] = clip_pseudo_observations(
-                    _vine_edge_h(edge_i, u2, u1, u_pair, K, grid_range))
-
-    return clip_rosenblatt_output(e)
-
-
 # ══════════════════════════════════════════════════════════════════
 # Vine gof_test
 # ══════════════════════════════════════════════════════════════════
 
-def vine_gof_test(vine, data, to_pobs=True, K=500, grid_range=7.0):
-    """
-    Goodness-of-fit test for a fitted C-vine copula.
-
-    Applies the d-dimensional Rosenblatt transform through the vine
-    tree structure, then tests e ~ iid U[0,1]^d via CvM.
-
-    For SCAR edges: uses mixture h-function (avoids Jensen bias).
-    For MLE edges: uses constant parameter h-function.
-
-    Parameters
-    ----------
-    vine : CVineCopula (fitted)
-    data : (T, d)
-    to_pobs : bool
-    K : int — grid size for SCAR mixture Rosenblatt
-    grid_range : float
-
-    Returns
-    -------
-    CramérVonMisesResult with .statistic and .pvalue
-    """
-    u = _prepare_gof_data(
-        data, expected_dim=getattr(vine, "d", None), to_pobs=to_pobs)
-
-    if vine.edges is None:
-        raise ValueError("Fit the vine first")
-
-    e = vine_rosenblatt_transform(vine, u, K=K, grid_range=grid_range)
-    return cvm_test(e)
-
-
-def _rvine_rosenblatt_transform_python(
-        vine, u, K=300, grid_range=5.0, *, vine_type=None):
-    """
-    Rosenblatt transform for a fitted R-vine copula.
-
-    Mirrors ``VineCopula.sample`` for the natural-order matrix:
-    columns are traversed right-to-left, and each anti-diagonal leaf is
-    transformed by h-functions from tree 0 up to the column's top tree.
-    """
-    from pyscarcopula.vine._rvine_edges import (
-        _edge_h,
-        _edge_h_pair_for_variables,
-    )
-
-    if vine_type is None:
-        vine_type = getattr(vine, "vine_type", "rvine")
-    if vine_type not in {"cvine", "dvine", "rvine"}:
-        raise ValueError(
-            "vine_type must be 'cvine', 'dvine' or 'rvine', "
-            f"got {vine_type!r}")
-
-    if getattr(vine, 'matrix', None) is None:
-        raise ValueError("Fit the vine first")
-
-    u = np.asarray(u, dtype=np.float64)
-    T, d = u.shape
-    if d != vine.d:
-        raise ValueError(f"u has d={d}, but fitted vine has d={vine.d}")
-
-    M = vine.matrix
-
-    if d == 2:
-        edge = vine.pair_copulas[(0, 0)]
-        u1 = clip_pseudo_observations(u[:, 0])
-        u2 = clip_pseudo_observations(u[:, 1])
-        u_pair = np.column_stack((u1, u2))
-        e = np.empty((T, d), dtype=np.float64)
-        e[:, 0] = u1
-        e[:, 1] = clip_pseudo_observations(
-            _edge_h(edge, u2, u1, u_pair=u_pair, K=K,
-                    grid_range=grid_range))
-        return clip_rosenblatt_output(e)
-
-    pseudo = {
-        (var, frozenset()): clip_pseudo_observations(u[:, var].copy())
-        for var in range(d)
-    }
-
-    e = np.empty((T, d), dtype=np.float64)
-
-    last_var = int(M[0, d - 1])
-    e[:, d - 1] = pseudo[(last_var, frozenset())]
-
-    for col in range(d - 2, -1, -1):
-        leaf = int(M[d - 1 - col, col])
-        top_tree = d - 2 - col
-        cur = pseudo[(leaf, frozenset())]
-
-        for t in range(top_tree + 1):
-            row = d - 2 - col - t
-            partner = int(M[row, col])
-            conditioning = frozenset(
-                int(M[r, col])
-                for r in range(row + 1, d - 1 - col)
-            )
-            next_leaf_cond = conditioning | {partner}
-            next_partner_cond = conditioning | {leaf}
-
-            edge = vine.pair_copulas[(t, col)]
-            leaf_val = pseudo.get((leaf, conditioning))
-            partner_val = pseudo.get((partner, conditioning))
-            if leaf_val is None:
-                raise RuntimeError(
-                    "Missing leaf pseudo-observation during Rosenblatt: "
-                    f"var={leaf}, cond_set={sorted(conditioning)}, "
-                    f"column={col}, tree={t}"
-                )
-            if partner_val is None:
-                raise RuntimeError(
-                    "Missing partner pseudo-observation during Rosenblatt: "
-                    f"var={partner}, cond_set={sorted(conditioning)}, "
-                    f"column={col}, tree={t}"
-                )
-
-            leaf_next, partner_next = _edge_h_pair_for_variables(
-                edge,
-                leaf,
-                leaf_val,
-                partner,
-                partner_val,
-                K=K,
-                grid_range=grid_range,
-            )
-            cur = clip_pseudo_observations(leaf_next)
-            pseudo[(leaf, next_leaf_cond)] = cur
-            pseudo[(partner, next_partner_cond)] = (
-                clip_pseudo_observations(partner_next))
-
-        e[:, col] = cur
-
-    return clip_rosenblatt_output(e)
-
-
 def _prepare_rvine_rosenblatt_observations(vine, u):
-    """Preserve the characterized public input contract before dispatch."""
-    observations = np.asarray(u, dtype=np.float64)
+    """Validate pseudo-observations before applying endpoint safeguards."""
+    observations = as_pseudo_observation_array(u, name="u")
+    if observations.ndim != 2:
+        raise ValueError(f"u must have shape (T, {vine.d})")
     _, dimension = observations.shape
     if dimension != vine.d:
         raise ValueError(
             f"u has d={dimension}, but fitted vine has d={vine.d}")
-    if np.any(np.isnan(observations)):
-        raise ValueError("u must contain only finite values")
     return clip_pseudo_observations(observations)
 
 
-def _rvine_rosenblatt_transform_native(module, vine, u):
-    """Run the scalar-only Stage 5 native capability when supported."""
-    from pyscarcopula.numerical import _cpp_rvine
+def _rvine_rosenblatt_transform_native(
+        module, vine, u, *, K=300, grid_range=5.0):
+    """Run supported static or dynamic edges through the native traversal."""
+    from pyscarcopula._native import vine as _cpp_rvine
 
     active_keys = _cpp_rvine.density_active_keys(
         vine._trees, vine._edge_map)
     if not _cpp_rvine.native_edges_supported(
             vine.pair_copulas, active_keys):
-        return None
+        raise NativeUnsupported(
+            "native R-vine Rosenblatt requires exact registered built-in "
+            "edge copulas"
+        )
     layout = _cpp_rvine.static_rosenblatt_parameter_layout(
         vine.pair_copulas, active_keys)
     if layout is None:
-        return None
+        return _cpp_rvine.rosenblatt(
+            module,
+            vine.pair_copulas,
+            vine.d,
+            vine._trees,
+            vine._edge_map,
+            vine.matrix,
+            u,
+            active_keys=active_keys,
+            dynamic_strategy_kwargs={"K": K, "grid_range": grid_range},
+        )
     parameter_paths, parameter_sources = layout
     observations = _cpp_rvine._rvine_observations(
         u, vine.d, "Rosenblatt")
@@ -1390,7 +1250,8 @@ def _rvine_rosenblatt_transform_native(module, vine, u):
         cache_slot='rosenblatt',
     )
     if context is None:
-        return None
+        raise NativeUnsupported(
+            "native R-vine Rosenblatt could not compile the edge context")
     residuals = _cpp_rvine.rosenblatt(
         module,
         vine.pair_copulas,
@@ -1407,14 +1268,12 @@ def _rvine_rosenblatt_transform_native(module, vine, u):
         native_edges=context['edges'],
         parameter_pack=parameters,
     )
-    if residuals is None:
-        return None
     return clip_rosenblatt_output(residuals)
 
 
 def rvine_rosenblatt_transform(
         vine, u, K=300, grid_range=5.0, *, vine_type=None):
-    """Dispatch the R-vine transform while preserving the Python oracle."""
+    """Apply the mandatory native R-vine Rosenblatt traversal."""
     if vine_type is None:
         vine_type = getattr(vine, "vine_type", "rvine")
     if vine_type not in {"cvine", "dvine", "rvine"}:
@@ -1424,19 +1283,22 @@ def rvine_rosenblatt_transform(
     if getattr(vine, 'matrix', None) is None:
         raise ValueError("Fit the vine first")
     observations = _prepare_rvine_rosenblatt_observations(vine, u)
-    return dispatch_rvine_backend(
-        capability="rosenblatt_transform",
-        native_symbol="rvine_rosenblatt_transform",
-        python_executor=lambda: _rvine_rosenblatt_transform_python(
-            vine,
-            observations,
-            K=K,
-            grid_range=grid_range,
-            vine_type=vine_type,
-        ),
-        native_executor=lambda module: _rvine_rosenblatt_transform_native(
-            module, vine, observations),
-    )
+    from pyscarcopula._native import vine as _cpp_rvine
+    active_keys = _cpp_rvine.density_active_keys(
+        vine._trees, vine._edge_map)
+    if not _cpp_rvine.native_edges_supported(
+            vine.pair_copulas, active_keys):
+        raise NativeUnsupported(
+            "native R-vine Rosenblatt requires exact registered built-in "
+            "edge copulas"
+        )
+    module = _cpp_extension.load()
+    if not hasattr(module, "rvine_rosenblatt_transform"):
+        raise NativeUnsupported(
+            "native R-vine Rosenblatt requires "
+            "_native._scar_cpp.rvine_rosenblatt_transform")
+    return _rvine_rosenblatt_transform_native(
+        module, vine, observations, K=K, grid_range=grid_range)
 
 
 def rvine_gof_test(
@@ -1502,16 +1364,8 @@ def gaussian_rosenblatt_transform(R, u):
     -------
     e : (T, d)
     """
-    u_c = clip_pseudo_observations_no_copy(u)
-    x = norm.ppf(u_c)
-
-    L = np.linalg.cholesky(R)
-    # z = L^{-1} x, so z_i are independent N(0,1)
-    # e_i = Phi(z_i)
-    z = np.linalg.solve(L, x.T).T  # (T, d)
-    e = norm.cdf(z)
-
-    return clip_pseudo_observations(e)
+    from pyscarcopula._native import multivariate as multivariate_native
+    return multivariate_native.gaussian_rosenblatt(R, u)
 
 
 def factor_gaussian_rosenblatt_transform(correlation, u):
@@ -1521,40 +1375,11 @@ def factor_gaussian_rosenblatt_transform(correlation, u):
     rank-dimensional posterior of the latent factor. Storage is
     ``O(T*k + k*k)`` and no dense correlation or Cholesky factor is formed.
     """
-    u_c = clip_pseudo_observations_no_copy(u)
-    x = norm.ppf(u_c)
-    if x.ndim != 2 or x.shape[1] != correlation.dimension:
-        raise ValueError(
-            "data width must match factor correlation dimension")
-
-    rows, dimension = x.shape
-    rank = correlation.rank
-    loadings = correlation.loadings
-    uniqueness = correlation.uniqueness
-    factor_mean = np.zeros((rows, rank), dtype=np.float64)
-    factor_covariance = np.eye(rank, dtype=np.float64)
-    transformed = np.empty_like(x)
-
-    for index in range(dimension):
-        loading = loadings[index]
-        covariance_loading = factor_covariance @ loading
-        conditional_variance = (
-            uniqueness[index] + loading @ covariance_loading)
-        residual = x[:, index] - factor_mean @ loading
-        transformed[:, index] = norm.cdf(
-            residual / np.sqrt(conditional_variance))
-        factor_mean += (
-            residual / conditional_variance)[:, None] * (
-                covariance_loading[None, :])
-        factor_covariance -= np.outer(
-            covariance_loading,
-            covariance_loading,
-        ) / conditional_variance
-
-    return clip_pseudo_observations(transformed)
+    from pyscarcopula._native import multivariate as multivariate_native
+    return multivariate_native.factor_gaussian_rosenblatt(correlation, u)
 
 
-def gaussian_gof_test(copula, data, to_pobs=True):
+def gaussian_gof_test(copula, data, to_pobs=True, *, fit_result=None):
     """
     Goodness-of-fit test for a fitted GaussianCopula.
 
@@ -1563,6 +1388,8 @@ def gaussian_gof_test(copula, data, to_pobs=True):
     copula : GaussianCopula (fitted, has .corr)
     data : (T, d)
     to_pobs : bool
+    fit_result : FitResult or None
+        Explicit fitted correlation state, taking precedence over the model.
 
     Returns
     -------
@@ -1570,6 +1397,12 @@ def gaussian_gof_test(copula, data, to_pobs=True):
     """
     u = _prepare_gof_data(
         data, expected_dim=copula.dimension, to_pobs=to_pobs)
+
+    if fit_result is not None:
+        from pyscarcopula.strategy.multivariate_mle import (
+            sampling_model_from_result,
+        )
+        copula = sampling_model_from_result(copula, fit_result)
 
     if getattr(copula, "corr_mode", "dense") == "factor":
         try:
@@ -1588,113 +1421,10 @@ def gaussian_gof_test(copula, data, to_pobs=True):
 # Student-t copula Rosenblatt
 # ══════════════════════════════════════════════════════════════════
 
-def _student_rosenblatt_transform_python(R, df, u):
-    """
-    Rosenblatt transform for d-dimensional Student-t copula.
-
-    x = t_df^{-1}(u), x ~ t_d(0, R, df).
-
-    Sequential conditioning using the property that for
-    multivariate t with shape R and df degrees of freedom:
-
-        x_i | x_0,...,x_{i-1} ~ t_{df+i}(mu_i, sigma^2_i * scale)
-
-    where:
-        mu_i = R_{i,0:i} R_{0:i,0:i}^{-1} x_{0:i}
-        sigma^2_i = R_{ii} - R_{i,0:i} R_{0:i,0:i}^{-1} R_{0:i,i}
-        scale = (df + x_{0:i}^T R_{0:i,0:i}^{-1} x_{0:i}) / (df + i)
-
-    Here i is the zero-based coordinate index, so the conditioning set has
-    size i.
-
-    Parameters
-    ----------
-    R : (d, d) shape matrix (correlation)
-    df : float — degrees of freedom
-    u : (T, d) pseudo-observations
-
-    Returns
-    -------
-    e : (T, d)
-    """
-    from scipy.stats import t as t_dist
-
-    df_values = np.asarray(df)
-    if df_values.ndim != 0:
-        if np.iscomplexobj(df_values):
-            raise TypeError("df must contain real values")
-        df_path = np.asarray(df_values, dtype=np.float64).ravel()
-        observations = np.asarray(u)
-        if df_path.size == 1:
-            df = float(df_path[0])
-        else:
-            if observations.ndim != 2 or len(df_path) != len(observations):
-                raise ValueError("df must be scalar or have one value per row")
-            if len(observations) == 0:
-                return np.empty(observations.shape, dtype=np.float64)
-            return np.vstack([
-                _student_rosenblatt_transform_python(
-                    R,
-                    float(row_df),
-                    observations[row:row + 1],
-                )
-                for row, row_df in enumerate(df_path)
-            ])
-
-    u_c = clip_pseudo_observations(u)
-    x = t_dist.ppf(u_c, df=df)
-
-    T, d = x.shape
-    e = np.empty((T, d))
-
-    # First variable: e_0 = t_df.cdf(x_0)
-    e[:, 0] = t_dist.cdf(x[:, 0], df=df)
-
-    for i in range(1, d):
-        # Conditional distribution of x_i | x_{0:i-1}
-        R_11 = R[:i, :i]          # (i, i)
-        R_21 = R[i, :i]           # (i,)
-        R_22 = R[i, i]            # scalar
-
-        R_11_inv = np.linalg.inv(R_11)
-        beta = R_21 @ R_11_inv    # (i,) — regression coefficients
-
-        # Conditional variance (without scale)
-        sigma2_cond = R_22 - R_21 @ R_11_inv @ R_21  # scalar
-        sigma_cond = np.sqrt(max(sigma2_cond, 1e-12))
-
-        # For each observation
-        x_prev = x[:, :i]                          # (T, i)
-        mu_cond = x_prev @ beta                     # (T,)
-
-        # Quadratic form: x_{1:i-1}^T R_{1:i-1}^{-1} x_{1:i-1}
-        quad = np.sum(x_prev @ R_11_inv * x_prev, axis=1)  # (T,)
-
-        # Scale factor and conditional df
-        df_cond = df + i
-        scale = (df + quad) / df_cond
-
-        # Standardized residual
-        z = (x[:, i] - mu_cond) / (sigma_cond * np.sqrt(scale))
-
-        e[:, i] = t_dist.cdf(z, df=df_cond)
-
-    return clip_pseudo_observations(e)
-
-
 def student_rosenblatt_transform(R, df, u):
-    """Dispatch dense Student Rosenblatt while preserving the SciPy oracle."""
-    from pyscarcopula.numerical.multivariate_native import (
-        _dense_student_rosenblatt_if_supported,
-    )
-
-    return dispatch_rvine_backend(
-        capability="dense_student_rosenblatt",
-        native_symbol="dense_student_rosenblatt_transform",
-        python_executor=lambda: _student_rosenblatt_transform_python(R, df, u),
-        native_executor=lambda module: _dense_student_rosenblatt_if_supported(
-            R, df, u, module=module),
-    )
+    """Evaluate the dense Student Rosenblatt transform natively."""
+    from pyscarcopula._native import multivariate as multivariate_native
+    return multivariate_native.dense_student_rosenblatt(R, df, u)
 
 
 def factor_student_rosenblatt_transform(correlation, df, u):
@@ -1704,79 +1434,12 @@ def factor_student_rosenblatt_transform(correlation, df, u):
     Storage is ``O(T*k + k*k)`` and no dense correlation matrix is formed.
     ``df`` may be scalar or contain one value per observation.
     """
-    from scipy.stats import t as t_dist
-
-    u_c = clip_pseudo_observations_no_copy(u)
-    if u_c.ndim != 2 or u_c.shape[1] != correlation.dimension:
-        raise ValueError(
-            "data width must match factor correlation dimension")
-    rows, dimension = u_c.shape
-    df_path = np.asarray(df, dtype=np.float64)
-    if df_path.ndim == 0:
-        df_path = np.full(rows, float(df_path), dtype=np.float64)
-    else:
-        df_path = np.ravel(df_path)
-        if len(df_path) != rows:
-            raise ValueError("df must be scalar or have one value per row")
-    if (
-            not np.all(np.isfinite(df_path))
-            or np.any(df_path <= 2.0)):
-        raise ValueError("df must be finite and greater than 2")
-
-    x = t_dist.ppf(u_c, df=df_path[:, None])
-    loadings = correlation.loadings
-    uniqueness = correlation.uniqueness
-    rank = correlation.rank
-    factor_covariance = np.eye(rank, dtype=np.float64)
-    projected = np.zeros((rows, rank), dtype=np.float64)
-    diagonal_quadratic = np.zeros(rows, dtype=np.float64)
-    transformed = np.empty_like(x)
-    transformed[:, 0] = u_c[:, 0]
-
-    for index in range(dimension):
-        loading = loadings[index]
-        covariance_loading = factor_covariance @ loading
-        conditional_variance = float(
-            uniqueness[index] + loading @ covariance_loading)
-        if not np.isfinite(conditional_variance) or (
-                conditional_variance <= 0.0):
-            raise ValueError(
-                "factor correlation produced non-positive "
-                "conditional variance")
-
-        if index > 0:
-            solved_projection = projected @ factor_covariance
-            conditional_mean = solved_projection @ loading
-            quadratic = diagonal_quadratic - np.einsum(
-                "ij,ij->i",
-                projected,
-                solved_projection,
-                optimize=False,
-            )
-            quadratic = np.maximum(quadratic, 0.0)
-            conditional_df = df_path + index
-            scale = (df_path + quadratic) / conditional_df
-            standardized = (
-                (x[:, index] - conditional_mean)
-                / np.sqrt(conditional_variance * scale)
-            )
-            transformed[:, index] = t_dist.cdf(
-                standardized, df=conditional_df)
-
-        projected += (
-            x[:, index] / uniqueness[index]
-        )[:, None] * loading[None, :]
-        diagonal_quadratic += (
-            x[:, index] * x[:, index] / uniqueness[index])
-        factor_covariance -= np.outer(
-            covariance_loading,
-            covariance_loading,
-        ) / conditional_variance
-
-    return clip_pseudo_observations(transformed)
+    from pyscarcopula._native import multivariate as multivariate_native
+    return multivariate_native.factor_student_rosenblatt(
+        correlation, df, u)
 
 
-def student_gof_test(copula, data, to_pobs=True):
+def student_gof_test(copula, data, to_pobs=True, *, fit_result=None):
     """
     Goodness-of-fit test for a fitted StudentCopula.
 
@@ -1785,6 +1448,9 @@ def student_gof_test(copula, data, to_pobs=True):
     copula : StudentCopula (fitted, has .shape and .df)
     data : (T, d)
     to_pobs : bool
+    fit_result : FitResult or None
+        Explicit fitted correlation and degrees of freedom, taking precedence
+        over the model.
 
     Returns
     -------
@@ -1792,6 +1458,12 @@ def student_gof_test(copula, data, to_pobs=True):
     """
     u = _prepare_gof_data(
         data, expected_dim=copula.dimension, to_pobs=to_pobs)
+
+    if fit_result is not None:
+        from pyscarcopula.strategy.multivariate_mle import (
+            sampling_model_from_result,
+        )
+        copula = sampling_model_from_result(copula, fit_result)
 
     if getattr(copula, "corr_mode", "fixed") == "factor":
         try:
@@ -1826,37 +1498,24 @@ def _gas_parameter_path(copula, u, fit_result):
     return np.asarray(r_path, dtype=np.float64)
 
 
-def _tm_grid_kwargs_from_result(fit_result):
-    """SCAR-TM numerical options stored on a fitted result."""
-    out = {}
-    for name in (
-            'grid_method', 'adaptive', 'pts_per_sigma',
-            'transition_method', 'max_K',
-            'r_gh', 'gh_order'):
-        value = getattr(fit_result, name, None)
-        if value is not None:
-            out[name] = value
-    if 'transition_method' in out:
-        out['transition_method'] = _grid_transition_method(
-            out['transition_method'])
-    return out
-
-
 def _native_grid_config_from_result(fit_result, K, grid_range):
-    """Build the native grid config with legacy TMGrid default semantics."""
+    """Build the native grid config with the preserved OU-grid defaults."""
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+    from pyscarcopula.strategy._base import get_ou_strategy_for_result
 
-    options = _tm_grid_kwargs_from_result(fit_result)
+    strategy = get_ou_strategy_for_result(
+        fit_result, K=K, grid_range=grid_range)
     return AutoTMConfig(
-        K=K,
-        grid_range=grid_range,
-        grid_method=options.get('grid_method', 'auto'),
-        adaptive=options.get('adaptive', True),
-        pts_per_sigma=options.get('pts_per_sigma', 4),
-        transition_method=options.get('transition_method', 'matrix'),
-        max_K=options.get('max_K', None),
-        r_gh=options.get('r_gh', 3.0),
-        gh_order=options.get('gh_order', 5),
+        K=strategy.K,
+        grid_range=strategy.grid_range,
+        grid_method=strategy.grid_method,
+        adaptive=strategy.adaptive,
+        pts_per_sigma=strategy.pts_per_sigma,
+        transition_method=_grid_transition_method(strategy.transition_method),
+        small_kdt=strategy.auto_small_kdt,
+        max_K=strategy.max_K,
+        r_gh=strategy.r_gh,
+        gh_order=strategy.gh_order,
     )
 
 
@@ -1886,8 +1545,9 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     T, d = u.shape
     method = fit_result.method.upper()
     if method not in ('MLE', 'GAS'):
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
+        config = _native_grid_config_from_result(fit_result, K, grid_range)
         kappa, mu, nu = fit_result.params.values
         return _cpp_scar_ou.gaussian_rosenblatt(
             kappa,
@@ -1895,42 +1555,18 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
             nu,
             u,
             copula,
-            _native_grid_config_from_result(
-                fit_result, K, grid_range),
+            config,
         )
-
-    u_c = clip_pseudo_observations(u)
-    x_norm = norm.ppf(u_c)
 
     if method == 'MLE':
         rho = fit_result.copula_param
-        e = np.empty((T, d))
-        e[:, 0] = u[:, 0]
-        for i in range(1, d):
-            sx = np.sum(x_norm[:, :i], axis=1)
-            cond_mean = rho * sx / (1.0 + (i - 1) * rho)
-            cond_var = 1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho)
-            cond_var = max(cond_var, 1e-10)
-            z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
-            e[:, i] = norm.cdf(z_i)
-        return clip_pseudo_observations(e)
+    elif method == 'GAS':
+        rho = _gas_parameter_path(copula, u, fit_result)
+    else:
+        raise AssertionError(f"unsupported equicorrelation method: {method}")
 
-    if method == 'GAS':
-        rho_path = _gas_parameter_path(copula, u, fit_result)
-        e = np.empty((T, d))
-        e[:, 0] = u[:, 0]
-        for i in range(1, d):
-            rho = rho_path
-            sx = np.sum(x_norm[:, :i], axis=1)
-            cond_mean = rho * sx / (1.0 + (i - 1) * rho)
-            cond_var = 1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho)
-            cond_var = np.maximum(cond_var, 1e-10)
-            z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
-            e[:, i] = norm.cdf(z_i)
-        return clip_pseudo_observations(e)
-
-    raise ValueError(
-        f"Unsupported EquicorrGaussianCopula fit method: {fit_result.method}")
+    from pyscarcopula._native import multivariate as multivariate_native
+    return multivariate_native.equicorr_gaussian_rosenblatt(rho, u)
 
 
 def equicorr_gof_test(copula, data, to_pobs=True,
@@ -1999,8 +1635,9 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     method = fit_result.method.upper()
 
     if method not in ('MLE', 'GAS'):
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
+        config = _native_grid_config_from_result(fit_result, K, grid_range)
         kappa, mu, nu_ou = fit_result.params.values
         return _cpp_scar_ou.student_rosenblatt(
             kappa,
@@ -2008,8 +1645,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
             nu_ou,
             u,
             copula,
-            _native_grid_config_from_result(
-                fit_result, K, grid_range),
+            config,
         )
 
     if method == 'MLE':

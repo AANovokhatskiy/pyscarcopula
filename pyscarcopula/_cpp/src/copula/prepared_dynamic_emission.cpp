@@ -1,0 +1,742 @@
+#include "scar/copula/prepared_dynamic_emission.hpp"
+
+#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
+#include "scar/copula/multivariate/correlation/parameterization.hpp"
+#include "scar/copula/multivariate/student/density.hpp"
+#include "scar/copula/multivariate/student/emission_cache.hpp"
+#include "scar/copula/multivariate/student/distribution.hpp"
+#include "scar/copula/pair/gaussian.hpp"
+#include "scar/copula/prepared_pair_kernel.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/dispatch.hpp"
+#include "scar/detail/safety.hpp"
+#include "scar/status.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <utility>
+
+namespace scar {
+namespace {
+
+DenseCorrelationPreparationResult prepare_shrinkage_correlation(
+    const CopulaSpec& template_spec,
+    DoubleView base_correlation,
+    double raw_shrinkage) {
+
+    DenseCorrelationPreparationResult result;
+    if (template_spec.family != CopulaFamily::Student
+        || template_spec.dim < 2
+        || !std::isfinite(raw_shrinkage)) {
+        result.status = Status::InvalidParameter;
+        return result;
+    }
+    const std::size_t dimension =
+        static_cast<std::size_t>(template_spec.dim);
+    const auto correlation = make_shrinkage_correlation(
+        raw_shrinkage, base_correlation, dimension);
+    if (!correlation.is_ok()) {
+        result.status = correlation.status;
+        result.failure = correlation.failure;
+        return result;
+    }
+    return prepare_dense_correlation(
+        {correlation.value.data(), correlation.value.size()}, dimension);
+}
+
+void apply_shrinkage_correlation(
+    CopulaSpec& spec, const DenseCorrelationPreparationResult& prepared) {
+    const bool was_factor = spec.correlation_kind == CorrelationKind::Factor;
+    spec.correlation_kind = CorrelationKind::Shrinkage;
+    // Dense PPF tables do not depend on correlation. Factor storage does.
+    if (was_factor) {
+        spec.reset_model_storage();
+    }
+    spec.dense_inverse_cholesky() = prepared.inverse_cholesky;
+    spec.dense_log_determinant() = prepared.log_determinant;
+}
+
+}  // namespace
+
+Result<CopulaSpec> prepare_shrinkage_dynamic_spec(
+    const CopulaSpec& template_spec,
+    DoubleView base_correlation,
+    double raw_shrinkage) {
+
+    Result<CopulaSpec> result;
+    const auto prepared = prepare_shrinkage_correlation(
+        template_spec, base_correlation, raw_shrinkage);
+    if (!prepared.is_ok()) {
+        result.status = prepared.status;
+        result.failure = prepared.failure;
+        return result;
+    }
+    result.value = template_spec;
+    apply_shrinkage_correlation(result.value, prepared);
+    return result;
+}
+
+Result<bool> update_shrinkage_dynamic_spec(
+    CopulaSpec& spec,
+    DoubleView base_correlation,
+    double raw_shrinkage) {
+
+    Result<bool> result;
+    const auto prepared = prepare_shrinkage_correlation(
+        spec, base_correlation, raw_shrinkage);
+    if (!prepared.is_ok()) {
+        result.status = prepared.status;
+        result.failure = prepared.failure;
+        return result;
+    }
+    apply_shrinkage_correlation(spec, prepared);
+    result.value = true;
+    return result;
+}
+
+struct PreparedDynamicEmissionWorkspace::Impl {
+    scar_internal::StudentWorkspace student;
+};
+
+PreparedDynamicEmissionWorkspace::PreparedDynamicEmissionWorkspace()
+    : impl_(std::make_unique<Impl>()) {}
+
+PreparedDynamicEmissionWorkspace::~PreparedDynamicEmissionWorkspace() = default;
+PreparedDynamicEmissionWorkspace::PreparedDynamicEmissionWorkspace(
+    PreparedDynamicEmissionWorkspace&&) noexcept = default;
+PreparedDynamicEmissionWorkspace&
+PreparedDynamicEmissionWorkspace::operator=(
+    PreparedDynamicEmissionWorkspace&&) noexcept = default;
+
+struct PreparedDynamicEmission::Impl {
+    explicit Impl(const CopulaSpec& source, bool borrow)
+        : owned_spec(borrow ? nullptr : std::make_unique<CopulaSpec>(source)),
+          spec(borrow ? &source : owned_spec.get()),
+          pair(*spec) {
+        resolve();
+    }
+
+    void resolve() {
+        emission_cache.reset();
+        pair = PreparedPairKernel(*spec);
+        if (pair.is_registered()) {
+            kind = DynamicEmissionKind::Pair;
+            supported = pair.is_supported() && spec->dim == 2;
+            student = {};
+            return;
+        }
+        if (spec->family == CopulaFamily::Student) {
+            kind = DynamicEmissionKind::Student;
+            student = scar_internal::prepare_student_density(*spec);
+            supported = student.valid
+                && scar_internal::copula_is_supported(*spec);
+            return;
+        }
+        if (spec->family == CopulaFamily::EquicorrGaussian) {
+            kind = DynamicEmissionKind::Equicorrelation;
+            supported = scar_internal::copula_is_supported(*spec);
+            student = {};
+            return;
+        }
+        kind = DynamicEmissionKind::Unsupported;
+        supported = false;
+        student = {};
+    }
+
+    void replace_owned(const CopulaSpec& source) {
+        owned_spec = std::make_unique<CopulaSpec>(source);
+        spec = owned_spec.get();
+        resolve();
+    }
+
+    std::unique_ptr<CopulaSpec> owned_spec;
+    const CopulaSpec* spec = nullptr;
+    PreparedPairKernel pair;
+    scar_internal::PreparedStudentDensity student;
+    std::unique_ptr<scar_internal::StudentEmissionCache> emission_cache;
+    DynamicEmissionKind kind = DynamicEmissionKind::Unsupported;
+    bool supported = false;
+};
+
+PreparedDynamicEmission::PreparedDynamicEmission(const CopulaSpec& spec)
+    : impl_(std::make_unique<Impl>(spec, false)) {}
+
+PreparedDynamicEmission::PreparedDynamicEmission(
+    const CopulaSpec& spec,
+    BorrowedSpecTag)
+    : impl_(std::make_unique<Impl>(spec, true)) {}
+
+PreparedDynamicEmission PreparedDynamicEmission::borrow(
+    const CopulaSpec& spec) {
+    return PreparedDynamicEmission(spec, BorrowedSpecTag{});
+}
+
+PreparedDynamicEmission::~PreparedDynamicEmission() = default;
+PreparedDynamicEmission::PreparedDynamicEmission(
+    PreparedDynamicEmission&&) noexcept = default;
+PreparedDynamicEmission& PreparedDynamicEmission::operator=(
+    PreparedDynamicEmission&&) noexcept = default;
+
+void PreparedDynamicEmission::refresh(const CopulaSpec& spec) {
+    impl_->replace_owned(spec);
+}
+
+void PreparedDynamicEmission::refresh() {
+    impl_->resolve();
+}
+
+void PreparedDynamicEmission::configure_student_emission_cache(
+    ObservationView observations, const StudentEmissionCacheConfig& config) {
+    if (impl_->kind != DynamicEmissionKind::Student || !impl_->supported
+        || impl_->student.dense == nullptr
+        || !ok(validate_observations(observations))) {
+        throw std::invalid_argument("emission cache requires valid dense Student observations");
+    }
+    // Build before swapping: invalid requests and failed refinement preserve
+    // the previous prepared objective exactly.
+    auto candidate = std::make_unique<scar_internal::StudentEmissionCache>(
+        impl_->student, observations, impl_->spec->offset, config);
+    impl_->emission_cache = std::move(candidate);
+}
+
+void PreparedDynamicEmission::clear_student_emission_cache() {
+    impl_->emission_cache.reset();
+}
+
+StudentEmissionCacheDiagnostics PreparedDynamicEmission::student_emission_cache_info() const {
+    return impl_->emission_cache ? impl_->emission_cache->diagnostics()
+                                 : StudentEmissionCacheDiagnostics{};
+}
+
+DynamicEmissionKind PreparedDynamicEmission::kind() const noexcept {
+    return impl_->kind;
+}
+
+CopulaFamily PreparedDynamicEmission::family() const noexcept {
+    return impl_->spec->family;
+}
+
+CorrelationKind PreparedDynamicEmission::correlation_kind() const noexcept {
+    return impl_->spec->correlation_kind;
+}
+
+int PreparedDynamicEmission::expected_dimension() const noexcept {
+    return impl_->spec->model_descriptor().expected_dimension();
+}
+
+bool PreparedDynamicEmission::is_supported() const noexcept {
+    return impl_->supported;
+}
+
+bool PreparedDynamicEmission::is_supported_for_ou() const noexcept {
+    return impl_->supported
+        && scar_internal::copula_is_supported_for_ou(*impl_->spec);
+}
+
+bool PreparedDynamicEmission::is_independent() const noexcept {
+    return family() == CopulaFamily::Independent;
+}
+
+bool PreparedDynamicEmission::is_unrotated_gaussian_pair() const noexcept {
+    return impl_->kind == DynamicEmissionKind::Pair
+        && impl_->pair.is_unrotated_gaussian();
+}
+
+bool PreparedDynamicEmission::has_cached_observations(
+    std::size_t rows) const noexcept {
+    if (impl_->kind == DynamicEmissionKind::Equicorrelation) {
+        return impl_->spec->equicorr_sum_scores().size() == rows
+            && impl_->spec->equicorr_sum_squares().size() == rows;
+    }
+    if (family() == CopulaFamily::Gaussian) {
+        return impl_->spec->pair_gaussian_first_scores().size() == rows
+            && impl_->spec->pair_gaussian_second_scores().size() == rows;
+    }
+    return false;
+}
+
+bool PreparedDynamicEmission::observation_cache_compatible(
+    std::size_t rows) const noexcept {
+
+    if (impl_->kind == DynamicEmissionKind::Student) {
+        const auto& nodes = impl_->spec->student_ppf_nodes();
+        const auto& table = impl_->spec->student_ppf_table();
+        if (rows > static_cast<std::size_t>(
+                       std::numeric_limits<std::int64_t>::max())) {
+            return false;
+        }
+        return (nodes.empty() && table.empty())
+            || impl_->spec->student_ppf_observation_count()
+                == static_cast<std::int64_t>(rows);
+    }
+    if (impl_->kind == DynamicEmissionKind::Equicorrelation) {
+        const auto& sums = impl_->spec->equicorr_sum_scores();
+        const auto& squares = impl_->spec->equicorr_sum_squares();
+        return (sums.empty() && squares.empty())
+            || (sums.size() == rows && squares.size() == rows);
+    }
+    if (is_unrotated_gaussian_pair()) {
+        const auto& first = impl_->spec->pair_gaussian_first_scores();
+        const auto& second = impl_->spec->pair_gaussian_second_scores();
+        return (first.empty() && second.empty())
+            || (first.size() == rows && second.size() == rows);
+    }
+    return true;
+}
+
+double PreparedDynamicEmission::h_from_cached_observation(
+    std::size_t row,
+    bool reverse,
+    double parameter) const {
+
+    if (!is_unrotated_gaussian_pair()
+        || row >= impl_->spec->pair_gaussian_first_scores().size()
+        || impl_->spec->pair_gaussian_first_scores().size()
+            != impl_->spec->pair_gaussian_second_scores().size()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double first = impl_->spec->pair_gaussian_first_scores()[row];
+    const double second = impl_->spec->pair_gaussian_second_scores()[row];
+    return reverse
+        ? copula::pair::gaussian_h_from_quantiles(
+            first, second, parameter)
+        : copula::pair::gaussian_h_from_quantiles(
+            second, first, parameter);
+}
+
+const CopulaSpec& PreparedDynamicEmission::compatibility_spec() const noexcept {
+    return *impl_->spec;
+}
+
+Status PreparedDynamicEmission::validate_observations(
+    ObservationView observations,
+    bool require_nonempty) const {
+
+    if (!impl_->supported) {
+        return Status::InvalidFamily;
+    }
+    if (observations.dim != expected_dimension()
+        || (require_nonempty && observations.empty())) {
+        return Status::InvalidSize;
+    }
+    const bool cached = has_cached_observations(observations.size());
+    if (!observations.empty() && observations.data() == nullptr && !cached) {
+        return Status::NullPointer;
+    }
+    if (impl_->kind == DynamicEmissionKind::Equicorrelation && cached) {
+        const auto& sums = impl_->spec->equicorr_sum_scores();
+        const auto& squares = impl_->spec->equicorr_sum_squares();
+        for (std::size_t row = 0; row < observations.size(); ++row) {
+            if (!std::isfinite(sums[row])
+                || !std::isfinite(squares[row])
+                || squares[row] < 0.0) {
+                return Status::InvalidParameter;
+            }
+        }
+        return Status::Ok;
+    }
+    std::size_t values = 0;
+    if (!scar_internal::checked_shape_size(
+            observations.size(),
+            static_cast<std::size_t>(observations.dim),
+            values)) {
+        return Status::InvalidSize;
+    }
+    for (std::size_t index = 0; index < values; ++index) {
+        if (!std::isfinite(observations.data()[index])) {
+            return Status::InvalidParameter;
+        }
+    }
+    return Status::Ok;
+}
+
+PreparedDynamicEmissionWorkspace PreparedDynamicEmission::make_workspace(
+    bool derivative) const {
+
+    PreparedDynamicEmissionWorkspace workspace;
+    if (impl_->kind == DynamicEmissionKind::Student) {
+        const std::size_t dimension =
+            static_cast<std::size_t>(expected_dimension());
+        workspace.impl_->student.reserve_x(dimension);
+        if (derivative) {
+            workspace.impl_->student.reserve_dx_ddf(dimension);
+        }
+    }
+    return workspace;
+}
+
+double PreparedDynamicEmission::transform_state(double state) const {
+    if (!impl_->supported) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (impl_->kind == DynamicEmissionKind::Pair) {
+        return impl_->pair.transform(state);
+    }
+    if (impl_->kind == DynamicEmissionKind::Equicorrelation) {
+        return scar_internal::equicorr_transform(*impl_->spec, state);
+    }
+    return scar_internal::copula_transform(*impl_->spec, state);
+}
+
+double PreparedDynamicEmission::dtransform_state(double state) const {
+    if (!impl_->supported) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (impl_->kind == DynamicEmissionKind::Pair) {
+        return impl_->pair.dtransform(state);
+    }
+    if (impl_->kind == DynamicEmissionKind::Equicorrelation) {
+        return scar_internal::equicorr_dtransform(*impl_->spec, state);
+    }
+    return scar_internal::copula_dtransform(*impl_->spec, state);
+}
+
+DynamicEmissionRowResult PreparedDynamicEmission::evaluate_parameter(
+    const double* row,
+    std::int64_t row_index,
+    double parameter,
+    bool derivative,
+    PreparedDynamicEmissionWorkspace& workspace) const {
+
+    DynamicEmissionRowResult out;
+    out.parameter = parameter;
+    if (!impl_->supported || !std::isfinite(parameter)) {
+        out.status = impl_->supported
+            ? Status::InvalidParameter : Status::InvalidFamily;
+        return out;
+    }
+    if (impl_->kind == DynamicEmissionKind::Pair) {
+        if (row == nullptr) {
+            out.status = Status::NullPointer;
+            return out;
+        }
+        out.log_pdf = impl_->pair.log_pdf(row[0], row[1], parameter);
+        if (derivative) {
+            out.dlog_dparameter = impl_->pair.dlog_pdf_dparameter(
+                row[0], row[1], parameter);
+        }
+    } else if (impl_->kind == DynamicEmissionKind::Student) {
+        if (row == nullptr) {
+            out.status = Status::NullPointer;
+            return out;
+        }
+        if (impl_->emission_cache && impl_->emission_cache->evaluate(
+                row_index, parameter, out.log_pdf, out.dlog_dparameter)) {
+            return out;
+        }
+        // Active table misses must use the direct kernel, not the old PPF
+        // interpolant. This also avoids mixing approximations in the tails.
+        if (impl_->emission_cache) {
+            const auto distribution = scar_internal::student_distribution_parameters(parameter);
+            out.log_pdf = scar_internal::student_log_pdf_refined(impl_->student,
+                row, distribution, workspace.impl_->student,
+                derivative ? &out.dlog_dparameter : nullptr);
+        } else if (derivative) {
+            if (!scar_internal::student_log_pdf_and_dlog_ddf(
+                    impl_->student,
+                    row,
+                    parameter,
+                    row_index,
+                    out.log_pdf,
+                    out.dlog_dparameter,
+                    workspace.impl_->student)) {
+                out.status = Status::NumericalFailure;
+                out.failure.index = row_index;
+                return out;
+            }
+        } else {
+            out.log_pdf = scar_internal::student_log_pdf(
+                impl_->student,
+                row,
+                parameter,
+                row_index,
+                workspace.impl_->student);
+        }
+    } else if (impl_->kind == DynamicEmissionKind::Equicorrelation) {
+        scar_internal::EquicorrStats stats;
+        const bool cached = row_index >= 0
+            && static_cast<std::size_t>(row_index)
+                < impl_->spec->equicorr_sum_scores().size()
+            && impl_->spec->equicorr_sum_scores().size()
+                == impl_->spec->equicorr_sum_squares().size();
+        if (cached) {
+            const std::size_t index = static_cast<std::size_t>(row_index);
+            stats.sum = impl_->spec->equicorr_sum_scores()[index];
+            stats.sum_squares =
+                impl_->spec->equicorr_sum_squares()[index];
+        } else if (!scar_internal::equicorr_sufficient_statistics(
+                       *impl_->spec, row, stats)) {
+            out.status = Status::NumericalFailure;
+            out.failure.index = row_index;
+            return out;
+        }
+        out.log_pdf = scar_internal::equicorr_log_pdf_from_stats(
+            *impl_->spec,
+            stats,
+            parameter,
+            derivative ? &out.dlog_dparameter : nullptr);
+    } else {
+        out.status = Status::InvalidFamily;
+        return out;
+    }
+    if (!std::isfinite(out.log_pdf)
+        || (derivative && !std::isfinite(out.dlog_dparameter))) {
+        out.status = Status::NumericalFailure;
+        out.failure.index = row_index;
+    }
+    return out;
+}
+
+DynamicEmissionRowResult PreparedDynamicEmission::evaluate_state(
+    const double* row,
+    std::int64_t row_index,
+    double state,
+    bool derivative,
+    PreparedDynamicEmissionWorkspace& workspace) const {
+
+    const double parameter = transform_state(state);
+    DynamicEmissionRowResult out = evaluate_parameter(
+        row, row_index, parameter, derivative, workspace);
+    out.parameter = parameter;
+    return out;
+}
+
+double PreparedDynamicEmission::log_pdf_at_state(
+    const double* row,
+    std::int64_t row_index,
+    double state,
+    PreparedDynamicEmissionWorkspace& workspace) const {
+
+    const DynamicEmissionRowResult result = evaluate_state(
+        row, row_index, state, false, workspace);
+    return result.is_ok()
+        ? result.log_pdf
+        : std::numeric_limits<double>::quiet_NaN();
+}
+
+void PreparedDynamicEmission::prepare_grid_transform(
+    const std::vector<double>& states,
+    std::vector<double>& parameters,
+    std::vector<double>& derivatives) const {
+
+    scar_internal::copula_prepare_grid_transform(
+        *impl_->spec, states, parameters, derivatives);
+}
+
+void PreparedDynamicEmission::fill_density_row(
+    const double* observations,
+    std::int64_t row_index,
+    const std::vector<double>& parameters,
+    double* densities,
+    double* log_scale) const {
+
+    if (fill_cached_student_row(observations, row_index, parameters,
+            nullptr, densities, nullptr, log_scale)) {
+        return;
+    }
+
+    scar_internal::copula_pdf_row_precomputed_flat(
+        *impl_->spec,
+        observations,
+        row_index,
+        parameters,
+        densities,
+        log_scale);
+}
+
+void PreparedDynamicEmission::fill_density_and_gradient_row(
+    const double* observations,
+    std::int64_t row_index,
+    const std::vector<double>& parameters,
+    const std::vector<double>& derivatives,
+    double* densities,
+    double* gradients,
+    double* log_scale) const {
+
+    if (fill_cached_student_row(observations, row_index, parameters,
+            &derivatives, densities, gradients, log_scale)) {
+        return;
+    }
+
+    scar_internal::copula_pdf_and_grad_row_precomputed_flat(
+        *impl_->spec,
+        observations,
+        row_index,
+        parameters,
+        derivatives,
+        densities,
+        gradients,
+        log_scale);
+}
+
+void PreparedDynamicEmission::fill_density_and_gradient_grid(
+    const double* observations,
+    std::int64_t rows,
+    const std::vector<double>& parameters,
+    const std::vector<double>& derivatives,
+    std::vector<double>& densities,
+    std::vector<double>& gradients,
+    int n_threads,
+    double* log_scale_sum) const {
+
+    if (impl_->emission_cache) {
+        std::vector<double> scales;
+        const bool valid = fill_density_and_gradient_block(observations, 0,
+            rows, parameters, derivatives, densities, gradients, scales, n_threads);
+        if (log_scale_sum) {
+            *log_scale_sum = 0.0;
+            for (double value : scales) *log_scale_sum += value;
+        } else if (valid) {
+            for (std::size_t row = 0; row < scales.size(); ++row) {
+                const double multiplier = std::exp(scales[row]);
+                for (std::size_t j = 0; j < parameters.size(); ++j) {
+                    const std::size_t index = row * parameters.size() + j;
+                    densities[index] *= multiplier;
+                    gradients[index] *= multiplier;
+                }
+            }
+        }
+        if (!valid) { densities.clear(); gradients.clear(); }
+        return;
+    }
+
+    scar_internal::copula_pdf_and_grad_grid_precomputed(
+        *impl_->spec,
+        observations,
+        rows,
+        parameters,
+        derivatives,
+        densities,
+        gradients,
+        n_threads,
+        log_scale_sum);
+}
+
+bool PreparedDynamicEmission::fill_density_and_gradient_block(
+    const double* observations,
+    std::int64_t first_row,
+    std::int64_t rows,
+    const std::vector<double>& parameters,
+    const std::vector<double>& derivatives,
+    std::vector<double>& densities,
+    std::vector<double>& gradients,
+    std::vector<double>& row_log_scales,
+    int n_threads) const {
+
+    std::size_t elements = 0;
+    if (first_row < 0 || rows <= 0 || parameters.empty()
+        || rows > std::numeric_limits<std::int64_t>::max() - first_row
+        || parameters.size() != derivatives.size()
+        || !scar_internal::checked_size_mul(
+            static_cast<std::size_t>(rows), parameters.size(), elements)) {
+        return false;
+    }
+    row_log_scales.assign(static_cast<std::size_t>(rows), 0.0);
+    if (impl_->emission_cache) {
+        densities.resize(elements);
+        gradients.resize(elements);
+        for (std::int64_t row = 0; row < rows; ++row) {
+            fill_cached_student_row(observations, first_row + row, parameters,
+                &derivatives, densities.data() + row * parameters.size(),
+                gradients.data() + row * parameters.size(), &row_log_scales[row]);
+        }
+        return std::all_of(row_log_scales.begin(), row_log_scales.end(),
+            [](double value) { return std::isfinite(value); });
+    }
+    scar_internal::copula_pdf_and_grad_grid_precomputed(
+        *impl_->spec, observations, rows, parameters, derivatives,
+        densities, gradients, n_threads, nullptr, first_row,
+        row_log_scales.data());
+    return densities.size() == elements && gradients.size() == elements
+        && std::all_of(
+            row_log_scales.begin(), row_log_scales.end(),
+            [](double value) { return std::isfinite(value); });
+}
+
+void PreparedDynamicEmission::fill_density_row_on_state_grid(
+    const double* observations,
+    std::int64_t row_index,
+    const std::vector<double>& states,
+    std::vector<double>& densities) const {
+
+    if (impl_->emission_cache) {
+        std::vector<double> parameters, derivatives;
+        prepare_grid_transform(states, parameters, derivatives);
+        densities.resize(states.size());
+        fill_cached_student_row(observations, row_index, parameters,
+            nullptr, densities.data(), nullptr, nullptr);
+        return;
+    }
+
+    scar_internal::copula_fi_row_on_grid(
+        *impl_->spec, observations, row_index, states, densities);
+}
+
+bool PreparedDynamicEmission::fill_cached_student_row(
+    const double* observations, std::int64_t row_index,
+    const std::vector<double>& parameters, const std::vector<double>* derivatives,
+    double* densities, double* gradients, double* log_scale) const {
+    if (!impl_->emission_cache) return false;
+    if (observations == nullptr || row_index < 0 || parameters.empty()
+        || densities == nullptr || (derivatives &&
+            (derivatives->size() != parameters.size() || gradients == nullptr))) {
+        throw std::invalid_argument("invalid cached Student emission row");
+    }
+    auto workspace = make_workspace(derivatives != nullptr);
+    const double* row = observations + row_index * impl_->spec->dim;
+    double scale = -std::numeric_limits<double>::infinity();
+    for (std::size_t j = 0; j < parameters.size(); ++j) {
+        const auto result = evaluate_parameter(row, row_index, parameters[j],
+                                               derivatives != nullptr, workspace);
+        densities[j] = result.log_pdf;
+        if (!result.is_ok()) densities[j] = std::numeric_limits<double>::quiet_NaN();
+        if (derivatives) gradients[j] = result.dlog_dparameter * (*derivatives)[j];
+        scale = std::max(scale, densities[j]);
+    }
+    // Callers without a scale channel require unscaled emission values.
+    if (log_scale) *log_scale = scale;
+    else scale = 0.0;
+    for (std::size_t j = 0; j < parameters.size(); ++j) {
+        densities[j] = std::exp(densities[j] - scale);
+        if (derivatives) gradients[j] *= densities[j];
+    }
+    return true;
+}
+
+double PreparedDynamicEmission::h(
+    double first,
+    double second,
+    double parameter) const {
+    return impl_->kind == DynamicEmissionKind::Pair
+        ? impl_->pair.h(first, second, parameter)
+        : std::numeric_limits<double>::quiet_NaN();
+}
+
+void PreparedDynamicEmission::h_pair(
+    double first,
+    double second,
+    double parameter,
+    double& first_next,
+    double& second_next) const {
+
+    if (impl_->kind == DynamicEmissionKind::Pair) {
+        impl_->pair.h_pair(
+            first, second, parameter, first_next, second_next);
+        return;
+    }
+    first_next = std::numeric_limits<double>::quiet_NaN();
+    second_next = std::numeric_limits<double>::quiet_NaN();
+}
+
+double PreparedDynamicEmission::inverse_h(
+    double quantile,
+    double given,
+    double parameter) const {
+    return impl_->kind == DynamicEmissionKind::Pair
+        ? impl_->pair.inverse_h(quantile, given, parameter)
+        : std::numeric_limits<double>::quiet_NaN();
+}
+
+}  // namespace scar

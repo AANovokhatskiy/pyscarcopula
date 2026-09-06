@@ -5,15 +5,14 @@ import pytest
 
 from pyscarcopula import NumericalConfig, StochasticStudentCopula
 from pyscarcopula.contrib.risk_metrics import _get_copula_constructor
-from pyscarcopula.numerical import (
-    _cpp_copula,
-    _cpp_extension,
-    _cpp_scar_ou,
-    static_likelihood,
+from pyscarcopula._native import (
+    _descriptors as _cpp_copula,
+    _extension as _cpp_extension,
+    scar_ou as _cpp_scar_ou,
+    static as static_likelihood,
 )
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_loglik
-from pyscarcopula.numerical.mc_native import log_pdf_trajectory_grid
 
 
 def _problem(rows=24, d=4, k=2):
@@ -61,9 +60,9 @@ def test_factor_static_mle_returns_compact_result():
     assert result.success
     assert np.isfinite(result.log_likelihood)
     assert result.correlation_matrix is None
-    assert result.n_params == 8
+    assert result.n_params == 7
     assert result.diagnostics["corr_mode"] == "factor"
-    assert result.diagnostics["factor_n_params"] == 7
+    assert result.diagnostics["factor_n_params"] == 6
     assert "corr_matrix" not in result.diagnostics
     assert "correlation_matrix" not in result.model_parameters
     np.testing.assert_allclose(
@@ -191,7 +190,7 @@ def test_factor_gas_fit_is_native_and_counts_estimated_loadings():
 
     assert np.isfinite(result.log_likelihood)
     assert result.log_likelihood > -1e9
-    assert result.n_params == 10
+    assert result.n_params == 9
     assert result.diagnostics["model_score"] == "native"
     assert result.diagnostics["corr_mode"] == "factor"
     assert result.diagnostics["n_threads"] == 2
@@ -255,51 +254,9 @@ def test_factor_scar_fit_uses_prepared_native_evaluator():
 
     assert np.isfinite(result.log_likelihood)
     assert result.log_likelihood > -1e9
-    assert result.n_params == 10
+    assert result.n_params == 9
     assert result.diagnostics["selected_engine"] == "cpp"
     assert result.diagnostics["prepared_native_evaluator"] is True
-    assert result.diagnostics["corr_mode"] == "factor"
-    assert result.diagnostics["n_threads"] == 2
-    assert factor._R is None
-
-
-def test_factor_scar_mc_trajectory_density_matches_dense_reference():
-    observations, factor, dense = _models(rows=10)
-    latent_paths = np.random.default_rng(9502).normal(
-        0.2, 0.4, size=(len(observations), 7))
-
-    factor_values = log_pdf_trajectory_grid(
-        factor, observations, latent_paths, n_threads=2)
-    dense_values = log_pdf_trajectory_grid(
-        dense, observations, latent_paths, n_threads=2)
-
-    np.testing.assert_allclose(
-        factor_values,
-        dense_values,
-        rtol=3e-6,
-        atol=3e-6,
-    )
-    assert factor._R is None
-
-
-def test_factor_scar_p_fit_uses_native_trajectory_kernel():
-    observations, factor, _ = _models(rows=8)
-
-    result = factor.fit(
-        observations,
-        method="scar-p-ou",
-        alpha0=np.array([1.0, 0.2, 0.7]),
-        n_tr=4,
-        maxiter=1,
-        maxfun=10,
-        seed=9503,
-        config=NumericalConfig(n_threads=2),
-    )
-
-    assert np.isfinite(result.log_likelihood)
-    assert result.log_likelihood > -1e9
-    assert result.method == "SCAR-P-OU"
-    assert result.n_params == 10
     assert result.diagnostics["corr_mode"] == "factor"
     assert result.diagnostics["n_threads"] == 2
     assert factor._R is None

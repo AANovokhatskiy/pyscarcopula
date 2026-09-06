@@ -1,4 +1,4 @@
-﻿"""Contracts for compact equicorrelation preparation."""
+"""Contracts for compact equicorrelation preparation."""
 
 from __future__ import annotations
 
@@ -17,10 +17,10 @@ from pyscarcopula import (
 )
 from pyscarcopula import api
 from pyscarcopula._constants import PSEUDO_OBS_EPS
-from pyscarcopula.numerical import multivariate_native
-from pyscarcopula.numerical import static_likelihood
-from pyscarcopula.numerical import _cpp_gas
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import multivariate as multivariate_native
+from pyscarcopula._native import static as static_likelihood
+from pyscarcopula._native import gas as _cpp_gas
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
@@ -42,6 +42,23 @@ def test_native_statistics_match_dense_reference_and_report_clipping():
     assert diagnostics["clipping_events"] == 2
     assert diagnostics["nonfinite_values"] == 0
     assert diagnostics["temporary_values"] == 12
+
+
+def test_transformed_static_objective_owns_equicorr_chain_rule():
+    rng = np.random.default_rng(314159)
+    u = rng.uniform(0.01, 0.99, size=(23, 4))
+    model = EquicorrGaussianCopula(d=4)
+    evaluator = static_likelihood.prepare(model, u)
+    raw = 0.45
+    rho = model.transform(np.array([raw]))[0]
+    expected_value, physical_gradient = evaluator.objective_and_gradient(rho)
+    expected_gradient = physical_gradient * model.dtransform(
+        np.array([raw]))
+
+    value, gradient = evaluator.transformed_objective_and_gradient(raw)
+    assert value == pytest.approx(expected_value, rel=0.0, abs=0.0)
+    np.testing.assert_allclose(
+        gradient, expected_gradient, rtol=2e-15, atol=2e-15)
 
 
 @pytest.mark.parametrize(
@@ -277,7 +294,8 @@ def test_refit_clears_stale_dense_or_prepared_training_state():
     prepared = model.prepare_sufficient_statistics(u)
 
     model.fit(u, method="MLE")
-    assert model._last_u is u
+    np.testing.assert_array_equal(model._last_u, u)
+    assert not np.shares_memory(model._last_u, u)
     assert model._last_prepared is None
     model.fit(prepared, method="MLE")
     assert model._last_u is None
@@ -497,7 +515,7 @@ def test_default_preparation_never_initializes_parallel_runtime():
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import EquicorrGaussianCopula\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "EquicorrGaussianCopula(8192).prepare_sufficient_statistics("
@@ -561,5 +579,12 @@ def test_negative_equicorrelation_sampling_is_structural_and_batched():
     with pytest.raises(ValueError, match="r must be finite"):
         next(model.sample_at_parameter_batches(
             1, -1.0 / 3.0, batch_rows=1))
+
+
+def test_native_equicorrelation_common_draw_planner_owns_sign_policy():
+    assert multivariate_native.equicorr_gaussian_common_draw_count(
+        [0.1, 0.2], 3, 2) == 2
+    assert multivariate_native.equicorr_gaussian_common_draw_count(
+        [0.1, -0.2], 3, 2) == 0
 
 

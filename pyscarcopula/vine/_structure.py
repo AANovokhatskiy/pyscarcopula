@@ -20,65 +20,23 @@ pairs are connected at each tree level.
 import warnings
 
 import numpy as np
-from scipy.stats import kendalltau
-
-try:
-    from scipy.stats._stats_py import _kendall_dis
-except Exception:  # pragma: no cover - scipy private API fallback
-    _kendall_dis = None
+from pyscarcopula._native import statistics
 
 
 def _dense_ranks_no_ties(x):
-    x = np.asarray(x, dtype=np.float64)
-    if x.ndim != 1 or x.size < 2 or not np.all(np.isfinite(x)):
-        return None
-    order = np.argsort(x, kind='mergesort')
-    xs = x[order]
-    if np.any(xs[1:] == xs[:-1]):
-        return None
-    ranks = np.empty_like(order, dtype=np.intp)
-    ranks[order] = np.arange(1, x.size + 1, dtype=np.intp)
-    return ranks
+    return statistics.dense_ranks_no_ties(x)
 
 
 def _dense_rank_matrix_no_ties(u):
-    if _kendall_dis is None:
-        return None
-    u = np.asarray(u, dtype=np.float64)
-    if u.ndim != 2 or u.shape[0] < 2 or not np.all(np.isfinite(u)):
-        return None
-    order = np.argsort(u, axis=0, kind='mergesort')
-    sorted_u = np.take_along_axis(u, order, axis=0)
-    if np.any(sorted_u[1:, :] == sorted_u[:-1, :]):
-        return None
-    ranks = np.empty_like(order, dtype=np.intp)
-    values = np.arange(1, u.shape[0] + 1, dtype=np.intp)[:, None]
-    np.put_along_axis(ranks, order, values, axis=0)
-    return ranks
+    return statistics.dense_rank_matrix_no_ties(u)
 
 
 def _kendall_tau_from_dense_ranks(x, y):
-    n = x.size
-    tot = n * (n - 1) // 2
-    if tot == 0:
-        return np.nan
-    perm = np.argsort(y)
-    x_sorted_y = x[perm]
-    y_sorted = y[perm]
-    perm = np.argsort(x_sorted_y, kind='mergesort')
-    x_dense = x_sorted_y[perm]
-    y_dense = y_sorted[perm]
-    dis = _kendall_dis(x_dense, y_dense)
-    return float((tot - 2 * dis) / tot)
+    return statistics.kendall_tau_from_dense_ranks(x, y)
 
 def _kendall_tau_value(u1, u2):
-    """Fast Kendall tau-b value for continuous data, with scipy fallback."""
-    if _kendall_dis is not None:
-        x = _dense_ranks_no_ties(u1)
-        y = _dense_ranks_no_ties(u2)
-        if x is not None and y is not None:
-            return _kendall_tau_from_dense_ranks(x, y)
-    return kendalltau(u1, u2).statistic
+    """Return the native Kendall tau-b statistic."""
+    return statistics.kendall_tau(u1, u2)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -699,7 +657,7 @@ def _build_tree_0(u):
                 tau = _kendall_tau_from_dense_ranks(
                     rank_matrix[:, i], rank_matrix[:, j])
             edges.append((i, j))
-            weights.append(abs(tau))
+            weights.append(statistics.absolute_value(tau))
 
     mst = _maximum_spanning_tree(nodes, edges, weights)
 
@@ -782,7 +740,7 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
                 continue
 
             tau_val = _kendall_tau_value(obs_a, obs_b)
-            if np.isnan(tau_val):
+            if statistics.is_nan(tau_val):
                 tau_val = 0.0
                 warnings.warn(
                     f"_build_next_tree: NaN Kendall's tau for "
@@ -792,7 +750,7 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
                     stacklevel=2)
 
             candidate_edges.append((i, j))
-            candidate_weights.append(abs(tau_val))
+            candidate_weights.append(statistics.absolute_value(tau_val))
             candidate_repr.append(
                 (frozenset(new_cond_vars), new_conditioning))
 
@@ -846,10 +804,10 @@ def _build_tree_0_conditional(u, given_vars, priority_limit_override=None):
             else:
                 tau = _kendall_tau_from_dense_ranks(
                     rank_matrix[:, i], rank_matrix[:, j])
-            if np.isnan(tau):
+            if statistics.is_nan(tau):
                 tau = 0.0
             edges.append((i, j))
-            weights.append(abs(tau))
+            weights.append(statistics.absolute_value(tau))
             priority.append(frozenset((i, j)) <= cond)
 
     priority_limit = max(len(cond) - 1, 0)
@@ -929,7 +887,7 @@ def _build_next_tree_conditional(tree_level, prev_edge_repr, pseudo_obs,
                 continue
 
             tau_val = _kendall_tau_value(obs_a, obs_b)
-            if np.isnan(tau_val):
+            if statistics.is_nan(tau_val):
                 tau_val = 0.0
                 warnings.warn(
                     f"_build_next_tree_conditional: NaN Kendall's tau for "
@@ -938,7 +896,7 @@ def _build_next_tree_conditional(tree_level, prev_edge_repr, pseudo_obs,
                     stacklevel=2)
 
             candidate_edges.append((i, j))
-            candidate_weights.append(abs(tau_val))
+            candidate_weights.append(statistics.absolute_value(tau_val))
             candidate_repr.append(
                 (frozenset(new_cond_vars), new_conditioning))
             candidate_priority.append(frozenset(new_cond_vars) <= cond)

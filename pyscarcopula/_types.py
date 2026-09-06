@@ -11,8 +11,12 @@ Design decisions:
 
 from __future__ import annotations
 from dataclasses import dataclass, field, replace as dataclass_replace
-from typing import Any
+from typing import Any, TypeAlias
 import numpy as np
+
+from pyscarcopula._native.threads import validate_n_threads
+from pyscarcopula._native import model_policy as _model_policy
+from pyscarcopula._native import statistics
 
 
 # Numerical configuration
@@ -34,8 +38,8 @@ class LBFGSBConfig:
     """Options for SciPy's L-BFGS-B optimizer.
 
     ``None`` means "inherit the library default" when the configuration is
-    merged into :class:`NumericalConfig`. All supplied values must be
-    strictly positive.
+    merged into `NumericalConfig`. All supplied values must be
+    finite, real, and strictly positive.
     """
 
     gtol: float | None = None
@@ -63,7 +67,7 @@ class LBFGSBConfig:
         """Return validated options suitable for ``scipy.optimize.minimize``.
 
         Keyword arguments override fields on this object. Unknown option
-        names raise :class:`TypeError` instead of being silently ignored.
+        names raise `TypeError` instead of being silently ignored.
         """
         values = {
             name: getattr(self, name)
@@ -86,10 +90,17 @@ class LBFGSBConfig:
 
     @staticmethod
     def _validated_option(name: str, value: float | int) -> float | int:
-        if name in ('maxfun', 'maxiter', 'maxls', 'maxcor'):
+        from pyscarcopula.numerical._arrays import as_float64_scalar
+
+        integer_option = name in ('maxfun', 'maxiter', 'maxls', 'maxcor')
+        if integer_option and isinstance(value, (int, np.integer)):
+            # Preserve exact integer counts without a float64 round trip.
             value = int(value)
         else:
-            value = float(value)
+            scalar = as_float64_scalar(value, name=name)
+            if not np.isfinite(scalar):
+                raise ValueError(f"{name} must be positive and finite")
+            value = int(value) if integer_option else scalar
         if value <= 0:
             raise ValueError(f"{name} must be positive")
         return value
@@ -105,13 +116,13 @@ DEFAULT_GAS_OPTIMIZER = LBFGSBConfig(
     maxfun=4000,
     maxiter=1000,
     maxls=100,
-    eps=1e-5,
+    eps=1e-8,
 )
 DEFAULT_SCAR_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
     maxfun=300,
     maxiter=100,
-    maxls=20,
+    maxls=100,
     eps=1e-4,
 )
 DEFAULT_BIVARIATE_LOG_SCAR_OPTIMIZER = LBFGSBConfig(
@@ -137,7 +148,7 @@ DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
     maxfun=1000,
     maxiter=1000,
     maxls=50,
-    eps=1e-5,
+    eps=1e-8,
 )
 DEFAULT_STOCHASTIC_STUDENT_SCAR_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
@@ -196,7 +207,8 @@ class NumericalConfig:
     stochastic_student_scar_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_SCAR_OPTIMIZER)
 
-    # Bisection (h-function inversion)
+    # Iterative h-function inversion for conditional Gumbel/Joe sampling.
+    # Gumbel tests the log-equation residual; Joe tests the h-value residual.
     bisection_tol: float = 1e-10
     bisection_maxiter: int = 60
 
@@ -205,20 +217,16 @@ class NumericalConfig:
     gas_gamma_bound: float = 20.0
     gas_beta_bound: float = 0.999
 
-    # MC samplers
-    default_n_tr: int = 500
-    default_M_iterations: int = 3
-
     def __post_init__(self) -> None:
-        n_threads = self.n_threads
-        if isinstance(n_threads, (bool, np.bool_)) or not isinstance(
-                n_threads, (int, np.integer)):
-            raise ValueError("n_threads must be an integer in [1, 256]")
-        resolved_threads = int(n_threads)
-        if resolved_threads < 1 or resolved_threads > 256:
-            raise ValueError(
-                f"n_threads must be in [1, 256], got {resolved_threads}")
+        resolved_threads = validate_n_threads(self.n_threads)
         object.__setattr__(self, 'n_threads', resolved_threads)
+        if not np.isfinite(self.bisection_tol) or self.bisection_tol <= 0:
+            raise ValueError('bisection_tol must be positive and finite')
+        if isinstance(self.bisection_maxiter, (bool, np.bool_)) or not isinstance(
+                self.bisection_maxiter, (int, np.integer)):
+            raise TypeError('bisection_maxiter must be a positive integer')
+        if self.bisection_maxiter <= 0:
+            raise ValueError('bisection_maxiter must be positive')
         object.__setattr__(
             self, 'mle_optimizer',
             DEFAULT_MLE_OPTIMIZER.merged(self.mle_optimizer))
@@ -272,12 +280,14 @@ class PredictConfig:
     given : dict[int, float] or None
         Coordinates fixed during conditional sampling, expressed in
         pseudo-observation space.
-    horizon : {"current", "next"}
-        Whether to use the filtered current state or advance it one step.
-    predictive_r_mode : {"grid", "histogram"} or None
-        Sampling representation for a predictive scalar parameter.
-    dynamic_conditioning : {"ignore", "given_only"}
-        Policy for updating dynamic vine edges from conditioned values.
+    horizon : str, default="next"
+        Use "current" for the filtered state or "next" to advance one step.
+    predictive_r_mode : str or None, default=None
+        Sampling representation for a predictive scalar parameter: "grid" or
+        "histogram". None selects the strategy-specific default.
+    dynamic_conditioning : str, default="ignore"
+        Policy for updating dynamic vine edges from conditioned values:
+        "ignore" or "given_only".
     return_diagnostics : bool
         Request prediction diagnostics from models that support them.
     mcmc_steps, mcmc_burnin : int or None
@@ -286,7 +296,7 @@ class PredictConfig:
 
     Notes
     -----
-    Call :meth:`validated` after direct construction, or use :meth:`replace`,
+    Call `validated` after direct construction, or use `replace`,
     to normalize string values and validate integer controls.
     """
 
@@ -386,6 +396,7 @@ class LatentProcessParams:
 
     The named access (params.kappa) goes through __getattr__,
     the positional access (params.values[0]) is always available.
+    Values and optional bounds must be real; infinite bounds are allowed.
     """
 
     process_type: str                          # 'ou', 'levy', 'fbm', ...
@@ -395,15 +406,18 @@ class LatentProcessParams:
     bounds_upper: np.ndarray | None = None     # per-param upper bounds
 
     def __post_init__(self) -> None:
-        # Ensure values is a proper numpy array
+        from pyscarcopula.numerical._arrays import as_float64_array
+
         object.__setattr__(self, 'values',
-                           np.asarray(self.values, dtype=np.float64))
+                           as_float64_array(self.values, name='values'))
         if self.bounds_lower is not None:
             object.__setattr__(self, 'bounds_lower',
-                               np.asarray(self.bounds_lower, dtype=np.float64))
+                               as_float64_array(
+                                   self.bounds_lower, name='bounds_lower'))
         if self.bounds_upper is not None:
             object.__setattr__(self, 'bounds_upper',
-                               np.asarray(self.bounds_upper, dtype=np.float64))
+                               as_float64_array(
+                                   self.bounds_upper, name='bounds_upper'))
         if len(self.names) != len(self.values):
             raise ValueError(
                 f"names ({len(self.names)}) and values ({len(self.values)}) "
@@ -436,6 +450,9 @@ class LatentProcessParams:
 
     def replace(self, **kwargs: float) -> LatentProcessParams:
         """Return a new LatentProcessParams with some values changed."""
+        unknown = sorted(set(kwargs).difference(self.names))
+        if unknown:
+            raise TypeError(f"Unknown {self.process_type} parameter(s): {unknown}")
         d = self.to_dict()
         d.update(kwargs)
         new_values = np.array([d[n] for n in self.names])
@@ -454,12 +471,14 @@ class LatentProcessParams:
 
 def ou_params(kappa: float, mu: float, nu: float) -> LatentProcessParams:
     """Convenience constructor for OU process parameters."""
+    from pyscarcopula._native import model_policy
+    lower, upper = model_policy.latent_bounds("ou")
     return LatentProcessParams(
         process_type='ou',
         names=('kappa', 'mu', 'nu'),
         values=np.array([kappa, mu, nu]),
-        bounds_lower=np.array([0.001, -np.inf, 0.001]),
-        bounds_upper=np.array([np.inf, np.inf, np.inf]),
+        bounds_lower=np.asarray(lower, dtype=np.float64),
+        bounds_upper=np.asarray(upper, dtype=np.float64),
     )
 
 
@@ -469,18 +488,25 @@ def jacobi_params(kappa: float, m: float, xi: float) -> LatentProcessParams:
     The process evolves Kendall's tau directly:
     d tau_t = kappa * (m - tau_t) dt + xi * sqrt(tau_t * (1 - tau_t)) dW_t.
     """
+    from pyscarcopula._native import model_policy
+    lower, upper = model_policy.latent_bounds("jacobi")
     return LatentProcessParams(
         process_type='jacobi',
         names=('kappa', 'm', 'xi'),
         values=np.array([kappa, m, xi]),
-        bounds_lower=np.array([0.001, 1e-6, 0.001]),
-        bounds_upper=np.array([np.inf, 1.0 - 1e-6, np.inf]),
+        bounds_lower=np.asarray(lower, dtype=np.float64),
+        bounds_upper=np.asarray(upper, dtype=np.float64),
     )
 
 
+_DEFAULT_GAS_GAMMA_BOUND, _DEFAULT_GAS_BETA_BOUND = (
+    _model_policy.default_gas_limits())
+
+
 def gas_params(omega: float, gamma: float, beta: float,
-               gamma_bound: float = 10.0,
-               beta_bound: float = 0.999) -> LatentProcessParams:
+               gamma_bound: float = _DEFAULT_GAS_GAMMA_BOUND,
+               beta_bound: float = _DEFAULT_GAS_BETA_BOUND
+               ) -> LatentProcessParams:
     """Convenience constructor for GAS process parameters.
 
     Bounds used by GASProcess.fit():
@@ -488,14 +514,15 @@ def gas_params(omega: float, gamma: float, beta: float,
       gamma: [-gamma_bound, gamma_bound] (score sensitivity can be negative)
       beta:  (-beta_bound, beta_bound) (persistence, |beta| < 1)
     """
-    gamma_bound = float(gamma_bound)
-    beta_bound = float(beta_bound)
+    from pyscarcopula._native import model_policy
+    lower, upper = model_policy.latent_bounds(
+        "gas", gamma_bound=gamma_bound, beta_bound=beta_bound)
     return LatentProcessParams(
         process_type='gas',
         names=('omega', 'gamma', 'beta'),
         values=np.array([omega, gamma, beta]),
-        bounds_lower=np.array([-np.inf, -gamma_bound, -beta_bound]),
-        bounds_upper=np.array([np.inf, gamma_bound, beta_bound]),
+        bounds_lower=np.asarray(lower, dtype=np.float64),
+        bounds_upper=np.asarray(upper, dtype=np.float64),
     )
 
 
@@ -585,8 +612,10 @@ class MultivariateMLEResult(MLEResult):
             self, "n_observations", int(self.n_observations))
 
         if self.correlation_matrix is not None:
-            correlation = np.array(
-                self.correlation_matrix, dtype=np.float64, copy=True)
+            from pyscarcopula.numerical._arrays import as_float64_array
+
+            correlation = as_float64_array(
+                self.correlation_matrix, name="correlation_matrix").copy()
             if (
                     correlation.ndim != 2
                     or correlation.shape[0] != correlation.shape[1]):
@@ -598,14 +627,21 @@ class MultivariateMLEResult(MLEResult):
     @property
     def aic(self) -> float:
         """Akaike information criterion."""
-        return 2.0 * self.parameter_count - 2.0 * self.log_likelihood
+        return statistics.information_criterion(
+            self.log_likelihood,
+            self.parameter_count,
+            self.n_observations,
+            "aic",
+        )
 
     @property
     def bic(self) -> float:
         """Bayesian information criterion."""
-        return (
-            np.log(self.n_observations) * self.parameter_count
-            - 2.0 * self.log_likelihood
+        return statistics.information_criterion(
+            self.log_likelihood,
+            self.parameter_count,
+            self.n_observations,
+            "bic",
         )
 
     def _repr_lines(self) -> list[str]:
@@ -645,8 +681,6 @@ class LatentResult(FitResultBase):
     spectral_basis_order: int | str | None = None  # Hermite basis size/mode
     spectral_quad_order: int | None = None   # Hermite quadrature size
     diagnostics: dict[str, Any] = field(default_factory=dict)
-    n_tr: int | None = None                  # MC trajectory count
-    M_iterations: int | None = None          # EIS iterations
     parameter_count: int | None = None        # latent plus fitted static params
     # Jacobi options that change likelihood, prediction, or admissibility.
     # Appended to preserve positional compatibility of older result fields.
@@ -660,7 +694,7 @@ class LatentResult(FitResultBase):
     lamperti_substeps: int = 8
     lamperti_boundary: str = "reflect"
     lamperti_eps: float = 1e-10
-    lamperti_engine: str = "numba"
+    lamperti_engine: str = "native"
     lamperti_chunk_observations: int = 4096
     memory_budget_bytes: int | None = None
     transition_storage: str = "dense"
@@ -714,10 +748,6 @@ class LatentResult(FitResultBase):
             lines.append(f"spectral_basis_order: {self.spectral_basis_order}")
         if self.spectral_quad_order is not None:
             lines.append(f"spectral_quad_order: {self.spectral_quad_order}")
-        if self.n_tr is not None:
-            lines.append(f"           n_tr: {self.n_tr}")
-        if self.M_iterations is not None:
-            lines.append(f"   M_iterations: {self.M_iterations}")
         return lines
 
 
@@ -793,7 +823,7 @@ class IndependentResult(FitResultBase):
 
 
 # Union type for consumers
-FitResult = (
+FitResult: TypeAlias = (
     MLEResult
     | MultivariateMLEResult
     | LatentResult

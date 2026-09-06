@@ -1,14 +1,17 @@
 """Model persistence tests."""
 
+import importlib
 import json
+import operator
+import pickle
 
 import numpy as np
 import pytest
 from scipy.stats import norm
 
+import pyscarcopula.io as persistence
 from pyscarcopula import (
     BivariateGaussianCopula,
-    CVineCopula,
     GaussianCopula,
     GumbelCopula,
     RVineCopula,
@@ -18,12 +21,72 @@ from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     GASResult,
     LatentResult,
+    NumericalConfig,
     gas_params,
     jacobi_params,
     ou_params,
 )
 from pyscarcopula.api import log_likelihood, predict, predictive_mean, sample
 from pyscarcopula.io import _from_jsonable, _to_jsonable
+from pyscarcopula.strategy.gas import GASStrategy
+
+
+def test_removed_cvine_artifact_is_rejected_before_class_import(
+        tmp_path, monkeypatch):
+    artifact = tmp_path / "removed-cvine.json"
+    artifact.write_text(json.dumps({
+        "format": persistence.MODEL_FORMAT,
+        "class": "pyscarcopula.vine.cvine.CVineCopula",
+        "include_data": False,
+        "state": {"class": "pyscarcopula.vine.cvine.CVineCopula"},
+    }), encoding="utf-8")
+
+    imported = []
+
+    def fail_import(name):
+        imported.append(name)
+        raise AssertionError("removed artifact must fail before import")
+
+    monkeypatch.setattr(importlib, "import_module", fail_import)
+    with pytest.raises(ValueError, match="no migration execution path"):
+        persistence.load_model(artifact)
+    assert imported == []
+
+
+@pytest.mark.parametrize("class_path", [
+    "pyscarcopula.contrib.marginal.MarginalModel",
+    "pyscarcopula._native._scar_cpp.NativeModelId",
+    "pyscarcopula._native._extension.NativeError",
+    "pyscarcopula.io.Path",
+    "pyscarcopula.unregistered.Payload",
+])
+def test_persistence_rejects_non_schema_types_without_dynamic_import(
+        monkeypatch, class_path):
+    persistence._persisted_classes()
+
+    def forbidden(name):
+        raise AssertionError(f"payload triggered a dynamic import: {name}")
+
+    monkeypatch.setattr(importlib, "import_module", forbidden)
+    with pytest.raises(ValueError, match="Unsupported persisted class"):
+        _from_jsonable({"__pyscarcopula_type__": "class", "class": class_path})
+
+
+def test_persistence_rejects_types_that_spoof_registered_names():
+    fake_model = type("GumbelCopula", (), {
+        "__module__": "pyscarcopula.copula.gumbel"})
+    with pytest.raises(ValueError, match="Unsupported persisted class"):
+        _to_jsonable(fake_model)
+    with pytest.raises(ValueError, match="Unsupported persisted class"):
+        _to_jsonable(fake_model())
+
+
+def test_supported_persistence_registry_is_immutable():
+    registry = persistence._persisted_classes()
+
+    with pytest.raises(TypeError):
+        operator.setitem(
+            registry, "pyscarcopula.contrib.injected.Payload", object)
 
 
 def test_bivariate_save_load_roundtrip(tmp_path, random_u2):
@@ -70,6 +133,99 @@ def test_legacy_gas_backend_field_is_ignored_on_load():
     assert loaded.copula_name == result.copula_name
     np.testing.assert_allclose(loaded.params.values, result.params.values)
     assert not hasattr(loaded, "backend")
+
+
+def _roundtrip_gas_strategy(strategy, tmp_path, serialization):
+    if serialization == "pickle":
+        return pickle.loads(pickle.dumps(strategy))
+    path = tmp_path / "gas_strategy.json"
+    persistence.save_model(strategy, path, include_data=True)
+    return load_model(path, expected_type=GASStrategy)
+
+
+@pytest.fixture(params=["json", "pickle"])
+def legacy_gas_strategy(request, tmp_path, saved_scaling):
+    strategy = GASStrategy(
+        config=NumericalConfig(gas_score_eps=0.00037), scaling=saved_scaling)
+    # Older strategies persisted only config and scaling; no override flag.
+    del strategy._explicit_scaling
+    return _roundtrip_gas_strategy(strategy, tmp_path, request.param)
+
+
+@pytest.mark.parametrize("saved_scaling", ["unit", "fisher"])
+@pytest.mark.parametrize("result_scaling", ["unit", "fisher"])
+@pytest.mark.parametrize("entry", [
+    "log_likelihood", "predictive_mean", "mixture_h", "sample", "predict",
+])
+def test_legacy_gas_strategy_inherits_result_scaling(
+        legacy_gas_strategy, saved_scaling, result_scaling, entry):
+    copula = GumbelCopula(rotate=180)
+    u = np.random.default_rng(314).uniform(0.12, 0.88, (16, 2))
+    result = GASResult(
+        method="GAS", copula_name=copula.name, success=True,
+        log_likelihood=0.0, params=gas_params(0.13, 0.055, 0.61),
+        scaling=result_scaling, score_eps=0.00037, r_last=2.1)
+
+    def call(strategy):
+        args = (copula, u, result)
+        kwargs = {}
+        if entry in {"sample", "predict"}:
+            args += (7,)
+            kwargs["rng"] = np.random.default_rng(617)
+        return getattr(strategy, entry)(*args, **kwargs)
+
+    np.testing.assert_allclose(call(legacy_gas_strategy), call(GASStrategy()))
+    assert legacy_gas_strategy.scaling == saved_scaling
+    assert result.scaling == result_scaling
+
+
+@pytest.mark.parametrize("saved_scaling", ["unit", "fisher"])
+def test_legacy_gas_strategy_preserves_fit_options_and_can_be_resaved(
+        legacy_gas_strategy, saved_scaling, tmp_path):
+    config = NumericalConfig(gas_score_eps=0.00037)
+    assert legacy_gas_strategy.config == config
+    copula = GumbelCopula(rotate=180)
+    u = np.random.default_rng(314).uniform(0.12, 0.88, (16, 2))
+    parameters = gas_params(0.13, 0.055, 0.61)
+    expected = GASStrategy(config=config, scaling=saved_scaling)
+    assert legacy_gas_strategy.objective(
+        copula, u, parameters.values) == pytest.approx(
+            expected.objective(copula, u, parameters.values))
+
+    result = GASResult(
+        method="GAS", copula_name=copula.name, success=True,
+        log_likelihood=0.0, params=parameters,
+        scaling="fisher" if saved_scaling == "unit" else "unit", r_last=2.1)
+    path = tmp_path / "resaved_strategy.json"
+    persistence.save_model(legacy_gas_strategy, path)
+    reloaded = load_model(path, expected_type=GASStrategy)
+    assert reloaded.config == config
+    assert reloaded.scaling == saved_scaling
+    # Cached prediction must not require history for a legacy strategy.
+    np.testing.assert_array_equal(
+        reloaded.predict(copula, None, result, 7, rng=np.random.default_rng(617)),
+        GASStrategy().predict(
+            copula, None, result, 7, rng=np.random.default_rng(617)))
+
+
+@pytest.mark.parametrize("serialization", ["json", "pickle"])
+@pytest.mark.parametrize("scaling", [None, "unit", "fisher"])
+@pytest.mark.parametrize("result_scaling", ["unit", "fisher"])
+def test_gas_strategy_roundtrip_preserves_scaling_override(
+        tmp_path, serialization, scaling, result_scaling):
+    strategy = GASStrategy(scaling=scaling)
+    loaded = _roundtrip_gas_strategy(strategy, tmp_path, serialization)
+    copula = GumbelCopula(rotate=180)
+    u = np.random.default_rng(314).uniform(0.12, 0.88, (16, 2))
+    result = GASResult(
+        method="GAS", copula_name=copula.name, success=True,
+        log_likelihood=0.0, params=gas_params(0.13, 0.055, 0.61),
+        scaling=result_scaling, score_eps=0.00037, r_last=2.1)
+    assert loaded._explicit_scaling is (scaling is not None)
+    assert loaded.scaling == strategy.scaling
+    np.testing.assert_array_equal(
+        loaded.predict(copula, u, result, 7, rng=np.random.default_rng(617)),
+        strategy.predict(copula, u, result, 7, rng=np.random.default_rng(617)))
 
 
 def test_legacy_scar_backend_field_is_ignored_on_load():
@@ -163,7 +319,7 @@ def test_legacy_jacobi_result_without_semantic_options_uses_defaults():
     assert loaded.lamperti_substeps == 8
     assert loaded.lamperti_boundary == "reflect"
     assert loaded.lamperti_eps == pytest.approx(1e-10)
-    assert loaded.lamperti_engine == "numba"
+    assert loaded.lamperti_engine == "native"
     assert loaded.lamperti_chunk_observations == 4096
     assert loaded.memory_budget_bytes is None
 
@@ -213,7 +369,7 @@ def test_jacobi_semantic_options_model_roundtrip(tmp_path):
     assert loaded_result.lamperti_substeps == 4
     assert loaded_result.lamperti_boundary == "clip"
     assert loaded_result.lamperti_eps == pytest.approx(2e-9)
-    assert loaded_result.lamperti_engine == "python"
+    assert loaded_result.lamperti_engine == "native"
     assert loaded_result.lamperti_chunk_observations == 3
     assert loaded_result.memory_budget_bytes == 2_000_000
     assert log_likelihood(loaded, u, loaded_result) == pytest.approx(
@@ -315,8 +471,8 @@ def test_top_level_load_rejects_wrong_expected_type(tmp_path, random_u2):
     path = tmp_path / "gumbel.json"
     cop.save(path)
 
-    with pytest.raises(TypeError, match="Expected CVineCopula"):
-        CVineCopula.load(path)
+    with pytest.raises(TypeError, match="Expected GaussianCopula"):
+        load_model(path, expected_type=GaussianCopula)
     assert isinstance(load_model(path), GumbelCopula)
 
 
@@ -333,31 +489,6 @@ def test_gaussian_copula_save_load_roundtrip(tmp_path):
     np.testing.assert_allclose(
         loaded.sample(5, rng=np.random.default_rng(7)),
         cop.sample(5, rng=np.random.default_rng(7)),
-    )
-
-
-def test_cvine_save_load_roundtrip(tmp_path):
-    u = pobs(np.random.default_rng(2).standard_normal((120, 4)))
-    vine = CVineCopula().fit(u, method="mle")
-
-    path = tmp_path / "cvine.json"
-    vine.save(path)
-    loaded = CVineCopula.load(path)
-
-    assert loaded.d == vine.d
-    assert loaded.method == vine.method
-    assert loaded.fit_result.log_likelihood == vine.fit_result.log_likelihood
-    assert len(loaded.edges) == len(vine.edges)
-    assert [
-        [type(edge.copula).__name__ for edge in level]
-        for level in loaded.edges
-    ] == [
-        [type(edge.copula).__name__ for edge in level]
-        for level in vine.edges
-    ]
-    np.testing.assert_allclose(
-        loaded.sample(5, rng=np.random.default_rng(3)),
-        vine.sample(5, rng=np.random.default_rng(3)),
     )
 
 

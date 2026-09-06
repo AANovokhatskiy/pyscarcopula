@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 import scipy
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 from pyscarcopula import GaussianCopula, GumbelCopula, StudentCopula
 from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationPolicy,
@@ -23,11 +23,9 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
-from pyscarcopula.numerical import static_likelihood
-from pyscarcopula.numerical.jacobi_tm import _emission_grid
-from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
-from pyscarcopula.numerical.ou_kernels import calculate_dwt
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
+from pyscarcopula._native import static as static_likelihood
+from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.strategy.mle import MLEStrategy
 
 
@@ -57,10 +55,10 @@ def _report(name, elapsed, *, workload, cache_state):
         "platform": platform.platform(),
         "numpy": np.__version__,
         "scipy": scipy.__version__,
-        "native_extension": _cpp_scar_ou.available(),
+        "native_extension": "required",
         "timer": "perf_counter median",
     }
-    print("WP0_BENCH " + json.dumps(payload, sort_keys=True), flush=True)
+    print("NUMERICAL_BENCH " + json.dumps(payload, sort_keys=True), flush=True)
 
 
 @pytest.mark.benchmark
@@ -284,45 +282,34 @@ def test_static_factor_large_dimension_benchmark_report(family):
 
 
 @pytest.mark.benchmark
-def test_jacobi_emission_construction_benchmark_report():
+def test_jacobi_prepared_evaluator_setup_benchmark_report():
     _enabled()
     u = np.random.default_rng(20260624).uniform(0.01, 0.99, (1_000, 2))
-    tau = np.linspace(0.01, 0.95, 64)
     copula = GumbelCopula(rotate=180)
-    _emission_grid(u[:8], copula, tau)
+
+    def prepare_and_filter(observations):
+        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+            observations,
+            copula,
+            basis_order=4,
+            quad_order=64,
+            transition_method="local",
+            gh_order=3,
+        )
+        return evaluator.filter(1.2, 0.4, 0.25)
+
+    prepare_and_filter(u[:8])
 
     elapsed, result = _median_elapsed(
-        lambda: _emission_grid(u, copula, tau)
+        lambda: prepare_and_filter(u)
     )
 
-    assert result[0].shape == (len(u), len(tau))
+    assert result["emissions"].shape == (len(u), 64)
     _report(
-        "jacobi_emission_construction",
+        "jacobi_prepared_evaluator_setup",
         elapsed,
-        workload={"T": len(u), "K": len(tau), "family": "gumbel"},
-        cache_state="warm",
-    )
-
-
-@pytest.mark.benchmark
-def test_mc_copula_density_accumulation_benchmark_report():
-    _enabled()
-    T = 200
-    n_tr = 2_000
-    u = np.random.default_rng(20260625).uniform(0.01, 0.99, (T, 2))
-    dwt = calculate_dwt(T, n_tr, seed=20260625)
-    copula = GumbelCopula(rotate=180)
-    call = lambda: p_sampler_loglik(1.1, 0.3, 0.8, u, dwt, copula, True)
-    call()
-
-    elapsed, value = _median_elapsed(call, repeats=3)
-
-    assert np.isfinite(value)
-    _report(
-        "mc_copula_density_accumulation",
-        elapsed,
-        workload={"T": T, "n_tr": n_tr, "family": "gumbel"},
-        cache_state="warm_fixed_dwt",
+        workload={"T": len(u), "K": 64, "family": "gumbel"},
+        cache_state="cold_preparation",
     )
 
 

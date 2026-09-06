@@ -39,9 +39,10 @@ _BANNED_SOURCE_MARKERS = (
 
 
 def _extension_path() -> Path:
-    spec = importlib.util.find_spec("pyscarcopula._scar_cpp")
+    spec = importlib.util.find_spec("pyscarcopula._native._scar_cpp")
     if spec is None or spec.origin is None:
-        raise RuntimeError("pyscarcopula._scar_cpp is not importable")
+        raise RuntimeError(
+            "pyscarcopula._native._scar_cpp is not importable")
     return Path(spec.origin).resolve()
 
 

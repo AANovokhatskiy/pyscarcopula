@@ -3,7 +3,7 @@
 ## Overview
 
 Factor correlation is the scalable correlation representation used by the
-multivariate Gaussian and stochastic Student models:
+multivariate Gaussian, static Student, and stochastic Student models:
 
 $$
 R = D + BB^\top,
@@ -21,7 +21,7 @@ The implementation has three separate layers:
 |---|---|---|
 | Correlation value | `FactorCorrelation` | Validate and persist `B` and `D` |
 | Prepared operator | `PreparedFactorCorrelation` | Woodbury linear algebra and normal generation |
-| Model adapter | `GaussianCopula`, `StochasticStudentCopula`, `FactorStudentEvaluator` | Marginal transforms, likelihood, fitting, dynamics, and sampling |
+| Model adapter | `GaussianCopula`, `StudentCopula`, `StochasticStudentCopula`, `FactorStudentEvaluator` | Marginal transforms, likelihood, fitting, dynamics, and sampling |
 
 `FactorCorrelation` is independent of Student, Gaussian, GAS, SCAR, and
 optimizer state. The same read-only prepared operator can therefore be
@@ -45,14 +45,26 @@ matrix, or Schur complement.
 
 ### Construct and prepare
 
+The examples below share a small `(80, 20)` dataset and can be run in order.
+The separate streaming example at the end handles 100000 dimensions.
+For iterator examples, `consume` stands for an application sink; this small
+example checks each block without retaining it.
+
+```python
+def consume(*blocks):
+    for block in blocks:
+        assert block.ndim == 2
+```
+
 ```python
 import numpy as np
 
 from pyscarcopula import FactorCorrelation
 
 rng = np.random.default_rng(2026)
-d = 100_000
-k = 8
+d = 20
+k = 4
+u = rng.uniform(0.01, 0.99, size=(80, d))
 
 B = rng.normal(scale=0.01, size=(d, k))
 factor = FactorCorrelation(
@@ -102,7 +114,7 @@ normal_rows = operator.sample_normal(
 )
 
 for block in operator.sample_normal_batches(
-    1_000_000,
+    256,
     batch_rows=128,
     rng=np.random.default_rng(8),
     n_threads=4,
@@ -140,6 +152,11 @@ small_R = small_factor.to_dense(
 ```
 
 For a large `d`, use the prepared operator instead of raising these guards.
+
+`GaussianCopula.to_correlation_matrix` and
+`StudentCopula.to_correlation_matrix` enforce the same dimension and output
+byte limits. These limits apply both when materializing factor correlations
+and when returning an owned copy of an already stored dense correlation.
 
 ## Static Gaussian factor model
 
@@ -187,7 +204,7 @@ gaussian = GaussianCopula(
 rows = gaussian.log_pdf_rows(u, n_threads=4)
 total = gaussian.log_likelihood(u, n_threads=4)
 draws = gaussian.sample(
-    10_000,
+    128,
     rng=np.random.default_rng(9),
     n_threads=4,
 )
@@ -197,7 +214,7 @@ Conditional generation fixes values in pseudo-observation space:
 
 ```python
 conditional = gaussian.sample_conditional(
-    10_000,
+    128,
     given={0: 0.25, 7: 0.80},
     rng=np.random.default_rng(10),
     n_threads=4,
@@ -218,7 +235,6 @@ can be constant or dynamic:
 | MLE + `joint` | One fitted constant `df` | Optimized jointly with `df` |
 | GAS | Score-driven `df_t` | Supplied or two-stage, then fixed |
 | SCAR-TM-OU | Latent OU-driven `df_t` | Supplied or two-stage, then fixed |
-| SCAR-P-OU / SCAR-M-OU | Monte Carlo latent dynamics | Supplied or two-stage, then fixed |
 
 ### Static MLE with two-stage loadings
 
@@ -253,12 +269,14 @@ The sequence is:
 1. Estimate `B` with tiled randomized SVD.
 2. Prepare the immutable factor operator.
 3. Hold `B` fixed and optimize constant `df`.
-4. Count the estimated identifiable factor parameters in AIC/BIC.
+4. Count the generic factor-correlation dimension in AIC/BIC, capped at
+   `d*(d-1)/2` when the requested rank saturates the correlation space.
 
-Supplied loadings skip step 1:
+Supplied loadings skip step 1. This separate model leaves `student` available
+for the fitted sampling example below:
 
 ```python
-student = StochasticStudentCopula(
+supplied_student = StochasticStudentCopula(
     d=B.shape[0],
     corr_mode="factor",
     factor_rank=B.shape[1],
@@ -294,16 +312,33 @@ print(joint_result.diagnostics["joint_gradient_inf_norm"])
 print(joint_result.diagnostics["joint_gradient_gate"])
 ```
 
-The constructor guard is based on `d*k`. The optimizer uses
-`d*k-k*(k-1)/2` identifiable coordinates: pivot-selected anchor rows form a
-lower-triangular block with positive diagonal. Native analytical gradients
-are used for both `df` and every loading. A reported optimizer success is
+Joint fitting requires `d >= 2*k + 1`, a sufficient regime for generic
+identifiability. Higher ranks remain available for two-stage fitting. This
+guard does not certify singular or rank-deficient loading configurations.
+The row-deletion criterion behind this restriction is described in
+[the factor-identification literature](https://www.mdpi.com/2225-1146/11/4/26).
+
+The optimizer uses `d*k-k*(k-1)/2` rotation-anchored coordinates:
+pivot-selected anchor rows form a lower-triangular block with positive
+diagonal. `factor_joint_max_params` additionally bounds the optimization
+size (the `StochasticStudentCopula` guard conservatively uses `d*k`). Native
+analytical gradients are used for both `df` and every loading. A reported optimizer success is
 accepted only when uniqueness, Woodbury condition, finite objective, and
 terminal-gradient gates all pass.
 
 For very large `d`, prefer `two-stage`. Joint optimization retains compact
 correlation storage but is still a high-dimensional nonlinear optimization
 problem.
+
+For `N` rows, the joint kernel keeps `R = min(N, 64)` stable reduction
+partials. Their `R*d*k` loading-gradient storage remains fixed even when the
+call uses fewer runners, which preserves the numerical fold. The executor may
+limit `W` for useful work per runner; queued execution then uses
+`J = min(R, W)` scratch slots. Each slot owns `3*d + k` doubles. The inner
+factor solve reuses that rank-sized buffer instead of allocating once per row.
+Diagnostics report `reduction_blocks`, `reduction_workspace_bytes`,
+`planned_worker_slots`, `worker_workspace_peak_bytes`, and
+`planned_worker_workspace_bytes` separately.
 
 ## Dynamic Student models
 
@@ -330,7 +365,7 @@ gas_result = gas_student.fit(
 
 df_path = predictive_mean(gas_student, u, gas_result)
 gas_draws = gas_student.predict(
-    10_000,
+    128,
     u=u,
     rng=np.random.default_rng(11),
     n_threads=4,
@@ -361,7 +396,7 @@ scar_result = scar_student.fit(
 )
 
 scar_draws = scar_student.predict(
-    10_000,
+    128,
     u=u,
     rng=np.random.default_rng(12),
     n_threads=4,
@@ -369,10 +404,9 @@ scar_draws = scar_student.predict(
 ```
 
 The matrix, local, and spectral SCAR-TM backends consume the same compact
-factor operator. SCAR-P-OU and SCAR-M-OU use the native factor trajectory
-kernel. Forward/backward filtering remains sequential in time; emission rows,
-grid cells, dimension tiles, and independent trajectories are parallelized
-where their workload passes the native thresholds.
+factor operator. Forward/backward filtering remains sequential in time;
+emission rows, grid cells, and dimension tiles are parallelized where their
+workload passes the native thresholds.
 
 ### Estimation-mode compatibility
 
@@ -391,7 +425,11 @@ gas_result = dynamic_student.fit(u, method="gas")
 ```
 
 In dynamic fits the estimated loadings remain fixed while the degrees of
-freedom follow the selected GAS or SCAR process.
+freedom follow the selected GAS or SCAR process. A subsequent fit estimates
+loadings from its new observations unless they were supplied to the
+constructor or retained by an explicit `initialize_factor(data)` call.
+Providing a dynamic optimizer start does not reuse data-derived loadings
+from a previous fit.
 
 ## Student likelihood without a model
 
@@ -429,18 +467,28 @@ for block in evaluator.evaluate_grid_batches(
     consume(block.log_pdf, block.dlog_ddf)
 ```
 
+The grid budget includes each public result's actual lifetime. Let
+`C = observation_rows * len(df_grid)` and `S = len(df_grid)`, with all values
+below measured in bytes. Log-grid evaluation keeps the conservative
+`32*C + native_workspace` requirement. Density conversion requires the
+larger of that value and `48*C`. The stochastic density/gradient call requires
+the largest of `log_requirement + 16*S`, `40*C + 16*S`, and `64*C`.
+`evaluate_grid_batches` and `pdf_and_grad_on_grid_batches` apply the same
+formula to the largest requested row block. These checks describe one call;
+they do not reserve memory across concurrent calls.
+
 ## Sampling fitted Student models
 
 Use batches whenever `n*d` output is itself large:
 
 ```python
 for block in student.sample_batches(
-    1_000_000,
+    256,
     u=u,
     batch_rows=128,
     rng=np.random.default_rng(13),
     n_threads=4,
-    memory_budget_bytes=128 * (2 * student.d + student.factor_rank + 8) * 8,
+    memory_budget_bytes=16 * 1024**2,
 ):
     consume(block)
 ```
@@ -449,7 +497,7 @@ Conditional sampling keeps fixed pseudo-observations exact:
 
 ```python
 conditional = student.sample_conditional(
-    10_000,
+    128,
     r=mle.copula_param,
     given={0: 0.25, 3: 0.80},
     rng=np.random.default_rng(14),
@@ -459,7 +507,35 @@ conditional = student.sample_conditional(
 
 For dynamic fitted models, `sample_batches` and `predict_batches` preserve the
 GAS or SCAR parameter-path semantics instead of replacing them with one
-constant `df`.
+constant `df`. SCAR model sampling streams its OU path in row blocks using
+the full requested length for the time step. Keep the seed and `batch_rows`
+fixed to reproduce the same sample sequence. The dense Student sampler also
+honors `memory_budget_bytes` before allocating its output or drawing random
+numbers; factor mode additionally budgets its structural workspace.
+
+## Streaming at 100000 dimensions
+
+This is a separate large-output example. Run it only when the application
+needs all 1024 rows: it streams about 819 MB in total, retaining at most one
+32-row output block. Never collect this iterator into a list. The numerical
+budget applies to each call; it does not reserve memory for other processes.
+
+```python
+large_d, large_k = 100_000, 8
+large_B = np.random.default_rng(2026).normal(scale=0.01, size=(large_d, large_k))
+large_gaussian = GaussianCopula(
+    d=large_d, corr_mode="factor", factor_rank=large_k,
+    factor_loadings=large_B,
+)
+for block in large_gaussian.sample_batches(
+    1024, batch_rows=32, memory_budget_bytes=128 * 1024**2,
+    rng=np.random.default_rng(2027),
+):
+    consume(block)
+```
+
+One monolithic `sample(10_000)` at this dimension needs 8 GB for the output
+alone. Compact correlation storage does not make that output compact.
 
 ## Scope of the factor representation
 
@@ -478,6 +554,7 @@ present factor scores as output of this API.
 
 The supported compositions are the first-party adapters
 `GaussianCopula(corr_mode="factor")`,
+`StudentCopula(corr_mode="factor")`,
 `StochasticStudentCopula(corr_mode="factor")`, and
 `FactorStudentEvaluator`.
 

@@ -13,9 +13,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - run: python -m pip install -e ".[test]"
       - name: Enforce equicorrelation CPU scaling target
         env:

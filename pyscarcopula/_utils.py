@@ -8,8 +8,8 @@ Single source of truth for:
 """
 
 import numpy as np
-from numba import njit
 
+from pyscarcopula._native import validation as native_validation
 from pyscarcopula._constants import (
     H_FUNCTION_EPS,
     PSEUDO_OBS_EPS,
@@ -36,9 +36,13 @@ def broadcast(u1, u2, r):
     -------
     u1a, u2a, ra : ndarray (n,)
     """
-    u1a = np.atleast_1d(np.asarray(u1, dtype=np.float64)).ravel()
-    u2a = np.atleast_1d(np.asarray(u2, dtype=np.float64)).ravel()
-    ra = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+    # Imported lazily because numerical.__init__ imports utilities used by
+    # native modules while this module itself is still being initialized.
+    from pyscarcopula.numerical._arrays import as_float64_array
+
+    u1a = np.atleast_1d(as_float64_array(u1, name="u1")).ravel()
+    u2a = np.atleast_1d(as_float64_array(u2, name="u2")).ravel()
+    ra = np.atleast_1d(as_float64_array(r, name="r")).ravel()
     n = max(len(u1a), len(u2a), len(ra))
     if len(u1a) == 1 and n > 1:
         u1a = np.full(n, u1a[0])
@@ -53,36 +57,26 @@ def broadcast(u1, u2, r):
 # Pseudo-observations
 # ══════════════════════════════════════════════════════════════════
 
-@njit(cache=True)
-def _rank_col(x):
-    """Rank a single column. Returns float64 ranks in [1, n]."""
-    n = len(x)
-    order = np.argsort(x)
-    ranks = np.empty(n, dtype=np.float64)
-    for i in range(n):
-        ranks[order[i]] = float(i + 1)
-    return ranks
-
-
-@njit(cache=True)
-def pobs(data):
+def pobs(data, *, ties_method="ordinal"):
     """Pseudo-observations via rank transform.
 
     u_ij = rank(x_ij) / (n + 1), so u in (0, 1).
+    Ranks are ordinal: ties receive successive ranks in input row order.
+    NaNs sort after all other values. Computation is performed in C++.
+    ``legacy`` selects the historical 0.20.1 ordering within equal values.
 
     Parameters
     ----------
     data : ndarray (T, d)
+    ties_method : {"ordinal", "legacy"}, default "ordinal"
+        Both modes assign successive ranks. "ordinal" preserves input row
+        order within ties; "legacy" reproduces the historical ordering.
 
     Returns
     -------
     u : ndarray (T, d), values in (0, 1)
     """
-    n, d = data.shape
-    u = np.empty((n, d), dtype=np.float64)
-    for j in range(d):
-        u[:, j] = _rank_col(data[:, j]) / (n + 1.0)
-    return u
+    return native_validation.pobs(data, ties_method=ties_method)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -91,12 +85,12 @@ def pobs(data):
 
 def clip_unit(x, eps=PSEUDO_OBS_EPS):
     """Clip array to (eps, 1-eps). Used for pseudo-obs safety."""
-    return np.clip(x, eps, 1.0 - eps)
+    return native_validation.clip_open_unit(x, eps)
 
 
 def clip_pseudo_observations(x):
     """Clip pseudo-observations before an inverse Gaussian/Student CDF."""
-    return np.clip(x, PSEUDO_OBS_EPS, 1.0 - PSEUDO_OBS_EPS)
+    return native_validation.clip_open_unit(x, PSEUDO_OBS_EPS)
 
 
 def clip_pseudo_observations_no_copy(x):
@@ -105,46 +99,17 @@ def clip_pseudo_observations_no_copy(x):
         values = x
     else:
         values = np.asarray(x, dtype=np.float64)
-    if np.all(
-            (values > PSEUDO_OBS_EPS)
-            & (values < 1.0 - PSEUDO_OBS_EPS)):
+    if not native_validation.open_unit_clip_required(
+            values, PSEUDO_OBS_EPS):
         return values
-    return clip_pseudo_observations(values)
+    return native_validation.clip_open_unit(values, PSEUDO_OBS_EPS)
 
 
 def clip_h_function_values(x):
     """Clip h/inverse-h values to the native numerical safety interval."""
-    return np.clip(x, H_FUNCTION_EPS, 1.0 - H_FUNCTION_EPS)
+    return native_validation.clip_open_unit(x, H_FUNCTION_EPS)
 
 
 def clip_rosenblatt_output(x):
     """Clip final Rosenblatt values before GoF normal quantiles."""
-    return np.clip(
-        x, ROSENBLATT_OUTPUT_EPS, 1.0 - ROSENBLATT_OUTPUT_EPS)
-
-
-# ══════════════════════════════════════════════════════════════════
-# Linear algebra helper (used in EIS)
-# ══════════════════════════════════════════════════════════════════
-
-@njit(cache=True)
-def linear_least_squares(A, b, ridge_alpha=0.0, pseudo_inverse=False):
-    """Solve Ax = b with optional Tikhonov regularization.
-
-    Parameters
-    ----------
-    A : (m, n) array
-    b : (m,) array
-    ridge_alpha : float, regularization strength
-    pseudo_inverse : bool, use pinv instead of normal equations
-
-    Returns
-    -------
-    x : (n,) array
-    """
-    if pseudo_inverse:
-        return np.linalg.pinv(A) @ b
-
-    penalty = np.eye(A.shape[1])
-    penalty[0, 0] = 0.0
-    return np.linalg.inv(A.T @ A + ridge_alpha * penalty) @ A.T @ b
+    return native_validation.clip_open_unit(x, ROSENBLATT_OUTPUT_EPS)

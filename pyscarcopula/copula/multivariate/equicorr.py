@@ -1,16 +1,22 @@
 """Equicorrelation Gaussian copula."""
 
 import numpy as np
-from scipy.optimize import minimize
-from scipy.stats import norm
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_float64_scalar,
+    validate_integer,
+    validate_sampling_n_threads as _validated_n_threads,
+)
 
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
-from pyscarcopula.copula.base import CopulaCapabilities
+from pyscarcopula._native import model_policy
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
+    fitted_ou_state_distribution,
     model_state_locked,
 )
 from pyscarcopula.copula.multivariate.conditional import (
+    fill_given,
     sample_gaussian_conditional,
     validate_multivariate_given,
 )
@@ -29,38 +35,40 @@ _LBFGSB_FIT_KEYS = (
 
 
 class EquicorrGaussianCopula(MultivariateCopula):
-    """Gaussian copula controlled by one equicorrelation parameter."""
+    """Gaussian copula controlled by one equicorrelation parameter.
 
-    _capabilities = CopulaCapabilities(
-        supports_gas=True,
-        supports_scar_ou=True,
-        supports_latent_grid=True,
-        supports_conditional_sampling=True,
-        has_dynamic_scalar_parameter=True,
-    )
+    Row emission methods accept ``t_index`` as a compatibility offset: it
+    must be ``None`` or a non-negative integer. Pass already-sliced ``u``
+    and ``r``; the offset does not select or shift their rows.
+    """
 
     def __init__(self, d, rotate=0):
+        if isinstance(rotate, (bool, np.bool_)) or not isinstance(
+                rotate, (int, float, np.integer, np.floating)):
+            raise TypeError("rotate must be numeric zero")
+        if as_float64_scalar(rotate, name="rotate") != 0:
+            raise ValueError("EquicorrGaussianCopula supports only rotate=0")
         if d < 2:
             raise ValueError(f"d must be >= 2, got {d}")
         super().__init__(
             dimension=d, name=f"Equicorr Gaussian copula (d={d})")
         self._d = d
-        self._bounds = [(-10.0, 10.0)]
+        self._bounds = model_policy.public_bounds(self)
 
     @property
     def d(self):
         return self._d
 
     def transform(self, x):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.transform(self, x)
 
     def inv_transform(self, r):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.inverse_transform(self, r)
 
     def dtransform(self, x):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.dtransform(self, x)
 
     def prepare_sufficient_statistics(
@@ -80,7 +88,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,
         )
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
 
         def positive_integer(name, value):
             if isinstance(value, (bool, np.bool_)) or not isinstance(
@@ -122,7 +130,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
                     "2D blocks") from error
 
         for source in sources:
-            block = np.asarray(source, dtype=np.float64)
+            block = as_float64_array(source, name="u_batches block")
             if block.ndim != 2 or block.shape[1] != expected_d:
                 raise ValueError(
                     f"each block must have shape (T, {expected_d}), "
@@ -175,32 +183,35 @@ class EquicorrGaussianCopula(MultivariateCopula):
 
     @model_state_locked
     def log_likelihood(self, u, r=None, *, n_threads=1):
+        """Evaluate the fitted strategy, or a static density at explicit r."""
         if r is None:
-            from pyscarcopula._types import MLEResult
-            if isinstance(self.fit_result, MLEResult):
-                r = self.fit_result.copula_param
-            else:
-                r = float(self.transform(
-                    np.array([self.fit_result.params.mu]))[0])
-        from pyscarcopula.numerical import static_likelihood
+            return self._fitted_log_likelihood(u, n_threads=n_threads)
+        r = as_float64_scalar(r, name="r")
+        from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
-            self, u, n_threads=n_threads).log_likelihood(float(r))
+            self, u, n_threads=n_threads).log_likelihood(r)
 
     def log_pdf_rows(self, u, r, t_index=None, *, n_threads=1):
-        from pyscarcopula.numerical import multivariate_native
+        if t_index is not None:
+            t_index = validate_integer(t_index, "t_index")
+        from pyscarcopula._native import multivariate as multivariate_native
         values, _ = multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
         return values
 
     def dlog_pdf_dr_rows(self, u, r, t_index=None, *, n_threads=1):
-        from pyscarcopula.numerical import multivariate_native
+        if t_index is not None:
+            t_index = validate_integer(t_index, "t_index")
+        from pyscarcopula._native import multivariate as multivariate_native
         _, values = multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
         return values
 
     def log_pdf_and_dlog_dr_rows(
             self, u, r, t_index=None, *, n_threads=1):
-        from pyscarcopula.numerical import multivariate_native
+        if t_index is not None:
+            t_index = validate_integer(t_index, "t_index")
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
 
@@ -255,7 +266,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             n_threads=1,
             memory_budget_bytes=None):
         """Evaluate a grid batch, optionally enforcing an output budget."""
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         required = self._grid_output_bytes(len(u), len(x_grid))
         self._validated_memory_budget(
             memory_budget_bytes,
@@ -285,6 +296,15 @@ class EquicorrGaussianCopula(MultivariateCopula):
         batch_rows = int(batch_rows)
         if batch_rows < 1:
             raise ValueError("batch_rows must be positive")
+        n_threads = _validated_n_threads(n_threads)
+        if isinstance(u, EquicorrPreparedData):
+            if u.dimension != self._d:
+                raise ValueError(
+                    "prepared dimension does not match model dimension")
+        elif len(u) == 0:
+            # Nonempty blocks retain their native validation below; do not
+            # normalize an entire input matrix merely to validate batching.
+            self.validate_dimension(as_float64_array(u, name="u"))
         n_grid = len(x_grid)
         per_block = self._grid_output_bytes(
             min(batch_rows, len(u)), n_grid)
@@ -357,40 +377,45 @@ class EquicorrGaussianCopula(MultivariateCopula):
             maxcor=maxcor,
             finite_diff_rel_step=finite_diff_rel_step,
         )
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         evaluator = static_likelihood.prepare(
             self, u, n_threads=config.n_threads)
 
-        def neg_ll_and_grad(x):
-            rho = self.transform(np.array([x[0]]))[0]
-            value, grad_rho = evaluator.objective_and_gradient(
-                rho, fail_value=config.fail_value)
-            gradient = grad_rho * self.dtransform(
-                np.array([x[0]], dtype=np.float64))
-            return value, gradient
-
-        result = minimize(
-            neg_ll_and_grad,
-            np.array([0.5]),
-            jac=True,
-            method="L-BFGS-B",
-            bounds=[(-8.0, 8.0)],
-            options=optimizer_options,
+        from pyscarcopula.strategy.multivariate_mle import (
+            StaticMLEEvaluation,
+            StaticMLEProblem,
+            run_static_multivariate_mle,
         )
-        rho_hat = self.transform(result.x)[0]
+
+        def evaluate(x):
+            value, gradient = evaluator.transformed_objective_and_gradient(
+                x[0], fail_value=config.fail_value)
+            return StaticMLEEvaluation(value, gradient)
+
+        initial, fit_bounds = model_policy.equicorr_fit_policy()
+        outcome = run_static_multivariate_mle(
+            StaticMLEProblem(
+                family="equicorr_gaussian",
+                initial_parameters=np.array([initial]),
+                bounds=[fit_bounds], evaluate=evaluate),
+            optimizer_options=optimizer_options,
+            fail_value=config.fail_value,
+        )
+        rho_hat = self.transform(outcome.parameters)[0]
         fitted = MultivariateMLEResult(
-            log_likelihood=-result.fun,
+            log_likelihood=-outcome.final_objective,
             method="MLE",
             copula_name=self._name,
-            success=result.success,
-            nfev=result.nfev,
-            message=str(getattr(result, "message", "")),
+            success=outcome.accepted,
+            nfev=outcome.nfev,
+            message=outcome.message,
             copula_param=rho_hat,
             parameter_count=1,
             n_observations=len(u),
             model_parameters={"rho": rho_hat},
             correlation_matrix=None,
             diagnostics={
+                **outcome.diagnostics(),
                 "n_threads": config.n_threads,
                 "model_score": "not_applicable",
                 "optimizer_gradient": "analytical",
@@ -404,19 +429,27 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 "equicorrelation_rho": float(rho_hat),
             },
         )
-        self.fit_result = fitted
+        if outcome.accepted:
+            self.fit_result = fitted
         return fitted
 
     @model_state_locked
-    def fit(self, data, method="scar-tm-ou", to_pobs=False, **kwargs):
+    def fit(
+            self,
+            data,
+            method="scar-tm-ou",
+            to_pobs=False,
+            config=None,
+            **kwargs):
         from pyscarcopula._utils import pobs
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,
         )
+        from pyscarcopula.strategy._base import (
+            partition_strategy_fit_kwargs,
+        )
 
-        config = kwargs.pop("config", None)
-        if "tol" in kwargs:
-            raise TypeError("tol is not supported; use gtol")
+        partition_strategy_fit_kwargs(method, kwargs)
         if isinstance(data, EquicorrPreparedData):
             if data.dimension != self._d:
                 raise ValueError(
@@ -430,7 +463,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
                     "SCAR-TM-OU")
             observations = data
         else:
-            observations = np.asarray(data, dtype=np.float64)
+            observations = as_float64_array(data, name="data")
             if observations.ndim != 2 or observations.shape[1] != self._d:
                 raise ValueError(
                     f"data must have shape (n_observations, {self._d})")
@@ -457,21 +490,23 @@ class EquicorrGaussianCopula(MultivariateCopula):
                     f"unexpected MLE keyword argument(s): {unexpected}")
             result = self._fit_mle(
                 observations, config=config, **optimizer_kwargs)
+            if not result.success:
+                return result
         else:
             from pyscarcopula.api import fit
-            result = fit(
+            return fit(
                 self, observations, method=method, config=config, **kwargs)
-            self.fit_result = result
         if isinstance(observations, EquicorrPreparedData):
             self._last_prepared = observations
             self._last_u = None
         else:
-            self._last_u = observations
+            self._last_u = observations.copy()
             self._last_prepared = None
         return result
 
     def sample_at_parameter(
-            self, n, r, rng=None, *, memory_budget_bytes=None):
+            self, n, r, rng=None, *, n_threads=1, memory_budget_bytes=None):
+        n_threads = _validated_n_threads(n_threads)
         if isinstance(n, (bool, np.bool_)) or not isinstance(
                 n, (int, np.integer)):
             raise TypeError("n must be an integer")
@@ -486,37 +521,27 @@ class EquicorrGaussianCopula(MultivariateCopula):
         )
         if rng is None:
             rng = np.random.default_rng()
-        parameters = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        parameters = np.atleast_1d(as_float64_array(r, name="r")).ravel()
         if parameters.size == 1:
             parameters = np.full(n, parameters[0], dtype=np.float64)
         elif parameters.size != n:
             raise ValueError(
                 f"r must be scalar or array of length {n}, "
                 f"got {parameters.size}")
-        lower = -1.0 / (self._d - 1.0)
-        if (
-                not np.all(np.isfinite(parameters))
-                or np.any(parameters <= lower)
-                or np.any(parameters >= 1.0)):
-            raise ValueError(
-                f"r must be finite and in ({lower}, 1)")
-
+        from pyscarcopula._native import multivariate as multivariate_native
+        multivariate_native.validate_equicorrelation_path(
+            parameters, self._d, n, name="r")
         normal = rng.standard_normal((n, self._d))
-        if np.all(parameters >= 0.0):
-            common = rng.standard_normal((n, 1))
-            values = (
-                np.sqrt(1.0 - parameters)[:, None] * normal
-                + np.sqrt(parameters)[:, None] * common
-            )
-        else:
-            row_means = normal.mean(axis=1, keepdims=True)
-            lambda_parallel = 1.0 + (self._d - 1.0) * parameters
-            values = (
-                np.sqrt(1.0 - parameters)[:, None]
-                * (normal - row_means)
-                + np.sqrt(lambda_parallel)[:, None] * row_means
-            )
-        return norm.cdf(values)
+        common_count = multivariate_native.equicorr_gaussian_common_draw_count(
+            parameters, self._d, n)
+        common = rng.standard_normal(common_count)
+        return multivariate_native.equicorr_gaussian_sample_from_normals(
+            parameters,
+            self._d,
+            normal,
+            common,
+            n_threads=n_threads,
+        )
 
     def sample_at_parameter_batches(
             self,
@@ -525,6 +550,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             *,
             batch_rows=128,
             rng=None,
+            n_threads=1,
             memory_budget_bytes=None):
         """Yield unconditional samples without allocating the full ``(n,d)``.
 
@@ -532,6 +558,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         most ``batch_rows`` rows and uses the structural equicorrelation
         sampler for both positive and negative correlation.
         """
+        n_threads = _validated_n_threads(n_threads)
         if isinstance(n, (bool, np.bool_)) or not isinstance(
                 n, (int, np.integer)):
             raise TypeError("n must be an integer")
@@ -553,18 +580,14 @@ class EquicorrGaussianCopula(MultivariateCopula):
             rng = np.random.default_rng()
 
         parameters = np.atleast_1d(
-            np.asarray(r, dtype=np.float64)).ravel()
+            as_float64_array(r, name="r")).ravel()
         if parameters.size not in (1, n):
             raise ValueError(
                 f"r must be scalar or array of length {n}, "
                 f"got {parameters.size}")
-        lower = -1.0 / (self._d - 1.0)
-        if (
-                not np.all(np.isfinite(parameters))
-                or np.any(parameters <= lower)
-                or np.any(parameters >= 1.0)):
-            raise ValueError(
-                f"r must be finite and in ({lower}, 1)")
+        from pyscarcopula._native import multivariate as multivariate_native
+        multivariate_native.validate_equicorrelation_path(
+            parameters, self._d, n, name="r")
 
         for start in range(0, n, batch_rows):
             stop = min(n, start + batch_rows)
@@ -574,13 +597,16 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 stop - start,
                 block_r,
                 rng=rng,
+                n_threads=n_threads,
                 memory_budget_bytes=memory_budget_bytes,
             )
 
     @model_state_locked
     def sample(
-            self, n, u=None, rng=None, *, memory_budget_bytes=None):
+            self, n, u=None, rng=None, *, n_threads=1,
+            memory_budget_bytes=None):
         """Generate observations reproducing the fitted model."""
+        n_threads = _validated_n_threads(n_threads)
         if self.fit_result is None:
             raise ValueError("Fit first")
         self._validated_memory_budget(
@@ -597,7 +623,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
             raise ValueError(
                 "No data for sample. "
                 "Either call fit() first or pass u= explicitly.")
-        return _api_sample(self, u_data, self.fit_result, n, rng=rng)
+        return _api_sample(
+            self, u_data, self.fit_result, n, rng=rng,
+            n_threads=n_threads,
+            memory_budget_bytes=memory_budget_bytes)
 
     @model_state_locked
     def sample_batches(
@@ -608,12 +637,14 @@ class EquicorrGaussianCopula(MultivariateCopula):
             *,
             batch_rows=128,
             given=None,
+            n_threads=1,
             memory_budget_bytes=None):
         """Yield fitted-model samples in bounded row blocks.
 
         GAS is advanced one generated observation at a time. MLE and SCAR
         use their constant or OU model parameter paths respectively.
         """
+        n_threads = _validated_n_threads(n_threads)
         if self.fit_result is None:
             raise ValueError("Fit first")
         if isinstance(n, (bool, np.bool_)) or not isinstance(
@@ -628,6 +659,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             raise ValueError("n must be non-negative")
         if batch_rows < 1:
             raise ValueError("batch_rows must be positive")
+        given = validate_multivariate_given(given, self._d)
         self._validated_memory_budget(
             memory_budget_bytes,
             self._sample_output_bytes(min(n, batch_rows)),
@@ -640,38 +672,11 @@ class EquicorrGaussianCopula(MultivariateCopula):
         result = self.fit_result
         strategy = get_strategy_for_result(result)
         state = strategy.model_sample_state(self, result)
-        if state is None:
-            parameters = strategy.model_sample_params(
-                self, result, n, rng=rng)
-
-            def independent_blocks():
-                for start in range(0, n, batch_rows):
-                    stop = min(n, start + batch_rows)
-                    yield self.sample_conditional(
-                        stop - start,
-                        r=parameters[start:stop],
-                        given=given,
-                        rng=rng,
-                    )
-
-            return independent_blocks()
-
-        def recursive_blocks():
-            current = state
-            for start in range(0, n, batch_rows):
-                stop = min(n, start + batch_rows)
-                block = np.empty((stop - start, self._d), dtype=np.float64)
-                for row in range(stop - start):
-                    parameter = strategy.sample_params(
-                        self, current, 1, rng=rng)[0]
-                    observation = self.sample_conditional(
-                        1, r=parameter, given=given, rng=rng)
-                    block[row] = observation[0]
-                    current = strategy.condition_state(
-                        self, current, observation, result)
-                yield block
-
-        return recursive_blocks()
+        from pyscarcopula.strategy.predict_helpers import sample_model_batches
+        return sample_model_batches(
+            self, strategy, result, state, n, batch_rows=batch_rows,
+            given=given, rng=rng, n_threads=n_threads,
+            memory_budget_bytes=memory_budget_bytes)
 
     @model_state_locked
     def sample_conditional(
@@ -683,6 +688,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             *,
             n_threads=1,
             memory_budget_bytes=None):
+        n_threads = _validated_n_threads(n_threads)
         self._validated_memory_budget(
             memory_budget_bytes,
             self._sample_output_bytes(n),
@@ -695,15 +701,21 @@ class EquicorrGaussianCopula(MultivariateCopula):
         if not given:
             if r is None:
                 return self.sample(
-                    n, rng=rng, memory_budget_bytes=memory_budget_bytes)
+                    n, rng=rng, n_threads=n_threads,
+                    memory_budget_bytes=memory_budget_bytes)
             return self.sample_at_parameter(
                 n,
                 r=r,
                 rng=rng,
+                n_threads=n_threads,
                 memory_budget_bytes=memory_budget_bytes,
             )
+        if r is None and len(given) == self._d:
+            return fill_given(n, self._d, given)
         if r is None:
-            r = self.fit_result.copula_param if self.fit_result else 0.5
+            return self.predict(
+                n, given=given, rng=rng, n_threads=n_threads,
+                memory_budget_bytes=memory_budget_bytes)
         return sample_gaussian_conditional(
             n, self._d, r, given=given, rng=rng,
             n_threads=n_threads)
@@ -718,16 +730,20 @@ class EquicorrGaussianCopula(MultivariateCopula):
             horizon="next",
             predictive_r_mode=None,
             predict_config=None,
-            memory_budget_bytes=None):
-        if predict_config is not None:
-            from pyscarcopula.api import _resolve_predict_config
-            config = _resolve_predict_config(
-                predict_config, given, horizon, {
-                    "predictive_r_mode": predictive_r_mode,
-                })
-            given = config.given
-            horizon = config.horizon
-            predictive_r_mode = config.predictive_r_mode
+            memory_budget_bytes=None,
+            *,
+            n_threads=1):
+        n_threads = _validated_n_threads(n_threads)
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
+        config = _resolve_predict_config(
+            predict_config, given, horizon,
+            {"predictive_r_mode": predictive_r_mode})
+        _validate_non_vine_predict_config(config)
+        given = validate_multivariate_given(config.given, self._d)
+        horizon = config.horizon
+        predictive_r_mode = config.predictive_r_mode
         if self.fit_result is None:
             raise ValueError("Fit first")
         self._validated_memory_budget(
@@ -741,7 +757,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
         from pyscarcopula._types import MLEResult
         if isinstance(self.fit_result, MLEResult):
             return self.sample_conditional(
-                n, r=self.fit_result.copula_param, given=given, rng=rng)
+                n, r=self.fit_result.copula_param, given=given, rng=rng,
+                n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
 
         observations = u if u is not None else getattr(self, "_last_u", None)
         if observations is None:
@@ -754,6 +771,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             given=given,
             horizon=horizon,
             predictive_r_mode=predictive_r_mode,
+            n_threads=n_threads,
             memory_budget_bytes=memory_budget_bytes,
         )
         try:
@@ -773,8 +791,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
             horizon="next",
             predictive_r_mode=None,
             predict_config=None,
+            n_threads=1,
             memory_budget_bytes=None):
         """Yield fitted predictive samples from one frozen predictive state."""
+        n_threads = _validated_n_threads(n_threads)
         if self.fit_result is None:
             raise ValueError("Fit first")
         if isinstance(n, (bool, np.bool_)) or not isinstance(
@@ -797,13 +817,17 @@ class EquicorrGaussianCopula(MultivariateCopula):
         if rng is None:
             rng = np.random.default_rng()
 
-        from pyscarcopula.api import _resolve_predict_config
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
         config = _resolve_predict_config(
             predict_config,
             given,
             horizon,
             {"predictive_r_mode": predictive_r_mode},
         )
+        _validate_non_vine_predict_config(config)
+        given = validate_multivariate_given(config.given, self._d)
         observations = u if u is not None else getattr(
             self, "_last_u", None)
         if observations is None:
@@ -820,24 +844,12 @@ class EquicorrGaussianCopula(MultivariateCopula):
             predictive_r_mode=config.predictive_r_mode,
         )
 
-        def blocks():
-            for start in range(0, n, batch_rows):
-                count = min(batch_rows, n - start)
-                parameters = strategy.sample_params(
-                    self,
-                    state,
-                    count,
-                    rng=rng,
-                    predictive_r_mode=config.predictive_r_mode,
-                )
-                yield self.sample_conditional(
-                    count,
-                    r=parameters,
-                    given=config.given,
-                    rng=rng,
-                )
-
-        return blocks()
+        from pyscarcopula.strategy.predict_helpers import sample_predictive_batches
+        return sample_predictive_batches(
+            self, strategy, state, n, batch_rows=batch_rows,
+            given=given, rng=rng,
+            predictive_r_mode=config.predictive_r_mode,
+            n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
 
     @model_state_locked
     def predictive_mean(self, u):
@@ -849,25 +861,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return _predictive_mean(self, u, self.fit_result)
 
     @model_state_locked
-    def xT_distribution(self, u, K=300, grid_range=5.0):
-        if self.fit_result is None:
-            raise ValueError("Fit with SCAR first")
-        kappa, mu, nu = self.fit_result.params.values
-        from pyscarcopula.numerical import _cpp_scar_ou
-        from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
-        from pyscarcopula.copula.multivariate.equicorr_prepared import (
-            EquicorrPreparedData,
-        )
-        config = AutoTMConfig(K=K, grid_range=grid_range)
-        if isinstance(u, EquicorrPreparedData):
-            return _cpp_scar_ou.prepare_objective(
-                u, self, config).state_distribution(
-                    kappa, mu, nu, horizon="current")
-        return _cpp_scar_ou.state_distribution(
-            kappa,
-            mu,
-            nu,
-            u,
-            self,
-            config,
-        )
+    def xT_distribution(self, u, K=None, grid_range=None):
+        """Return the fitted OU state distribution at the last observation.
+
+        Omitted grid settings inherit the fit; explicit K/grid_range override
+        them. MLE and GAS fits do not define an OU state distribution.
+        """
+        return fitted_ou_state_distribution(self, u, K, grid_range)

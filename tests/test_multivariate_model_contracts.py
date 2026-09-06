@@ -139,6 +139,35 @@ def test_stochastic_student_failed_fit_does_not_mutate_state(bad_data):
 
 
 @pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: EquicorrGaussianCopula(d=3),
+        lambda: StochasticStudentCopula(d=3),
+    ],
+    ids=["equicorr", "stochastic-student"],
+)
+@pytest.mark.parametrize("method", ["gas", "scar-tm-ou"])
+def test_dynamic_multivariate_fit_rejects_unknown_kwargs_atomically(
+        factory, method):
+    copula = factory()
+    observations = np.full((8, 3), 0.5)
+
+    with pytest.raises(
+            TypeError,
+            match=f"unexpected {method.upper()} keyword.*definitely_unknown"):
+        copula.fit(
+            observations,
+            method=method,
+            definitely_unknown=True,
+        )
+
+    assert copula.fit_result is None
+    assert getattr(copula, "_last_u", None) is None
+    if isinstance(copula, StochasticStudentCopula):
+        assert copula.R is None
+
+
+@pytest.mark.parametrize(
     ("factory", "sample"),
     [
         (

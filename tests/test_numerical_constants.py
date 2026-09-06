@@ -18,7 +18,7 @@ from pyscarcopula._utils import (
     clip_pseudo_observations_no_copy,
     clip_rosenblatt_output,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
 
 
@@ -65,6 +65,18 @@ def test_h_and_rosenblatt_helpers_keep_separate_named_contracts():
     )
 
 
+def test_clipping_helpers_do_not_call_numpy_clip(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Python clipping must not run")
+
+    monkeypatch.setattr(np, "clip", forbidden)
+    values = np.array([0.0, 0.5, 1.0], dtype=np.float64)
+    np.testing.assert_array_equal(
+        clip_pseudo_observations(values),
+        [PSEUDO_OBS_EPS, 0.5, 1.0 - PSEUDO_OBS_EPS],
+    )
+
+
 def test_vine_uniform_draws_use_shared_pseudo_observation_boundary():
     class BoundaryRng:
         def uniform(self, low, high, size):
@@ -79,7 +91,7 @@ def test_vine_uniform_draws_use_shared_pseudo_observation_boundary():
 
 
 def test_python_and_cpp_safety_constants_match():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     assert module.PSEUDO_OBS_EPS == PSEUDO_OBS_EPS
     assert module.H_FUNCTION_EPS == H_FUNCTION_EPS
     assert module.PDF_FLOOR == PDF_FLOOR

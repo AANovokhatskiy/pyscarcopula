@@ -1,5 +1,11 @@
 # Developer Architecture
 
+Read this page to locate responsibility before changing a model or strategy.
+The repository [source map](https://github.com/AANovokhatskiy/pyscarcopula/blob/master/ARCHITECTURE.md)
+lists concrete modules, C++ ownership, dependency rules, and build entry points.
+For user-visible method support, start with
+[Estimation Methods](estimation-methods.md#model-and-method-compatibility).
+
 ## Class Hierarchy
 
 Every built-in copula derives from `CopulaBase`:
@@ -20,20 +26,11 @@ CopulaBase
 and inverse-`h`. `MultivariateCopula` exposes row-density and sampling
 behavior without presenting a pair-copula API.
 
-## Capabilities
+## Native capabilities
 
-Inheritance describes model shape. `CopulaCapabilities` describes which
-strategies and compiled operations a built-in model supports.
-
-```python
-from pyscarcopula import EquicorrGaussianCopula
-
-copula = EquicorrGaussianCopula(d=6)
-print(copula.capabilities.supports_gas)
-print(copula.capabilities.supports_scar_ou)
-```
-
-The strategy layer validates capabilities before optimization. A multivariate
+For exact built-in model types, the opaque C++ descriptor and operation-level
+capability query are the only support contract. The strategy layer validates
+named native requirements before optimization. A multivariate
 model is therefore not accepted by a pair-only strategy merely because it has
 similarly named methods.
 
@@ -41,51 +38,45 @@ similarly named methods.
 
 Strategies own optimization, filtering coordination, and result
 construction. Copulas own model metadata, transforms, and sampling behavior.
-Native adapters own calls into the mandatory C++ extension.
+The `pyscarcopula._native` facade owns loading the mandatory C++ extension,
+typed model descriptors, capability decisions, status translation, and thread
+validation. Production callers use this facade directly; retired numerical
+adapter names are not dispatch surfaces.
+
+Unused numerical implementations are not shipped as importable references.
+The former `_utils.linear_least_squares` kernel and
+`numerical.gof_blocks` streaming state helpers are retired; maintained GoF
+paths call native evaluators directly. Reachability is established from
+production imports, not inferred from an absence of observed runtime calls.
+
+The binary implementation lives at `pyscarcopula._native._scar_cpp`. Only the
+facade loader imports that raw module in production code. The former
+`pyscarcopula._scar_cpp` import path is removed and has no compatibility alias.
 
 | Layer | Main responsibility |
 |-------|---------------------|
 | Copula class | Model identity, parameter domain, sampling |
-| Capability metadata | Explicit strategy support |
+| Native descriptor registry | Explicit strategy support |
 | Strategy | Optimization and fit-result construction |
 | Native evaluator | Density, likelihood, gradient, filtering, multivariate conditional linear algebra |
-| Python coordination | RNG and fixed draws, Jacobi, MC/EIS, GoF, persistence |
-
-The retained `pyscarcopula.numerical.TMGrid` class is a manual low-level
-NumPy/SciPy reference implementation. Production OU likelihood, prediction,
-smoothing, and GoF paths do not call it. Keeping the reference grid independent
-from the native evaluator provides an implementation oracle for parity tests;
-it is not a compatibility wrapper or a deprecated alias.
+| Python coordination | Fit/RNG orchestration, fixed draws, GoF reporting, persistence |
 
 ## Native Thread Runtime
 
-Eligible multivariate kernels use one lazily created C++17 thread pool per
-process. Calls divide independent rows or trajectories into stable blocks;
-GAS and SCAR time recursions remain sequential. `n_threads=1` takes a direct
-fast path without creating or querying the pool.
+The native runtime, process ownership, locks, floating-point environment,
+and reproducibility contract are documented in
+[CPU Parallelism](parallelism.md#correctness-and-thread-safety).
+Use independent model/evaluator instances for independent concurrent fits.
 
-The pool records its owning process ID. A spawned or forked child creates its
-own runtime when it first performs explicitly parallel work and never reuses
-the parent's workers. Nested native dispatch from a worker falls back to a
-local sequential call, preventing starvation and deadlock.
-
-Model mutation is protected by a per-instance re-entrant lock. Prepared SCAR
-evaluators protect mutable workspace with a native mutex. Concurrent work
-should normally use independent models/evaluators; sharing one prepared
-evaluator is safe but serializes its objective calls.
-
-The default thread count is an absolute `1`. Environment variables are not
-consulted. See [CPU Parallelism](parallelism.md) for the public contract.
+### Vine execution and caches
 
 R-vine execution uses one shared flat plan and family-operation layer. Native
 entry points cover supported static unconditional and conditional sampling,
-row log-density, coordinate-update MCMC, and static Rosenblatt transforms.
-Sequential unconditional sampling with fitted GAS edges reuses the same
-topology and family semantics while retaining its causal state-update driver.
-Python owns topology construction, capability dispatch, random draws,
-parameter trajectories, bootstrap orchestration, and the preserved reference
-executor. Unsupported custom copulas and stateful operations remain on that
-Python path.
+row log-density, coordinate-update MCMC, and static or dynamic Rosenblatt
+traversals. Python owns topology construction, exact-type capability dispatch,
+random draws, request assembly, and bootstrap orchestration. Unsupported
+custom subclasses fail before any Python model formula can run; test-only
+candidate traversal harnesses are never part of production dispatch.
 
 Compiled R-vine plans and immutable edge specifications are transient fitted
 model state. Their cache keys include the structure, exact copula type,
@@ -117,6 +108,27 @@ cross-backend correctness tests. Runtime paths use the portable reduction
 only for kernels whose end-to-end benchmarks pass the recorded performance
 gate.
 
+Repository validation compiles and links the complete computational source
+manifest without Python headers or libraries, compiles every public C++ header
+as a self-contained unit, and runs focused C++ model suites. The architecture
+gate validates the complete logical target dependency graph and rejects
+domain cycles. It additionally rejects private copies of foundation CDF,
+incomplete beta/gamma, softplus, inverse-softplus, and logistic formulas, and
+exact Python function-body clones inside or across shipped modules. ASan/UBSan
+and TSan instrument the standalone computational
+executable separately from the Python extension; cross-platform wheel,
+accuracy, configuration, and pinned-runner performance workflows use the same
+canonical computational source manifest. Every supported wheel executes the
+frozen numerical golden comparison after installation, and the pinned-runner
+performance workflow is triggered automatically as well as on demand.
+
+Optimizer adapters translate only structured native numerical failures into a
+penalty through the C++ model-policy API. Invalid or unsupported statuses and
+unexpected exceptions propagate through the centralized exception policy. A
+status-OK non-finite objective raises `FloatingPointError`; Python never
+constructs a replacement objective or zero gradient. Jacobi domain rejection
+uses native validation and the same native optimizer policy.
+
 ## Numerical Safety Boundaries
 
 Numerical boundaries are named by purpose rather than represented by a
@@ -136,30 +148,46 @@ The final Rosenblatt boundary remains `1e-6` because it protects GoF normal
 quantiles and must not be reused inside vine recursion. Vine code uses the
 shared pseudo-observation helper; it does not define local `_EPS` constants.
 
-## Custom Python Copulas
-
-Custom Python copulas can be paired with custom strategies, sampling,
-diagnostics, and other Python workflows. This does not add a family to the
-compiled support matrix.
-
-Built-in GAS and SCAR-TM-OU reject unknown classes before optimization. They do
-not silently call arbitrary Python density methods as a fallback.
-
-Custom estimation methods remain a Python extension point through
-`register_strategy`.
-
 ## Public Imports
 
-Base classes and capabilities are available at the package top level:
+Base classes are available at the package top level:
 
 ```python
 from pyscarcopula import (
     BivariateCopula,
     CopulaBase,
-    CopulaCapabilities,
     MultivariateCopula,
 )
 ```
 
 Multivariate models can be imported either from `pyscarcopula` or from
 `pyscarcopula.copula.multivariate`.
+
+## Development workflow
+
+1. Locate the owning model and operation in the source map. Change the native
+   formula or policy in that owner, and extend its typed capability declaration
+   if the supported operation set changes.
+2. Keep Python changes in input normalization, request assembly, optimizer/RNG
+   coordination, and result reporting. Bindings translate buffers and DTOs;
+   they do not become an additional numerical implementation.
+3. Add focused numerical or API contract tests for changed behavior. Run
+   `python tools/check_cpp_architecture.py` and, for native changes, the
+   standalone model/header build with `python tools/build_cpp_tests.py`.
+4. Update the relevant guide and API reference, then execute documentation
+   examples and rendering checks. The documentation workflow validates pull
+   requests before deployment from the main branch.
+
+Local documentation validation after installing `.[test,docs]`:
+
+```bash
+python -m pytest tests/test_documentation_contracts.py tests/test_documentation_rendering.py
+python -m mkdocs build --strict
+python tools/check_docs.py --site-dir site
+python -m playwright install chromium
+python tools/check_docs.py --site-dir site --browser
+```
+
+The browser check renders every content page at desktop and mobile widths,
+checks math output and page overflow, and saves screenshots for failures.
+Legacy page anchors are checked against a versioned fixture.

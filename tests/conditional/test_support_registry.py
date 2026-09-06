@@ -12,7 +12,6 @@ from scipy.stats import norm
 from pyscarcopula import (
     BivariateGaussianCopula,
     ClaytonCopula,
-    CVineCopula,
     EquicorrGaussianCopula,
     FrankCopula,
     GaussianCopula,
@@ -25,7 +24,13 @@ from pyscarcopula import (
     VineCopula,
 )
 from pyscarcopula._types import IndependentResult, MLEResult
-from pyscarcopula.strategy._base import ensure_strategy_supported
+from pyscarcopula._native.registry import query_capability, strategy_support
+from pyscarcopula.strategy._base import (
+    ensure_strategy_supported,
+    has_dynamic_scalar_parameter,
+    is_pair_copula,
+    supports_conditional_sampling,
+)
 
 from ._registry import (
     REGISTRY,
@@ -73,8 +78,6 @@ def _construct_for_capabilities(case: ModelCase):
         return cls(d=3, R=_correlation())
     if case.id == "vine-generic":
         return cls.cvine(d=3, order=[0, 1, 2])
-    if case.id == "vine-legacy-cvine":
-        return cls()
     raise AssertionError(f"missing constructor for {case.id}")
 
 
@@ -139,11 +142,6 @@ def _minimal_conditional_draw(case: ModelCase) -> np.ndarray:
             observations, method="mle", copulas=specs
         )
         return model.predict(4, given={2: 0.3}, rng=rng)
-    if case.id == "vine-legacy-cvine":
-        model = CVineCopula().fit(
-            observations, method="mle", copulas=specs
-        )
-        return model.predict(4, given={0: 0.3}, rng=rng)
     raise AssertionError(f"missing minimal draw for {case.id}")
 
 
@@ -169,8 +167,6 @@ def _unsupported_probe(case: UnsupportedCase) -> None:
         ensure_strategy_supported(
             StudentCopula(d=3, R=_correlation()), "SCAR-TM-OU"
         )
-    elif case.probe == "equicorr_scar_p_ou":
-        ensure_strategy_supported(EquicorrGaussianCopula(3), "SCAR-P-OU")
     elif case.probe == "equicorr_scar_tm_jacobi":
         ensure_strategy_supported(
             EquicorrGaussianCopula(3), "SCAR-TM-JACOBI"
@@ -181,8 +177,9 @@ def _unsupported_probe(case: UnsupportedCase) -> None:
             "SCAR-TM-JACOBI",
         )
     elif case.probe == "stochastic_student_joint_factor_gas":
+        # Use an identifiable factor model so validation reaches the GAS gate.
         model = StochasticStudentCopula(
-            4,
+            5,
             corr_mode="factor",
             factor_rank=2,
             factor_estimation="joint",
@@ -197,23 +194,19 @@ def _unsupported_probe(case: UnsupportedCase) -> None:
     elif case.probe == "stochastic_student_estimated_cholesky_gas":
         model = StochasticStudentCopula(d=4, corr_mode="cholesky")
         ensure_strategy_supported(model, "GAS")
-    elif case.probe == "stochastic_student_shrinkage_scar_p_ou":
-        model = StochasticStudentCopula(d=4, corr_mode="shrinkage")
-        ensure_strategy_supported(model, "SCAR-P-OU")
     else:
         raise AssertionError(f"missing unsupported probe {case.probe}")
 
 
 def test_registry_has_all_canonical_runtimes_and_unique_ids():
     assert REGISTRY.schema_version == 1
-    assert len(REGISTRY.models) == 12
+    assert len(REGISTRY.models) == 11
     assert len(REGISTRY.by_id) == len(REGISTRY.models)
     assert {case.category for case in REGISTRY.models} == {
         "bivariate",
         "multivariate_static",
         "multivariate_dynamic",
         "vine",
-        "vine_legacy",
     }
 
 
@@ -261,23 +254,76 @@ def test_registry_matches_public_signatures(case: ModelCase):
 @pytest.mark.parametrize("case", REGISTRY.models, ids=lambda case: case.id)
 def test_registry_matches_declared_capabilities(case: ModelCase):
     model = _construct_for_capabilities(case)
-    if not case.capability_flags:
-        assert case.category in {"vine", "vine_legacy"}
+    if case.category == "vine":
+        assert not case.capability_flags, (
+            f"{case.id}: vine capabilities must be resolved per pair edge"
+        )
         return
-    capabilities = model.capabilities
+    assert case.capability_flags, f"{case.id}: missing model capability flags"
+    pair = is_pair_copula(model)
+    gas = strategy_support(model, "GAS")
+    scar_ou = strategy_support(model, "SCAR-TM-OU")
+    capabilities = {
+        "supports_pair_ops": pair,
+        "supports_native_point_ops": pair,
+        "supports_gas": bool(gas and gas.supported),
+        "supports_scar_ou": bool(scar_ou and scar_ou.supported),
+        "supports_latent_grid": bool(query_capability(
+            model, "row_grid_density_gradient", "SCAR-TM-OU").supported),
+        "supports_conditional_sampling": supports_conditional_sampling(model),
+        "has_dynamic_scalar_parameter": has_dynamic_scalar_parameter(model),
+    }
     for name, expected in case.capability_flags.items():
-        assert getattr(capabilities, name) is expected, (
+        assert capabilities[name] is expected, (
             f"{case.id}: capability {name} drifted from the support registry"
         )
 
 
-@pytest.mark.parametrize("case", REGISTRY.models, ids=lambda case: case.id)
+@pytest.mark.parametrize(
+    "case",
+    [case for case in REGISTRY.models if case.category != "vine"],
+    ids=lambda case: case.id,
+)
 def test_registered_positive_strategies_pass_capability_gate(case: ModelCase):
-    if not case.capability_flags:
-        pytest.skip("vine strategies are resolved per fitted pair edge")
+    assert case.capability_flags, f"{case.id}: missing model capability flags"
+    assert case.methods, f"{case.id}: missing supported methods"
     model = _construct_for_capabilities(case)
     for method in case.methods:
         ensure_strategy_supported(model, method)
+
+
+@pytest.mark.parametrize(
+    "vine_case",
+    [case for case in REGISTRY.models if case.category == "vine"],
+    ids=lambda case: case.id,
+)
+@pytest.mark.parametrize(
+    ("pair_case", "rotation"),
+    [
+        pytest.param(case, rotation, id=f"{case.id}-r{rotation}")
+        for case in REGISTRY.models if case.category == "bivariate"
+        for rotation in case.rotations
+    ],
+)
+def test_registered_vine_methods_follow_fitted_pair_capabilities(
+        vine_case: ModelCase, pair_case: ModelCase, rotation: int):
+    pair_class = _public_class(pair_case)
+    vine = _public_class(vine_case).cvine(d=2, order=[0, 1]).fit(
+        _observations(d=2, n=32),
+        method="MLE",
+        copulas=[[(pair_class, rotation)]],
+    )
+    assert len(vine.pair_copulas) == 1
+    pair = vine.pair_copulas[(0, 0)].copula
+    assert type(pair) is pair_class
+    assert vine_case.methods, f"{vine_case.id}: missing edge methods"
+    for method in vine_case.methods:
+        if method in pair_case.methods:
+            ensure_strategy_supported(pair, method)
+        else:
+            with pytest.raises(
+                    TypeError, match=f"{pair_class.__name__} does not support"):
+                ensure_strategy_supported(pair, method)
 
 
 @pytest.mark.parametrize("case", REGISTRY.models, ids=lambda case: case.id)

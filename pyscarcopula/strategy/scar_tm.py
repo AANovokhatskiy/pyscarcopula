@@ -4,6 +4,8 @@ Python owns optimizer orchestration and result construction. The compiled
 evaluator owns likelihood, gradients, forward filtering, and state outputs.
 """
 
+import hashlib
+
 import numpy as np
 from scipy.optimize import minimize, Bounds
 
@@ -14,46 +16,63 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.strategy._base import (
     copula_dimension,
-    get_copula_capabilities,
+    is_multivariate_copula,
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
-    reject_legacy_tol,
+    reject_unknown_operation_kwargs,
+    reject_unknown_strategy_kwargs,
 )
 from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
     validate_cpp_config,
 )
-from pyscarcopula.numerical._arrays import as_pseudo_observation_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
+    validate_float64_allocation,
+    validate_sampling_n_threads,
+)
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
 from pyscarcopula.strategy.predict_helpers import (
-    predict_from_strategy,
+    predictive_params_from_state_with_rng,
     sample_predictive,
+    strategy_predict,
 )
 from pyscarcopula.strategy.initial_point import (
     resolve_ou_initial_point,
     smart_initial_point,
 )
-from pyscarcopula.numerical import _cpp_scar_ou, copula_native
+from pyscarcopula._native import (
+    model_policy,
+    scar_ou as _cpp_scar_ou,
+    validation as native_validation,
+)
 from pyscarcopula.numerical.ou_kernels import sample_ou_trajectory
+from pyscarcopula._native.errors import NativeError
 from pyscarcopula.copula.multivariate.corr_param import (
     _corr_gradient_to_raw_params,
     _shrinkage_raw_corr_direction,
 )
 
 
-_INVALID_OBJECTIVE_THRESHOLD = 1e9
-_OU_PHYSICAL_LOWER = np.array([0.001, -np.inf, 0.001])
-_OU_PHYSICAL_UPPER = np.array([np.inf, np.inf, np.inf])
-_OU_LEGACY_LOG_STATIONARY_LOWER = np.array([
-    np.log(0.001), -np.inf, -np.inf,
-])
-_OU_LOG_STATIONARY_UPPER = np.array([np.inf, np.inf, np.inf])
-_OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER = np.array([
-    0.001, -np.inf, 0.0,
-])
+_OU_PHYSICAL_LOWER_VALUES, _OU_PHYSICAL_UPPER_VALUES = (
+    model_policy.latent_bounds("ou"))
+_OU_PHYSICAL_LOWER = np.asarray(
+    _OU_PHYSICAL_LOWER_VALUES, dtype=np.float64)
+_OU_PHYSICAL_UPPER = np.asarray(
+    _OU_PHYSICAL_UPPER_VALUES, dtype=np.float64)
+(
+    _,
+    (
+        _OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER_VALUES,
+        _OU_BOUNDED_LOG_STATIONARY_RESULT_UPPER_VALUES,
+    ),
+) = model_policy.ou_log_stationary_optimizer_bounds()
+_OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER = np.asarray(
+    _OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER_VALUES, dtype=np.float64)
 
 _DIAGNOSTIC_COUNTERS = (
     "objective_evaluations",
@@ -69,14 +88,6 @@ _DIAGNOSTIC_COUNTERS = (
     "fallback_matrix_to_local",
 )
 
-_ADAPTIVE_SPECTRAL_BASIS_ORDER = (
-    (0.015, 128),
-    (0.025, 96),
-    (0.06, 64),
-    (np.inf, 32),
-)
-
-
 def _normalize_spectral_basis_order(value):
     if isinstance(value, str):
         order = value.lower()
@@ -88,14 +99,14 @@ def _normalize_spectral_basis_order(value):
             raise ValueError(
                 "spectral_basis_order must be a positive integer or 'auto'"
             ) from exc
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
+        raise ValueError(
+            "spectral_basis_order must be a positive integer or 'auto'")
     order = int(value)
     if order <= 0:
         raise ValueError("spectral_basis_order must be positive")
     return order
-
-
-def _objective_is_invalid(value):
-    return (not np.isfinite(value)) or float(value) >= _INVALID_OBJECTIVE_THRESHOLD
 
 
 def _uses_log_stationary_scale(copula, override=None):
@@ -120,21 +131,13 @@ def _normalize_stationary_scale_bounds(value):
     if not isinstance(value, (tuple, list)) or len(value) != 2:
         raise TypeError(
             "stationary_scale_bounds must be a (lower, upper) pair or None")
-    normalized = []
-    for bound in value:
-        if bound is None:
-            normalized.append(None)
-            continue
-        bound = float(bound)
-        if not np.isfinite(bound) or bound <= 0.0:
-            raise ValueError(
-                "stationary_scale_bounds values must be positive and finite")
-        normalized.append(bound)
-    lower, upper = normalized
-    if lower is not None and upper is not None and lower >= upper:
+    try:
+        return model_policy.normalize_optional_positive_bounds(
+            value, "stationary_scale_bounds")
+    except (TypeError, ValueError) as exc:
         raise ValueError(
-            "stationary_scale_bounds lower must be less than upper")
-    return lower, upper
+            "stationary_scale_bounds values must be positive, finite, and "
+            "ordered") from exc
 
 
 def _resolved_stationary_scale_bounds(copula, override, explicit_bounds):
@@ -145,82 +148,63 @@ def _resolved_stationary_scale_bounds(copula, override, explicit_bounds):
     if model_bounds is not None:
         return _normalize_stationary_scale_bounds(model_bounds)
     if _uses_bounded_log_stationary_scale(copula, override):
-        return 0.001, None
+        return model_policy.stationary_scale_bounds()[0], None
     return None, None
 
 
 def _log_stationary_optimizer_bounds(copula, override, explicit_bounds):
-    lower = _OU_LEGACY_LOG_STATIONARY_LOWER.copy()
-    upper = _OU_LOG_STATIONARY_UPPER.copy()
     scale_lower, scale_upper = _resolved_stationary_scale_bounds(
         copula, override, explicit_bounds)
-    if scale_lower is not None:
-        lower[2] = np.log(scale_lower)
-    if scale_upper is not None:
-        upper[2] = np.log(scale_upper)
+    (lower_values, upper_values), _ = (
+        model_policy.ou_log_stationary_optimizer_bounds(
+            (scale_lower, scale_upper)))
+    lower = np.asarray(lower_values, dtype=np.float64)
+    upper = np.asarray(upper_values, dtype=np.float64)
     return lower, upper, (scale_lower, scale_upper)
 
 
 def _project_log_stationary_initial_point(values, lower, upper):
     """Project the OU block onto the log-kappa/log-sigma box bounds."""
-    projected = np.asarray(values, dtype=np.float64).copy()
-    projected[:3] = np.clip(projected[:3], lower, upper)
-    return projected
+    return _cpp_scar_ou.project_optimizer_block(values, lower, upper)
 
 
 def _ou_to_log_stationary(alpha):
     """Map physical (kappa, mu, nu) to optimizer coordinates."""
-    alpha = np.asarray(alpha, dtype=np.float64)
-    kappa, mu, nu = alpha[:3]
-    if (
-            not np.isfinite(kappa)
-            or not np.isfinite(mu)
-            or not np.isfinite(nu)
-            or kappa <= 0.0
-            or nu <= 0.0):
-        raise ValueError(
-            "log-stationary SCAR coordinates require positive finite "
-            "kappa and nu and finite mu")
-    sigma_x = nu / np.sqrt(2.0 * kappa)
-    transformed = alpha.copy()
-    transformed[:3] = (np.log(kappa), mu, np.log(sigma_x))
-    return transformed
+    return _cpp_scar_ou.to_log_stationary(alpha)
 
 
 def _ou_from_log_stationary(values):
     """Map optimizer coordinates to physical (kappa, mu, nu)."""
-    values = np.asarray(values, dtype=np.float64)
-    log_kappa, mu, log_sigma_x = values[:3]
-    kappa = np.exp(log_kappa)
-    sigma_x = np.exp(log_sigma_x)
-    nu = sigma_x * np.sqrt(2.0 * kappa)
-    physical = values.copy()
-    physical[:3] = (kappa, mu, nu)
-    return physical
+    return _cpp_scar_ou.from_log_stationary(values)
+
+
+def _trial_parameters(transform, values, diagnostics):
+    """Reject unrepresentable optimizer trials without hiding model errors.
+
+    A valid optimizer vector can overflow when exponentiated into physical
+    OU parameters. Only parameter/numerical failures in this conversion are
+    recoverable; final parameter conversion still uses the strict adapter.
+    """
+    try:
+        result = transform(values)
+    except (NativeError, FloatingPointError) as exc:
+        if getattr(exc, "status", None) not in (6, 7):
+            raise
+        result = np.full_like(values, np.nan, dtype=np.float64)
+    if not np.all(np.isfinite(result)):
+        diagnostics["invalid_parameter_trials"] = (
+            diagnostics.get("invalid_parameter_trials", 0) + 1)
+    return result
 
 
 def _ou_grad_to_log_stationary(physical, gradient):
     """Apply the chain rule for (log kappa, mu, log sigma_x)."""
-    physical = np.asarray(physical, dtype=np.float64)
-    gradient = np.asarray(gradient, dtype=np.float64)
-    kappa, _, nu = physical[:3]
-    transformed = gradient.copy()
-    transformed[0] = gradient[0] * kappa + 0.5 * gradient[2] * nu
-    transformed[1] = gradient[1]
-    transformed[2] = gradient[2] * nu
-    return transformed
+    return _cpp_scar_ou.gradient_to_log_stationary(physical, gradient)
 
 
 def _ou_grad_from_log_stationary(physical, gradient):
     """Map an optimizer-coordinate gradient back to physical OU units."""
-    physical = np.asarray(physical, dtype=np.float64)
-    gradient = np.asarray(gradient, dtype=np.float64)
-    kappa, _, nu = physical[:3]
-    transformed = gradient.copy()
-    transformed[0] = (gradient[0] - 0.5 * gradient[2]) / kappa
-    transformed[1] = gradient[1]
-    transformed[2] = gradient[2] / nu
-    return transformed
+    return _cpp_scar_ou.gradient_from_log_stationary(physical, gradient)
 
 
 def _resolve_initial_point(
@@ -281,6 +265,11 @@ def _record_backend_diagnostics(diagnostics: dict, info: dict,
     diagnostics["last_transition_method"] = info.get("transition_method")
     diagnostics["last_kappa_dt"] = info.get("kappa_dt")
     diagnostics["last_n_obs"] = info.get("n_obs")
+    for name in ("K_requested", "K_effective", "grid_was_capped"):
+        diagnostics["last_" + name] = info.get(name)
+    if info.get("grid_was_capped"):
+        diagnostics["grid_capped_evaluations"] = (
+            diagnostics.get("grid_capped_evaluations", 0) + 1)
     basis_order = info.get("basis_order")
     if basis_order is not None:
         try:
@@ -332,7 +321,7 @@ class _PreparedScarOuFitCache:
         except AttributeError:
             self.disable("missing_api")
             return None
-        except _cpp_scar_ou.CppUnsupported:
+        except _cpp_scar_ou.NativeUnsupported:
             self.disable("unsupported")
             return None
 
@@ -344,7 +333,7 @@ class _PreparedScarOuFitCache:
                 return prepared_call(prepared)
             except AttributeError:
                 self.disable("missing_method")
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 self.disable("unsupported_method")
         return fallback_call()
 
@@ -395,7 +384,12 @@ _POSTERIOR_WORKSPACE_UNSUPPORTED = object()
 
 
 class _PreparedScarOuPosteriorCache:
-    """Prepared native posterior evaluators scoped to one caller workflow."""
+    """Prepared posterior evaluators scoped to one caller workflow.
+
+    Native evaluators copy their observations. Check mutable histories before
+    reuse so an in-place edit cannot leave that native snapshot stale. This
+    O(T*d) check belongs only to posterior calls, never optimizer evaluations.
+    """
 
     def __init__(self):
         self.cache = {}
@@ -405,11 +399,43 @@ class _PreparedScarOuPosteriorCache:
         self.disabled = True
         self.cache.clear()
 
+    @staticmethod
+    def _history_signature(u):
+        from pyscarcopula.copula.multivariate.equicorr_prepared import (
+            EquicorrPreparedData,
+        )
+
+        # Prepared sufficient statistics have an immutable public contract.
+        if isinstance(u, EquicorrPreparedData):
+            return None
+        if isinstance(u, np.ndarray) and u.dtype.kind in "biuf":
+            # Hash the original numeric storage, including mmap/float32 input,
+            # without making the float64 copy needed by a new evaluator.
+            obs = np.asarray(u)
+        else:
+            obs = as_float64_array(u, name="u")
+        digest = hashlib.blake2b(digest_size=16)
+        if obs.flags.c_contiguous:
+            digest.update(memoryview(obs.reshape(-1)).cast("B"))
+        else:
+            # Avoid materializing a contiguous history just to hash a view.
+            # 4096 elements stay within 64 KiB for supported numeric dtypes.
+            for chunk in np.nditer(
+                    obs, flags=["external_loop", "buffered", "zerosize_ok"],
+                    op_flags=["readonly"], order="C",
+                    buffersize=4096):
+                digest.update(chunk.tobytes())
+        return obs.shape, obs.dtype.str, digest.digest()
+
     def prepared_for(self, u, copula, auto_config):
         if self.disabled:
             return None
         key = (id(u), id(copula), auto_config)
-        prepared = self.cache.get(key, _POSTERIOR_WORKSPACE_MISSING)
+        signature = self._history_signature(u)
+        entry = self.cache.get(key)
+        prepared = (
+            entry[3] if entry is not None and entry[2] == signature
+            else _POSTERIOR_WORKSPACE_MISSING)
         if prepared is _POSTERIOR_WORKSPACE_UNSUPPORTED:
             return None
         if prepared is _POSTERIOR_WORKSPACE_MISSING:
@@ -419,18 +445,22 @@ class _PreparedScarOuPosteriorCache:
             except AttributeError:
                 self.disable()
                 return None
-            except _cpp_scar_ou.CppUnsupported:
-                self.cache[key] = _POSTERIOR_WORKSPACE_UNSUPPORTED
+            except _cpp_scar_ou.NativeUnsupported:
+                self.cache[key] = (
+                    u, copula, signature, _POSTERIOR_WORKSPACE_UNSUPPORTED)
                 return None
-            self.cache[key] = prepared
+            # Strong references prevent identity-key collisions after GC.
+            # Replace this entry on mutation instead of accumulating snapshots.
+            self.cache[key] = (u, copula, signature, prepared)
         try:
             prepared.update_copula(copula)
             return prepared
         except AttributeError:
             self.disable()
             return None
-        except _cpp_scar_ou.CppUnsupported:
-            self.cache[key] = _POSTERIOR_WORKSPACE_UNSUPPORTED
+        except _cpp_scar_ou.NativeUnsupported:
+            self.cache[key] = (
+                u, copula, signature, _POSTERIOR_WORKSPACE_UNSUPPORTED)
             return None
 
     def _call(self, u, copula, auto_config, prepared_call, fallback_call):
@@ -440,9 +470,10 @@ class _PreparedScarOuPosteriorCache:
                 return prepared_call(prepared)
             except AttributeError:
                 self.disable()
-            except _cpp_scar_ou.CppUnsupported:
-                self.cache[(id(u), id(copula), auto_config)] = (
-                    _POSTERIOR_WORKSPACE_UNSUPPORTED)
+            except _cpp_scar_ou.NativeUnsupported:
+                key = (id(u), id(copula), auto_config)
+                self.cache[key] = (
+                    *self.cache[key][:3], _POSTERIOR_WORKSPACE_UNSUPPORTED)
         return fallback_call()
 
     def predictive_mean(self, kappa, mu, nu, u, copula, auto_config):
@@ -582,7 +613,28 @@ class SCARTMStrategy:
         treated as numerically degenerate.
     strict_gradient_policy : bool
         Enforce the final projected-gradient tolerance (default False).
+    corr_gradient_block_bytes : int
+        Budget for the three active correlation-gradient blocks (default
+        64 MiB). Excludes PPF caches, transition storage and checkpoints.
+        A smaller budget trades memory for repeated forward passes; it does
+        not change the grid, transition backend or optimizer settings.
     """
+
+    _strict_keyword_contract = True
+    _constructor_keyword_aliases = frozenset({"backend"})
+    # Both steps receive the complete context from the shared prediction and
+    # vine adapters, including fields consumed only by the other step.
+    _prediction_context_keywords = frozenset({
+        "given", "horizon", "predictive_r_mode", "n_threads",
+        "memory_budget_bytes", "state_cache", "cache_key", "posterior_cache",
+    })
+    _operation_keyword_aliases = {
+        "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
+        "predict": _prediction_context_keywords,
+        "predictive_params": _prediction_context_keywords,
+        "predictive_state": _prediction_context_keywords,
+        "sample_params": _prediction_context_keywords,
+    }
 
     def __init__(self, config: NumericalConfig | None = None,
                  K: int | None = None,
@@ -608,11 +660,13 @@ class SCARTMStrategy:
                  final_growth_limit: float = 1e8,
                  final_rho_tolerance: float = 1e-15,
                  strict_gradient_policy: bool = False,
+                 corr_gradient_block_bytes: int = 67_108_864,
                  **kwargs):
         if "backend" in kwargs:
             raise TypeError(
                 "SCAR-TM-OU backend selection was removed; native execution "
                 "is always used")
+        reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
         self.config = config or DEFAULT_CONFIG
         self.K = K if K is not None else self.config.default_K
         self.grid_range = grid_range if grid_range is not None else self.config.default_grid_range
@@ -629,6 +683,7 @@ class SCARTMStrategy:
             spectral_basis_order)
         self.spectral_quad_order = spectral_quad_order
         self.analytical_grad = analytical_grad
+        self.corr_gradient_block_bytes = corr_gradient_block_bytes
         self.smart_init = smart_init
         if (
                 log_stationary_scale_optimization is not None
@@ -682,6 +737,7 @@ class SCARTMStrategy:
                     gh_order=self.gh_order,
                     r_gh=self.r_gh,
                     n_threads=self.config.n_threads,
+                    corr_gradient_block_bytes=self.corr_gradient_block_bytes,
             )
         )
 
@@ -723,16 +779,10 @@ class SCARTMStrategy:
         }
 
     def _kappa_dt(self, kappa: float, n_obs: int) -> float:
-        if n_obs <= 1:
-            return float(kappa)
-        return float(kappa) / float(n_obs - 1)
+        return model_policy.ou_kappa_dt(kappa, n_obs)
 
     def _adaptive_spectral_basis_order(self, kappa: float, n_obs: int) -> int:
-        kdt = self._kappa_dt(kappa, n_obs)
-        for threshold, basis_order in _ADAPTIVE_SPECTRAL_BASIS_ORDER:
-            if kdt < threshold:
-                return basis_order
-        return 32
+        return model_policy.ou_adaptive_spectral_basis_order(kappa, n_obs)
 
     def _spectral_basis_order_for(self, kappa: float | None = None,
                                   n_obs: int | None = None) -> int:
@@ -760,6 +810,7 @@ class SCARTMStrategy:
             gh_order=self.gh_order,
             r_gh=self.r_gh,
             n_threads=self.config.n_threads,
+            corr_gradient_block_bytes=self.corr_gradient_block_bytes,
         )
 
     def _uses_cpp(self, copula):
@@ -791,7 +842,7 @@ class SCARTMStrategy:
             return prepared_call(prepared)
         except AttributeError:
             pass
-        except _cpp_scar_ou.CppUnsupported:
+        except _cpp_scar_ou.NativeUnsupported:
             pass
         return stateless_call()
 
@@ -805,163 +856,105 @@ class SCARTMStrategy:
         initial_params = np.asarray(initial_params, dtype=np.float64).reshape(-1)
         lower = np.asarray(lower, dtype=np.float64).reshape(-1)
         upper = np.asarray(upper, dtype=np.float64).reshape(-1)
-        reasons = []
         diagnostics = {
             "final_validation_passed": False,
             "final_validation_reasons": (),
+            # Candidate checks below do not estimate quadrature or truncation
+            # error, even when a second evaluator happens to agree.
+            "final_integration_status": "not_checked",
+            "final_integration_converged": None,
             "final_selected_engine": selected_engine,
             "final_validation_engine": validation_engine,
         }
 
-        if final_params.size < 3 or not np.all(np.isfinite(final_params)):
-            reasons.append("final parameters are not finite")
-        elif final_params[0] <= 0.0 or final_params[2] <= 0.0:
-            reasons.append("final kappa and nu must be positive")
-
-        selected_value = np.nan
-        selected_grad = np.full(final_params.shape, np.nan)
-        if not reasons:
+        selected_value = float("nan")
+        selected_grad = np.asarray((), dtype=np.float64)
+        selected_evaluation_succeeded = True
+        selected_error = ""
+        if native_validation.valid_ou_final_parameters(final_params):
             try:
                 selected_value, selected_grad = selected_evaluator(final_params)
                 selected_value = float(selected_value)
                 selected_grad = np.asarray(
                     selected_grad, dtype=np.float64).reshape(-1)
             except Exception as exc:
-                reasons.append(
-                    f"{selected_engine} final evaluation failed: {exc}")
+                selected_evaluation_succeeded = False
+                selected_error = str(exc)
+
+        validation = native_validation.validate_final_fit(
+            final_params,
+            initial_params,
+            lower,
+            upper,
+            optimizer_value=result.fun,
+            selected_value=selected_value,
+            selected_gradient=selected_grad,
+            selected_evaluation_succeeded=selected_evaluation_succeeded,
+            selected_engine=selected_engine,
+            selected_error=selected_error,
+            n_obs=n_obs,
+            strict_gradient_policy=self.strict_gradient_policy,
+            explicit_gradient_tolerance=self.final_gradient_tolerance,
+            optimizer_gtol=optimizer_options.get("gtol", 1e-3),
+            rho_tolerance=self.final_rho_tolerance,
+            growth_limit=self.final_growth_limit,
+        )
+        reasons = list(validation["reasons"])
 
         diagnostics["final_selected_backend_value"] = selected_value
         diagnostics["final_optimizer_value"] = float(result.fun)
-        if _objective_is_invalid(result.fun):
-            reasons.append("optimizer returned an invalid objective value")
-        if _objective_is_invalid(selected_value):
-            reasons.append("invalid objective value from selected backend")
-        if (
-                selected_grad.shape != final_params.shape
-                or not np.all(np.isfinite(selected_grad))):
-            reasons.append("final gradient is not finite")
-
-        objective_abs_tol = max(1e-7, max(int(n_obs), 1) * 1e-8)
-        objective_rel_tol = 1e-8
-        diagnostics["final_optimizer_abs_tolerance"] = objective_abs_tol
-        diagnostics["final_optimizer_rel_tolerance"] = objective_rel_tol
-        if (
-                np.isfinite(selected_value)
-                and not _objective_is_invalid(result.fun)
-                and not np.isclose(
-                    selected_value,
-                    float(result.fun),
-                    rtol=objective_rel_tol,
-                    atol=objective_abs_tol)):
-            reasons.append("optimizer and selected-backend objectives disagree")
-
-        if self.strict_gradient_policy:
-            projected_norm = np.inf
-            gradient_tolerance = (
-                self.final_gradient_tolerance
-                if self.final_gradient_tolerance is not None
-                else max(
-                    1e-2,
-                    10.0 * float(optimizer_options.get("gtol", 1e-3)),
-                )
-            )
-            if (
-                    selected_grad.shape == final_params.shape
-                    and np.all(np.isfinite(selected_grad))
-                    and lower.shape == final_params.shape
-                    and upper.shape == final_params.shape):
-                projected_norm = _projected_gradient_norm(
-                    final_params, selected_grad, lower, upper)
-                if projected_norm > gradient_tolerance:
-                    reasons.append(
-                        "projected gradient exceeds validation tolerance")
-            diagnostics["final_projected_gradient_norm"] = projected_norm
+        diagnostics["final_optimizer_abs_tolerance"] = validation[
+            "optimizer_abs_tolerance"]
+        diagnostics["final_optimizer_rel_tolerance"] = validation[
+            "optimizer_rel_tolerance"]
+        if validation["has_projected_gradient"]:
+            diagnostics["final_projected_gradient_norm"] = validation[
+                "projected_gradient_norm"]
             diagnostics[
-                "final_projected_gradient_tolerance"] = gradient_tolerance
-
-        boundary_atol = 1e-10
-        at_lower = np.isfinite(lower) & np.isclose(
-            final_params, lower, rtol=0.0, atol=boundary_atol)
-        at_upper = np.isfinite(upper) & np.isclose(
-            final_params, upper, rtol=0.0, atol=boundary_atol)
+                "final_projected_gradient_tolerance"] = validation[
+                    "projected_gradient_tolerance"]
         diagnostics["final_boundary_flags"] = tuple(
-            bool(value) for value in (at_lower | at_upper))
+            validation["boundary_flags"])
 
-        if final_params.size >= 3 and np.all(np.isfinite(final_params[:3])):
-            kappa, _, nu = final_params[:3]
-            dt = 1.0 / max(int(n_obs) - 1, 1)
-            kappa_dt = kappa * dt
-            rho = np.exp(-kappa_dt) if kappa_dt < 746.0 else 0.0
-            stationary_std = (
-                nu / np.sqrt(2.0 * kappa)
-                if kappa > 0.0 and nu > 0.0 else np.nan)
-            conditional_variance = (
-                -np.expm1(-2.0 * kappa_dt)
-                if kappa_dt >= 0.0 else np.nan)
-            conditional_std = (
-                stationary_std * np.sqrt(conditional_variance)
-                if np.isfinite(stationary_std)
-                and np.isfinite(conditional_variance)
-                and conditional_variance >= 0.0 else np.nan)
+        if validation["has_ou_diagnostics"]:
             diagnostics.update({
-                "final_kappa_dt": float(kappa_dt),
-                "final_rho": float(rho),
-                "final_stationary_std": float(stationary_std),
-                "final_conditional_std": float(conditional_std),
+                "final_kappa_dt": validation["kappa_dt"],
+                "final_rho": validation["rho"],
+                "final_stationary_std": validation["stationary_std"],
+                "final_conditional_std": validation["conditional_std"],
             })
-            if (
-                    not np.isfinite(stationary_std)
-                    or stationary_std <= 0.0
-                    or not np.isfinite(conditional_std)
-                    or conditional_std <= 0.0):
-                reasons.append("final OU variance is degenerate")
-            if (
-                    rho <= self.final_rho_tolerance
-                    or 1.0 - rho <= self.final_rho_tolerance):
-                reasons.append("final one-step autocorrelation is degenerate")
+        if validation["has_parameter_growth"]:
+            diagnostics["final_parameter_growth"] = tuple(
+                validation["parameter_growth"])
+            diagnostics["final_parameter_growth_limit"] = (
+                self.final_growth_limit)
 
-            if initial_params.size >= 3 and np.all(
-                    np.isfinite(initial_params[:3])):
-                baseline = np.maximum(np.abs(initial_params[:3]), 1.0)
-                growth = np.abs(final_params[:3]) / baseline
-                diagnostics["final_parameter_growth"] = tuple(
-                    float(value) for value in growth)
-                diagnostics["final_parameter_growth_limit"] = (
-                    self.final_growth_limit)
-                if np.any(growth > self.final_growth_limit):
-                    reasons.append(
-                        "final OU parameters exceed initialization scale "
-                        f"by more than {self.final_growth_limit:g}")
-
-        validation_value = np.nan
-        difference = np.nan
-        tolerance = np.nan
-        if validation_evaluator is not None and not reasons:
+        backend_enabled = validation_evaluator is not None and not reasons
+        backend_succeeded = True
+        backend_error = ""
+        backend_value = float("nan")
+        if backend_enabled:
             try:
-                validation_value = float(validation_evaluator(final_params))
-                if _objective_is_invalid(validation_value):
-                    reasons.append(
-                        f"{validation_engine} validation returned an "
-                        "invalid objective")
-                else:
-                    difference = abs(validation_value - selected_value)
-                    tolerance = max(
-                        1e-5,
-                        max(int(n_obs), 1)
-                        * self.final_validation_abs_per_obs,
-                        self.final_validation_rel_tol * max(
-                            abs(validation_value), abs(selected_value), 1.0),
-                    )
-                    if difference > tolerance:
-                        reasons.append(
-                            "selected and validation backends disagree")
+                backend_value = float(validation_evaluator(final_params))
             except Exception as exc:
-                reasons.append(
-                    f"{validation_engine} validation failed: {exc}")
+                backend_succeeded = False
+                backend_error = str(exc)
+        backend = native_validation.validate_backend_agreement(
+            enabled=backend_enabled,
+            evaluation_succeeded=backend_succeeded,
+            engine=validation_engine,
+            error=backend_error,
+            validation_value=backend_value,
+            selected_value=selected_value,
+            n_obs=n_obs,
+            abs_per_observation=self.final_validation_abs_per_obs,
+            relative_tolerance=self.final_validation_rel_tol,
+        )
+        reasons.extend(backend["reasons"])
         diagnostics.update({
-            "final_validation_backend_value": validation_value,
-            "final_backend_value_difference": difference,
-            "final_backend_value_tolerance": tolerance,
+            "final_validation_backend_value": backend["value"],
+            "final_backend_value_difference": backend["difference"],
+            "final_backend_value_tolerance": backend["tolerance"],
             "final_validation_abs_per_obs":
                 self.final_validation_abs_per_obs,
             "final_validation_rel_tolerance":
@@ -1044,8 +1037,8 @@ class SCARTMStrategy:
             x0_scaled[:3] = _project_log_stationary_initial_point(
                 x0_scaled[:3], log_lower, log_upper)
         else:
-            scale = np.maximum(np.abs(joint0), 1.0)
-            x0_scaled = joint0 / scale
+            scale = model_policy.optimizer_unit_scale(joint0)
+            x0_scaled = _cpp_scar_ou.physical_to_scaled(joint0, scale)
             resolved_scale_bounds = (None, None)
         lower = np.full(3 + n_corr, -np.inf, dtype=np.float64)
         upper = np.full(3 + n_corr, np.inf, dtype=np.float64)
@@ -1053,24 +1046,27 @@ class SCARTMStrategy:
             lower[:3] = log_lower
             upper[:3] = log_upper
         else:
-            lower[0] = _OU_PHYSICAL_LOWER[0] / scale[0]
-            lower[2] = _OU_PHYSICAL_LOWER[2] / scale[2]
-        bounds_scaled = Bounds(lower, upper)
+            scaled_lower, scaled_upper = (
+                model_policy.ou_scaled_optimizer_bounds(scale[:3]))
+            lower[:3] = scaled_lower
+            upper[:3] = scaled_upper
+        optimizer_box = Bounds(lower, upper)
 
         def optimizer_to_joint(values):
             return (
                 _ou_from_log_stationary(values)
                 if log_stationary
-                else values * scale)
+                else _cpp_scar_ou.scaled_to_physical(values, scale))
 
         def joint_to_optimizer(values):
             return (
                 _ou_to_log_stationary(values)
                 if log_stationary
-                else values / scale)
+                else _cpp_scar_ou.physical_to_scaled(values, scale))
 
         diagnostics = _new_backend_diagnostics()
         diagnostics["n_threads"] = self.config.n_threads
+        diagnostics["corr_gradient_block_bytes"] = self.corr_gradient_block_bytes
         diagnostics.update({
             "initialization": initialization,
             "optimizer_parameterization": (
@@ -1079,17 +1075,18 @@ class SCARTMStrategy:
             "optimizer_stationary_scale_bounds": resolved_scale_bounds,
             "joint_static": True,
             "joint_optimizer": "python-lbfgsb",
-            "correlation_parameterization_engine": "python",
-            "correlation_gradient": "numerical",
+            "correlation_parameterization_engine": "cpp",
+            "correlation_gradient": (
+                "analytical" if self.analytical_grad else "optimizer_numerical"),
             "cpp_correlation_derivatives": False,
             "analytical_grad_requested": bool(self.analytical_grad),
             "analytical_grad_used": bool(self.analytical_grad),
             "joint_gradient": (
-                "hybrid" if self.analytical_grad else "numerical"),
+                "analytical" if self.analytical_grad else "optimizer_numerical"),
             "ou_gradient": (
                 "analytical" if self.analytical_grad else "numerical"),
             "correlation_fd_scheme": (
-                "forward" if self.analytical_grad else "optimizer"),
+                "none" if self.analytical_grad else "optimizer"),
             "hybrid_gradient_evaluations": 0,
             "correlation_fd_evaluations": 0,
             "native_correlation_gradient_evaluations": 0,
@@ -1122,7 +1119,7 @@ class SCARTMStrategy:
             value, info = prepared_cache.neg_loglik_info(
                 kappa_v, mu_v, nu_v, auto_config)
             _record_backend_diagnostics(diagnostics, info, "cpp")
-            return value if np.isfinite(value) else fail_value
+            return value
 
         def evaluate_value_and_ou_grad(joint):
             kappa_v, mu_v, nu_v = joint[:3]
@@ -1143,11 +1140,6 @@ class SCARTMStrategy:
                         prepared_cache.neg_loglik_with_grad_and_corr_info(
                             kappa_v, mu_v, nu_v, auto_config))
                     corr_kind = "full"
-            except _cpp_scar_ou.CppUnsupported:
-                value, grad, info = prepared_cache.neg_loglik_with_grad_info(
-                    kappa_v, mu_v, nu_v, auto_config)
-                corr_grad = None
-                corr_kind = None
             except AttributeError:
                 value, grad, corr_grad, info = (
                     _cpp_scar_ou.neg_loglik_with_grad_and_corr_info(
@@ -1157,103 +1149,96 @@ class SCARTMStrategy:
             return (
                 float(value),
                 np.asarray(grad, dtype=np.float64),
-                None if corr_grad is None else np.asarray(
-                    corr_grad, dtype=np.float64),
+                np.asarray(corr_grad, dtype=np.float64),
                 corr_kind,
             )
 
         def objective_scaled(x_scaled):
-            joint = optimizer_to_joint(x_scaled)
+            joint = _trial_parameters(
+                optimizer_to_joint, x_scaled, diagnostics)
             if not np.all(np.isfinite(joint)):
-                return fail_value
+                return model_policy.optimizer_failure_evaluation(
+                    x_scaled,
+                    x0_scaled,
+                    fail_value,
+                    directional_gradient=False,
+                )[0]
             try:
                 return evaluate_value(joint)
-            except Exception as exc:
+            except (FloatingPointError, NativeError) as exc:
                 if verbose:
                     print(f"  error at joint alpha={joint}: {exc}")
-                return fail_value
-
-        def correlation_fd_steps(joint):
-            if "eps" in optimizer_options:
-                return np.full(
-                    n_corr, abs(float(optimizer_options["eps"])),
-                    dtype=np.float64)
-            rel_step = optimizer_options.get("finite_diff_rel_step")
-            if rel_step is None:
-                rel_step = np.sqrt(np.finfo(np.float64).eps)
-            return (
-                abs(float(rel_step))
-                * np.maximum(1.0, np.abs(joint[3:]))
-            )
+                return model_policy.optimizer_failure_objective(
+                    exc, fail_value)
 
         def objective_and_grad_scaled(x_scaled):
-            joint = optimizer_to_joint(x_scaled)
+            joint = _trial_parameters(
+                optimizer_to_joint, x_scaled, diagnostics)
             if not np.all(np.isfinite(joint)):
-                return fail_value, np.zeros_like(x_scaled)
+                return model_policy.optimizer_failure_evaluation(
+                    x_scaled,
+                    x0_scaled,
+                    fail_value,
+                    directional_gradient=False,
+                )
             diagnostics["hybrid_gradient_evaluations"] += 1
             try:
                 value, ou_grad, corr_grad, corr_kind = (
                     evaluate_value_and_ou_grad(joint))
                 if (
-                        _objective_is_invalid(value)
+                        native_validation.objective_is_invalid(value)
                         or ou_grad.shape != (3,)
                         or not np.all(np.isfinite(ou_grad))):
-                    return fail_value, np.zeros_like(x_scaled)
+                    return model_policy.optimizer_failure_evaluation(
+                        x_scaled,
+                        x0_scaled,
+                        fail_value,
+                        directional_gradient=False,
+                    )
 
                 grad = np.empty_like(joint)
                 grad[:3] = ou_grad
-                if corr_grad is not None:
-                    if corr_kind == "directional":
-                        if corr_grad.shape != (n_corr,):
-                            return fail_value, np.zeros_like(x_scaled)
-                        grad[3:] = corr_grad
-                        diagnostics[
-                            "correlation_gradient"] = "analytical_directional"
-                        diagnostics[
-                            "shrinkage_directional_gradient"] = True
-                    else:
-                        grad[3:] = _corr_gradient_to_raw_params(
-                            copula._corr_mode,
-                            joint[3:],
-                            copula.R,
-                            corr_grad,
-                            copula._corr_base,
+                if corr_kind == "directional":
+                    if corr_grad.shape != (n_corr,):
+                        return model_policy.optimizer_failure_evaluation(
+                            x_scaled,
+                            x0_scaled,
+                            fail_value,
+                            directional_gradient=False,
                         )
-                        diagnostics["correlation_gradient"] = "analytical"
-                    diagnostics["cpp_correlation_derivatives"] = True
-                    diagnostics["joint_gradient"] = "analytical"
-                    diagnostics["correlation_fd_scheme"] = "none"
+                    grad[3:] = corr_grad
                     diagnostics[
-                        "native_correlation_gradient_evaluations"] += 1
-                    if log_stationary:
-                        grad[:3] = _ou_grad_to_log_stationary(
-                            joint[:3], grad[:3])
-                    return value, grad * scale
-
-                steps = correlation_fd_steps(joint)
-                try:
-                    for index, step in enumerate(steps):
-                        trial = joint.copy()
-                        trial[3 + index] += step
-                        diagnostics["correlation_fd_evaluations"] += 1
-                        trial_value = evaluate_value(trial)
-                        if _objective_is_invalid(trial_value):
-                            return fail_value, np.zeros_like(x_scaled)
-                        grad[3 + index] = (trial_value - value) / step
-                finally:
-                    copula._set_corr_from_params(joint[3:])
+                        "correlation_gradient"] = "analytical_directional"
+                    diagnostics[
+                        "shrinkage_directional_gradient"] = True
+                else:
+                    grad[3:] = _corr_gradient_to_raw_params(
+                        copula._corr_mode,
+                        joint[3:],
+                        copula.R,
+                        corr_grad,
+                        copula._corr_base,
+                    )
+                    diagnostics["correlation_gradient"] = "analytical"
+                diagnostics["cpp_correlation_derivatives"] = True
+                diagnostics["joint_gradient"] = "analytical"
+                diagnostics["correlation_fd_scheme"] = "none"
+                diagnostics[
+                    "native_correlation_gradient_evaluations"] += 1
                 if log_stationary:
                     grad[:3] = _ou_grad_to_log_stationary(
                         joint[:3], grad[:3])
-                return value, grad * scale
-            except Exception as exc:
-                try:
-                    copula._set_corr_from_params(joint[3:])
-                except Exception:
-                    pass
+                return value, _cpp_scar_ou.gradient_to_scaled(grad, scale)
+            except (FloatingPointError, NativeError) as exc:
                 if verbose:
                     print(f"  error at joint alpha={joint}: {exc}")
-                return fail_value, np.zeros_like(x_scaled)
+                return model_policy.optimizer_numerical_failure_evaluation(
+                    exc,
+                    x_scaled,
+                    x0_scaled,
+                    fail_value,
+                    directional_gradient=False,
+                )
 
         if verbose:
             gradient = "hybrid gradient" if self.analytical_grad else (
@@ -1271,7 +1256,7 @@ class SCARTMStrategy:
                 x0_scaled,
                 method='L-BFGS-B',
                 jac=True,
-                bounds=bounds_scaled,
+                bounds=optimizer_box,
                 options=scaled_options,
             )
         else:
@@ -1283,7 +1268,9 @@ class SCARTMStrategy:
                 objective_scaled,
                 x0_scaled,
                 method='L-BFGS-B',
-                bounds=bounds_scaled,
+                jac=('2-point' if scaled_options.get(
+                    'finite_diff_rel_step') is not None else None),
+                bounds=optimizer_box,
                 options=scaled_options,
             )
         result.x = optimizer_to_joint(result.x)
@@ -1307,38 +1294,19 @@ class SCARTMStrategy:
                 gradient[:3] = _ou_grad_from_log_stationary(
                     values[:3], gradient[:3])
                 return value, gradient
-            return value, np.asarray(gradient_scaled) / scale
+            return value, _cpp_scar_ou.gradient_from_scaled(
+                gradient_scaled, scale)
 
         def validate_correlation():
-            reasons = []
-            raw = np.asarray(joint[3:], dtype=np.float64)
-            if raw.size != n_corr or not np.all(np.isfinite(raw)):
-                reasons.append("final correlation parameters are not finite")
-                return reasons
-            matrix = np.asarray(copula.R, dtype=np.float64)
-            if (
-                    matrix.shape != (copula.d, copula.d)
-                    or not np.all(np.isfinite(matrix))):
-                reasons.append("final correlation matrix is invalid")
-                return reasons
-            if not np.allclose(matrix, matrix.T, rtol=0.0, atol=1e-10):
-                reasons.append("final correlation matrix is not symmetric")
-            if not np.allclose(
-                    np.diag(matrix), 1.0, rtol=0.0, atol=1e-10):
-                reasons.append("final correlation diagonal is not one")
-            try:
-                if np.min(np.linalg.eigvalsh(matrix)) <= 0.0:
-                    reasons.append(
-                        "final correlation matrix is not positive definite")
-            except np.linalg.LinAlgError:
-                reasons.append(
-                    "final correlation eigenvalue check failed")
-            if (
-                    not np.all(np.isfinite(copula._L_inv))
-                    or not np.isfinite(copula._log_det)):
-                reasons.append(
-                    "final correlation factorization is not finite")
-            return reasons
+            return native_validation.validate_correlation_fit_state(
+                joint[3:],
+                n_corr,
+                copula.R,
+                copula.d,
+                copula._L_inv,
+                copula._log_det,
+                tolerance=1e-10,
+            )
 
         validation_diagnostics = self._validate_final_fit(
             result=result,
@@ -1418,22 +1386,34 @@ class SCARTMStrategy:
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations
         alpha0 : (3,) or (3 + n_corr,)
             Initial ``[kappa, mu, nu]`` with model correlation defaults, a
             full joint vector, or None for automatic initialization.
         gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
         finite_diff_rel_step : L-BFGS-B options
+            On the numerical-gradient path, a non-None relative step from
+            the fit options or optimizer config takes precedence over eps.
+            Relative steps use optimizer coordinates; otherwise eps retains
+            its absolute-step behavior (scaled for physical OU parameters).
+            Native analytical gradients do not use either step option.
         verbose : print progress
         initial_mle_result : MLEResult, optional
             Existing static fit used only for automatic initialization.
+
+        Notes
+        -----
+        ``diagnostics['final_validation_passed']`` reports candidate checks;
+        it does not certify integration accuracy. The separate
+        ``final_integration_status`` remains ``'not_checked'`` until an
+        explicit resolution study is performed outside this fit.
 
         Returns
         -------
         LatentResult
         """
-        reject_legacy_tol(kwargs)
+        reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
         log_stationary = _uses_log_stationary_scale(
             copula, self.log_stationary_scale_optimization)
         optimizer_options = lbfgsb_options(
@@ -1455,6 +1435,9 @@ class SCARTMStrategy:
         )
         if not isinstance(u, EquicorrPreparedData):
             u = as_pseudo_observation_array(u)
+        if len(u) < 2:
+            raise ValueError(
+                "SCAR-TM-OU requires at least two observations")
         corr_num_params = getattr(copula, "_corr_num_params", None)
         n_corr = int(corr_num_params()) if callable(corr_num_params) else 0
         if n_corr:
@@ -1489,6 +1472,7 @@ class SCARTMStrategy:
         selected_engine = "cpp"
         diagnostics = _new_backend_diagnostics()
         diagnostics["n_threads"] = self.config.n_threads
+        diagnostics["corr_gradient_block_bytes"] = self.corr_gradient_block_bytes
         diagnostics["adaptive_spectral_basis_order"] = (
             self.spectral_basis_order == "auto")
         diagnostics["auto_spectral_basis_order"] = (
@@ -1525,29 +1509,27 @@ class SCARTMStrategy:
                 x0_scaled = _ou_to_log_stationary(alpha0)
                 x0_scaled = _project_log_stationary_initial_point(
                     x0_scaled, log_lower, log_upper)
-                bounds_scaled = Bounds(log_lower, log_upper)
+                optimizer_box = Bounds(log_lower, log_upper)
             else:
                 # Rescale parameters so all three are O(1) at start.
                 # This helps L-BFGS-B estimate the initial Hessian.
-                scale = np.array([
-                    max(abs(alpha0[0]), 1.0),
-                    max(abs(alpha0[1]), 1.0),
-                    max(abs(alpha0[2]), 1.0),
-                ])
-                x0_scaled = alpha0 / scale
-                bounds_scaled = Bounds(
-                    [_OU_PHYSICAL_LOWER[0] / scale[0], -np.inf,
-                     _OU_PHYSICAL_LOWER[2] / scale[2]],
-                    [np.inf, np.inf, np.inf]
-                )
+                scale = model_policy.optimizer_unit_scale(alpha0)
+                x0_scaled = _cpp_scar_ou.physical_to_scaled(alpha0, scale)
+                optimizer_box = Bounds(
+                    *model_policy.ou_scaled_optimizer_bounds(scale))
 
             def objective_and_grad(x_scaled):
-                alpha = (
-                    _ou_from_log_stationary(x_scaled)
-                    if log_stationary
-                    else x_scaled * scale)
+                alpha = _trial_parameters(
+                    (_ou_from_log_stationary if log_stationary else
+                     lambda values: _cpp_scar_ou.scaled_to_physical(
+                         values, scale)), x_scaled, diagnostics)
                 if not np.all(np.isfinite(alpha)):
-                    return fail_value, np.zeros(3)
+                    return model_policy.optimizer_failure_evaluation(
+                        x_scaled,
+                        x0_scaled,
+                        fail_value,
+                        directional_gradient=False,
+                    )
                 kappa_v, mu_v, nu_v = alpha
                 try:
                     auto_config = _auto_config_for(kappa_v)
@@ -1557,11 +1539,18 @@ class SCARTMStrategy:
                     _record_backend_diagnostics(diagnostics, info, "cpp")
                     if log_stationary:
                         return val, _ou_grad_to_log_stationary(alpha, grad)
-                    return val, grad * scale
-                except Exception as e:
+                    return val, _cpp_scar_ou.gradient_to_scaled(
+                        grad, scale)
+                except (FloatingPointError, NativeError) as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
-                    return fail_value, np.zeros(3)
+                    return model_policy.optimizer_numerical_failure_evaluation(
+                        e,
+                        x_scaled,
+                        x0_scaled,
+                        fail_value,
+                        directional_gradient=False,
+                    )
 
             if verbose:
                 print(f"Fitting SCAR-TM-OU (analytical gradient), alpha0={alpha0}")
@@ -1570,7 +1559,7 @@ class SCARTMStrategy:
                 objective_and_grad, x0_scaled,
                 method='L-BFGS-B',
                 jac=True,
-                bounds=bounds_scaled,
+                bounds=optimizer_box,
                 options=optimizer_options,
             )
 
@@ -1581,8 +1570,10 @@ class SCARTMStrategy:
                     physical_grad = _ou_grad_from_log_stationary(
                         physical_x, final_grad)
                 else:
-                    physical_x = result.x * scale
-                    physical_grad = final_grad / scale
+                    physical_x = _cpp_scar_ou.scaled_to_physical(
+                        result.x, scale)
+                    physical_grad = _cpp_scar_ou.gradient_from_scaled(
+                        final_grad, scale)
                 pg_norm = _projected_gradient_norm(
                     physical_x,
                     physical_grad,
@@ -1592,7 +1583,7 @@ class SCARTMStrategy:
                 )
                 acceptable_boundary = (
                     np.isfinite(final_val)
-                    and not _objective_is_invalid(final_val)
+                    and not native_validation.objective_is_invalid(final_val)
                     and np.all(np.isfinite(result.x))
                     and pg_norm <= max(float(optimizer_options.get('gtol', 1e-5)), 1e-2)
                 )
@@ -1608,7 +1599,7 @@ class SCARTMStrategy:
             result.x = (
                 _ou_from_log_stationary(result.x)
                 if log_stationary
-                else result.x * scale)
+                else _cpp_scar_ou.scaled_to_physical(result.x, scale))
 
         # ── Fit with numerical gradient ───────────────────────────
         else:
@@ -1617,27 +1608,25 @@ class SCARTMStrategy:
                 x0_scaled = _ou_to_log_stationary(alpha0)
                 x0_scaled = _project_log_stationary_initial_point(
                     x0_scaled, log_lower, log_upper)
-                bounds_scaled = Bounds(log_lower, log_upper)
+                optimizer_box = Bounds(log_lower, log_upper)
             else:
-                scale = np.array([
-                    max(abs(alpha0[0]), 1.0),
-                    max(abs(alpha0[1]), 1.0),
-                    max(abs(alpha0[2]), 1.0),
-                ])
-                x0_scaled = alpha0 / scale
-                bounds_scaled = Bounds(
-                    [_OU_PHYSICAL_LOWER[0] / scale[0], -np.inf,
-                     _OU_PHYSICAL_LOWER[2] / scale[2]],
-                    [np.inf, np.inf, np.inf]
-                )
+                scale = model_policy.optimizer_unit_scale(alpha0)
+                x0_scaled = _cpp_scar_ou.physical_to_scaled(alpha0, scale)
+                optimizer_box = Bounds(
+                    *model_policy.ou_scaled_optimizer_bounds(scale))
 
             def objective_scaled(x_scaled):
-                alpha = (
-                    _ou_from_log_stationary(x_scaled)
-                    if log_stationary
-                    else x_scaled * scale)
+                alpha = _trial_parameters(
+                    (_ou_from_log_stationary if log_stationary else
+                     lambda values: _cpp_scar_ou.scaled_to_physical(
+                         values, scale)), x_scaled, diagnostics)
                 if not np.all(np.isfinite(alpha)):
-                    return fail_value
+                    return model_policy.optimizer_failure_evaluation(
+                        x_scaled,
+                        x0_scaled,
+                        fail_value,
+                        directional_gradient=False,
+                    )[0]
                 kappa_v, mu_v, nu_v = alpha
                 try:
                     auto_config = _auto_config_for(kappa_v)
@@ -1645,10 +1634,11 @@ class SCARTMStrategy:
                         kappa_v, mu_v, nu_v, auto_config)
                     _record_backend_diagnostics(diagnostics, info, "cpp")
                     return val
-                except Exception as e:
+                except (FloatingPointError, NativeError) as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
-                    return fail_value
+                    return model_policy.optimizer_failure_objective(
+                        e, fail_value)
 
             if verbose:
                 print(
@@ -1662,13 +1652,15 @@ class SCARTMStrategy:
             result = minimize(
                 objective_scaled, x0_scaled,
                 method='L-BFGS-B',
-                bounds=bounds_scaled,
+                jac=('2-point' if scaled_options.get(
+                    'finite_diff_rel_step') is not None else None),
+                bounds=optimizer_box,
                 options=scaled_options,
             )
             result.x = (
                 _ou_from_log_stationary(result.x)
                 if log_stationary
-                else result.x * scale)
+                else _cpp_scar_ou.scaled_to_physical(result.x, scale))
 
         alpha = result.x
         def evaluate_final(values, with_grad, record=False):
@@ -1738,6 +1730,13 @@ class SCARTMStrategy:
         p = result.params
         cfg = self._auto_config(kappa=p.kappa, n_obs=len(u))
         self._uses_cpp(copula)
+        from pyscarcopula.copula.multivariate.equicorr_prepared import (
+            EquicorrPreparedData,
+        )
+        if isinstance(u, EquicorrPreparedData):
+            prepared = _cpp_scar_ou.prepare_objective(u, copula, cfg)
+            negative_value, _ = prepared.neg_loglik_info(p.kappa, p.mu, p.nu)
+            return -negative_value
         value, _ = _cpp_scar_ou.loglik(
             p.kappa, p.mu, p.nu, u, copula, cfg)
         return value
@@ -1767,7 +1766,7 @@ class SCARTMStrategy:
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: LatentResult,
                       posterior_cache=None) -> np.ndarray:
-        """Mixture Rosenblatt: e2 = E[h(u2, u1; Psi(x_k)) | u_{1:k-1}]."""
+        """Predictive mixture CDF of the second variable given the first."""
         p = result.params
         self._uses_cpp(copula)
         cfg = self._auto_config(
@@ -1790,8 +1789,7 @@ class SCARTMStrategy:
                   current_cache_key=None, next_cache_key=None,
                   posterior_cache=None) -> np.ndarray:
         """Mixture h-function for vine pseudo-obs propagation."""
-        capabilities = get_copula_capabilities(copula)
-        if capabilities is not None and not capabilities.supports_pair_ops:
+        if is_multivariate_copula(copula):
             raise NotImplementedError(
                 "mixture_h is not defined for multivariate "
                 "StochasticStudent-compatible copulas")
@@ -1831,7 +1829,7 @@ class SCARTMStrategy:
                             p.kappa, p.mu, p.nu, horizon='next')
             except AttributeError:
                 prepared = None
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 prepared = None
             if prepared is None:
                 h_mix = _cpp_scar_ou.mixture_h(
@@ -1857,8 +1855,7 @@ class SCARTMStrategy:
                        current_cache_key=None, next_cache_key=None,
                        posterior_cache=None):
         """Both vine h-directions from one SCAR posterior pass."""
-        capabilities = get_copula_capabilities(copula)
-        if capabilities is not None and not capabilities.supports_pair_ops:
+        if is_multivariate_copula(copula):
             raise NotImplementedError(
                 "mixture_h_pair is not defined for multivariate "
                 "StochasticStudent-compatible copulas")
@@ -1898,7 +1895,7 @@ class SCARTMStrategy:
                             p.kappa, p.mu, p.nu, horizon='next')
             except AttributeError:
                 prepared = None
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 prepared = None
             if prepared is None:
                 h_pair = _cpp_scar_ou.mixture_h_pair(
@@ -1922,14 +1919,13 @@ class SCARTMStrategy:
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: TM integrated -logL(kappa, mu, nu)."""
-        try:
-            cfg = self._auto_config(kappa=alpha[0], n_obs=len(u))
-            self._uses_cpp(copula)
-            return _cpp_scar_ou.neg_loglik(
-                alpha[0], alpha[1], alpha[2], u, copula,
-                cfg)
-        except Exception:
-            return 1e10
+        reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
+        alpha = as_float64_array(alpha, name="alpha")
+        cfg = self._auto_config(kappa=alpha[0], n_obs=len(u))
+        self._uses_cpp(copula)
+        return _cpp_scar_ou.neg_loglik(
+            alpha[0], alpha[1], alpha[2], u, copula,
+            cfg)
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Simulate n observations with OU-driven copula parameter.
@@ -1940,42 +1936,41 @@ class SCARTMStrategy:
         Uses the same time discretization as the model: dt = 1/(n-1),
         so the full trajectory covers [0, 1].
         """
+        reject_unknown_operation_kwargs(self, 'sample', kwargs)
+        validate_sampling_n_threads(kwargs.get('n_threads', 1))
         if rng is None:
             rng = np.random.default_rng()
 
-        r = self.model_sample_params(copula, result, n, rng=rng)
         d = copula_dimension(copula, u)
+        validate_float64_allocation(
+            (n, d), name="SCAR sample output",
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"))
+        r = self.model_sample_params(copula, result, n, rng=rng)
         return sample_predictive(
-            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d,
+            n_threads=kwargs.get("n_threads", 1),
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+            config=self.config)
 
-    def predict(self, copula, u, result, n, rng=None, **kwargs):
-        """Mixture sampling from posterior p(x_T | data).
-
-        Uses transfer matrix forward pass to compute the posterior
-        distribution of x_T, then samples r from it.
-        """
-        return predict_from_strategy(
-            self, copula, u, result, n, rng=rng, **kwargs)
-
-    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
-        """Sample predictive copula parameters for SCAR-TM."""
-        if rng is None:
-            rng = np.random.default_rng()
-
-        state = self.predictive_state(copula, u, result, **kwargs)
-        return self.sample_params(copula, state, n, rng=rng, **kwargs)
+    predict = strategy_predict
+    predictive_params = predictive_params_from_state_with_rng
 
     def predictive_state(self, copula, u, result, **kwargs):
         """Return SCAR-TM predictive state as a grid distribution."""
+        reject_unknown_operation_kwargs(self, 'predictive_state', kwargs)
+        horizon = str(kwargs.get('horizon', 'next')).lower()
+        if horizon not in {'current', 'next'}:
+            raise ValueError("horizon must be 'current' or 'next'")
         p = result.params
         if u is None:
             return PredictiveState(
                 method='SCAR-TM-OU',
-                horizon=str(kwargs.get('horizon', 'next')).lower(),
+                horizon=horizon,
                 kind='stationary_normal',
                 metadata={
+                    'kappa': p.kappa,
                     'mu': p.mu,
-                    'sigma': np.sqrt(p.nu ** 2 / (2.0 * p.kappa)),
+                    'nu': p.nu,
                 },
             )
 
@@ -1986,7 +1981,6 @@ class SCARTMStrategy:
             cached = state_cache.get(cache_key)
 
         if cached is None:
-            horizon = kwargs.get('horizon', 'next')
             self._uses_cpp(copula)
             cfg = self._auto_config(
                 self._grid_transition_method(),
@@ -2010,7 +2004,7 @@ class SCARTMStrategy:
         z_grid, prob = cached
         return PredictiveState(
             method='SCAR-TM-OU',
-            horizon=str(kwargs.get('horizon', 'next')).lower(),
+            horizon=horizon,
             kind='grid',
             z_grid=np.asarray(z_grid, dtype=np.float64),
             prob=np.asarray(prob, dtype=np.float64),
@@ -2018,30 +2012,16 @@ class SCARTMStrategy:
 
     def condition_state(self, copula, state, observation, result, **kwargs):
         """Bayes-reweight a SCAR-TM grid state by one observed pair."""
+        reject_unknown_operation_kwargs(self, 'condition_state', kwargs)
         if observation is None or state.kind != 'grid':
             return state
-        u = np.asarray(observation, dtype=np.float64)
+        u = as_float64_array(observation, name="observation")
         if u.ndim != 2 or len(u) == 0:
             return state
         u = u[:1]
 
-        z_grid = np.asarray(state.z_grid, dtype=np.float64)
-        prob = np.asarray(state.prob, dtype=np.float64)
-        r_grid = copula.transform(z_grid)
-        density = copula_native.pdf_parameter_grid(copula, u, r_grid)[0]
-        log_w = np.log(np.maximum(density, np.finfo(np.float64).tiny))
-        finite = np.isfinite(log_w)
-        if not np.any(finite):
-            return state
-
-        weights = np.zeros_like(prob, dtype=np.float64)
-        weights[finite] = (
-            prob[finite] * np.exp(log_w[finite] - np.max(log_w[finite]))
-        )
-        total = np.sum(weights)
-        if total <= 0.0:
-            return state
-        weights /= total
+        z_grid, weights = _cpp_scar_ou.condition_state(
+            copula, state.z_grid, state.prob, u)
         return PredictiveState(
             method=state.method,
             horizon=state.horizon,
@@ -2052,28 +2032,40 @@ class SCARTMStrategy:
         )
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
+        reject_unknown_operation_kwargs(self, 'sample_params', kwargs)
+        mode = kwargs.get('predictive_r_mode')
+        mode = 'histogram' if mode is None else str(mode).lower()
+        if mode not in {'grid', 'histogram'}:
+            raise ValueError("predictive_r_mode must be 'grid' or 'histogram'")
         if rng is None:
             rng = np.random.default_rng()
         if state.kind == 'stationary_normal':
-            x_t = rng.normal(
+            x_t = _cpp_scar_ou.sample_stationary_fixed_draws(
+                state.metadata['kappa'],
                 state.metadata['mu'],
-                state.metadata['sigma'],
-                n,
+                state.metadata['nu'],
+                rng.standard_normal(n),
             )
             return copula.transform(x_t)
 
-        from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
-        mode = kwargs.get('predictive_r_mode')
-        if mode is None:
-            z_samples = sample_grid_distribution(
-                state.z_grid, state.prob, n, rng)
-        else:
-            z_samples = sample_grid_distribution(
-                state.z_grid, state.prob, n, rng, mode=mode)
+        selection_draws = rng.uniform(0.0, 1.0, size=n)
+        jitter_draws = (
+            rng.uniform(0.0, 1.0, size=n)
+            if mode == 'histogram' and len(state.z_grid) > 1
+            else np.empty(0, dtype=np.float64)
+        )
+        z_samples, _ = _cpp_scar_ou.sample_state_distribution_fixed_draws(
+            state.z_grid,
+            state.prob,
+            selection_draws,
+            jitter_draws,
+            mode=mode,
+        )
         return copula.transform(z_samples)
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
         """OU trajectory parameters for unconditional model reproduction."""
+        reject_unknown_operation_kwargs(self, 'model_sample_params', kwargs)
         if rng is None:
             rng = np.random.default_rng()
 
@@ -2083,4 +2075,17 @@ class SCARTMStrategy:
         return copula.transform(x)
 
     def model_sample_state(self, copula, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'model_sample_state', kwargs)
         return None
+
+    def model_sample_params_batches(
+            self, copula, result, n, *, batch_rows, rng=None):
+        """Stream an OU parameter path, preserving the full trajectory dt."""
+        from pyscarcopula.numerical.ou_kernels import sample_ou_trajectory_batches
+
+        if rng is None:
+            rng = np.random.default_rng()
+        p = result.params
+        for states in sample_ou_trajectory_batches(
+                p.kappa, p.mu, p.nu, n, rng, batch_rows=batch_rows):
+            yield copula.transform(states)

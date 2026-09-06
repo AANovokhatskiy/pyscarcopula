@@ -82,6 +82,46 @@ With `n_threads=1`, the native thread pool is not created or consulted. This
 keeps sequential execution safe for an outer rolling-window executor and
 avoids hidden background workers.
 
+## Runtime work and the resident pool
+
+The native runtime uses the following vocabulary when it plans one call:
+
+| Symbol | Meaning |
+|--------|---------|
+| `R` | Numerical partials required by the algorithm, such as `min(N, 64)` for a Factor Student joint reduction |
+| `B` | Stable logical portions, including their ranges and IDs; some reductions use `B = R` |
+| `W` | Executor budget for this call after validation and any kernel-specific cost limit, never above the explicit thread request |
+| `J` | Queued runners for a non-empty prepared call with `B > 1`: `min(B, W)` |
+| `P` | Resident worker threads already owned by the current process |
+
+`B` controls numerical partitioning, ordered reduction, and failure placement.
+Reducing `W` does not renumber the `B` logical portions. Each of the `J`
+runners can process several portions and receives a stable scratch slot. The
+legacy one-thread, small, and empty paths execute directly. A prepared
+`B > 1, W = 1` call made outside a worker still queues one runner. Nested
+prepared work executes all `B` portions locally with scratch slot zero and
+does not change queue counters.
+
+The process pool keeps the largest worker capacity requested so far, so a
+later call can have `P > W` and `P > J`. This history does not increase that
+call's scratch allocation: planned scratch is sized from `J`, while partial
+results that preserve the numerical order remain sized from `B` or `R`.
+Separate concurrent calls own separate scratch and result buffers.
+
+Native diagnostics expose cumulative process counters. `worker_count` is
+`P`; `worker_start_events` counts created resident workers;
+`batches_submitted` counts successfully committed queued calls; and
+`tasks_submitted` counts their queued runners, so a call with `B > W` adds
+`J`, not `B`. `peak_queued_tasks` is the largest observed queue depth. Direct
+calls add no batch or task count. These counters describe scheduling and are
+not a count of numerical rows, cells, or optimizer calls.
+
+Memory budgets apply to one invocation. They check simultaneously live
+outputs, partials, prepared values, scratch slots, and binding-owned copies
+before work begins. They do not reserve process-wide capacity for other calls,
+and the resident pool's thread stacks are process resources rather than part
+of a kernel's `memory_budget_bytes`.
+
 ## Parallelized workloads
 
 The native implementation parallelizes independent blocks while preserving
@@ -95,19 +135,29 @@ the sequential time recursions required by GAS and SCAR:
 | Gaussian and Student conditional sampling | generated rows | Reuses one conditional factorization when correlation is shared |
 | Factor Student unconditional/conditional sampling | generated rows | Uses fixed Python draws and a compact native factor transform |
 | Factor Gaussian likelihood and sampling | observation/generated rows | Reuses the immutable Woodbury operator; conditioning solves only `k*k` |
-| SCAR Monte Carlo likelihood | trajectories | Uses caller-generated fixed draws |
 
 GAS state updates and SCAR forward/backward filtering remain sequential over
 time. Increasing `n_threads` therefore accelerates the independent emission,
-row, grid, or trajectory work, not the recurrence itself. Small workloads use
+row, or grid work, not the recurrence itself. Small workloads use
 a sequential fast path even when a larger value is requested, because thread
 scheduling would cost more than the kernel.
 
+Multivariate `sample`, `predict`, and `sample_conditional` preserve the
+explicit `n_threads` setting through the model and top-level `api` entry
+points. Equicorr and stochastic Student batch methods preserve it for every
+block as well. Empty or fully fixed `given` mappings do not bypass thread
+validation. This setting controls observation sampling; it does not change
+the mathematical order of GAS or SCAR state updates.
+
 ## Correctness and thread safety
+
+Each submitted batch captures the caller's C floating-point environment and
+applies it on workers before numerical work. Worker defaults therefore do not
+change the arithmetic contract between serial and parallel execution.
 
 Parallel kernels use a stable block partition and deterministic result
 placement. With identical inputs and random draws, the tested row, grid,
-conditional-sampling, and Monte Carlo paths agree between `n_threads=1` and
+and conditional-sampling paths agree between `n_threads=1` and
 the parallel modes. If several rows fail, the parallel implementation reports
 the same smallest `failure_index` as the sequential implementation.
 
@@ -190,9 +240,14 @@ batch = fit_independent(
 ```
 
 The same policy applies to `risk_metrics`. Per-window `SeedSequence` children
-make results independent of process chunking. Diagnostics report `n_jobs`,
-`n_threads`, the multiprocessing start method, whether nested parallelism was
-enabled, and the per-task ownership policy.
+preserve each window's random draws when process chunking changes. In an
+optimized portfolio, sequential execution carries the preceding window's
+weights into the next optimization. Each process chunk starts with equal
+weights and carries optimized weights only within that chunk. Changing
+`n_jobs` or chunk boundaries can therefore change optimized weights, VaR,
+and CVaR even with the same seed. Diagnostics report `n_jobs`, `n_threads`,
+the multiprocessing start method, whether nested parallelism was enabled,
+and the per-task ownership policy.
 
 Avoid choosing `n_jobs * n_threads` substantially above the CPUs available to
 the job. Start with one parallelism level: native threads for one large fit,
@@ -222,8 +277,8 @@ Parallel threads do not change the asymptotic representation of a model.
 - Its `corr_mode="factor"` adapter stores `O(d*k + k^2)` state and routes
   static row and tiled latent-grid evaluation through the factor kernels.
   Supplied loadings or explicit two-stage initialization never build a dense
-  covariance matrix. Static MLE, GAS, SCAR-TM-OU and SCAR-MC trajectory
-  likelihood consume the same immutable operator. SCAR emission selects
+  covariance matrix. Static MLE, GAS, and SCAR-TM-OU likelihood consume the
+  same immutable operator. SCAR emission selects
   independent cells or dimension tiles according to the workload.
   Unconditional and conditional Student generation uses the same operator;
   conditioning builds only a `k*k` factor system. Row batches bound the
@@ -239,7 +294,10 @@ Parallel threads do not change the asymptotic representation of a model.
   static likelihood, compact MLE, normal sampling, bounded batches, and exact
   conditioning. Tiled two-stage estimation, persistence, rolling workers, and
   the rank-dimensional Rosenblatt transform preserve the compact
-  representation. The dense Gaussian mode remains the default.
+  representation. A parallel Factor Rosenblatt call queues one row batch.
+  Its shared-preparation path keeps four rank values per active scratch slot,
+  plus alignment padding, and scratch is planned from `J` rather than the
+  retained pool size `P`. The dense Gaussian mode remains the default.
 - The independent `FactorCorrelation` representation stores
   `O(d*k + k^2)` values and exposes prepared Woodbury matrix products,
   solves, quadratic forms, log determinants, and normal sampling. Its row
