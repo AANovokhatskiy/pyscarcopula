@@ -13,6 +13,7 @@
 #include "scar/copula/multivariate/student/quantile.hpp"
 #include "scar/copula/multivariate/student/rosenblatt.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -256,6 +257,65 @@ int run_multivariate_student_tests() {
                 0.7 + static_cast<double>(column),
                 2e-14)) {
             return 8;
+        }
+    }
+
+    // GAS uses the PPF derivative in its state recursion. Continuity of the
+    // PPF alone is insufficient: its second derivative must also agree on
+    // both sides of an interpolation knot. A quartic on irregular nodes
+    // supplies an independent value/derivative reference in interior cells.
+    const std::vector<double> smooth_nodes{2.1, 2.4, 3.2, 4.1, 5.7, 8.9, 12.0, 19.0};
+    std::vector<double> smooth_table;
+    const auto polynomial = [](double x) {
+        return 1.0 + 0.1 * x - 0.003 * x * x
+            + 0.0002 * x * x * x - 0.00001 * x * x * x * x;
+    };
+    const auto polynomial_derivative = [](double x) {
+        return 0.1 - 0.006 * x + 0.0006 * x * x - 0.00004 * x * x * x;
+    };
+    for (double node : smooth_nodes) smooth_table.push_back(polynomial(node));
+    const auto interpolate_smooth = [&](double x, double& interpolated_derivative) {
+        const auto stencil = scar_internal::make_ppf_interpolation(smooth_nodes, x);
+        return scar_internal::interpolate_ppf_value(
+            view(smooth_table), 1, stencil, 0, &interpolated_derivative);
+    };
+    for (double x : {3.35, 4.9, 7.2, 10.5}) {
+        double polynomial_slope = 0.0;
+        if (!close(interpolate_smooth(x, polynomial_slope), polynomial(x), 2e-12)
+            || !close(polynomial_slope, polynomial_derivative(x), 2e-12)) {
+            return 101;
+        }
+    }
+    for (std::size_t knot = 1; knot + 1 < smooth_nodes.size(); ++knot) {
+        const double x = smooth_nodes[knot];
+        const double step = 1e-5 * std::min(
+            x - smooth_nodes[knot - 1], smooth_nodes[knot + 1] - x);
+        double left = 0.0, center = 0.0, right = 0.0;
+        interpolate_smooth(x - step, left);
+        interpolate_smooth(x, center);
+        interpolate_smooth(x + step, right);
+        if (!close((center - left) / step, (right - center) / step, 1e-5)) {
+            return 102;
+        }
+    }
+    // Exact quantiles, rather than the former interpolant, are the accuracy
+    // reference. Include both probability tails and nonuniform df regimes.
+    const std::vector<double> tail_observations{1e-6, 0.001, 0.05, 0.25,
+        0.5, 0.75, 0.95, 0.999, 1.0 - 1e-6};
+    const auto tail_table = student::prepare_ppf_table(view(tail_observations), {});
+    if (!tail_table.is_ok() || !tail_table.value.has_table) return 103;
+    for (double df : {2.02, 3.71, 5.63, 37.0, 900.0}) {
+        const auto approximate = student::evaluate_ppf_table(
+            view(tail_observations), view(tail_table.value.nodes),
+            view(tail_table.value.table), df, 0, tail_observations.size());
+        const auto exact = student::evaluate_ppf_table(
+            view(tail_observations), view(tail_table.value.nodes),
+            {}, df, 0, tail_observations.size());
+        if (!approximate.is_ok() || !exact.is_ok()) return 104;
+        for (std::size_t i = 0; i < tail_observations.size(); ++i) {
+            if (std::abs(approximate.value[i] - exact.value[i])
+                > 3e-7 * (1.0 + std::abs(exact.value[i]))) return 105;
+            if (i > 0 && approximate.value[i] < approximate.value[i - 1]) return 106;
         }
     }
 

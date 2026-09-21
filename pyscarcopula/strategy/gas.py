@@ -97,16 +97,33 @@ def _minimize_gas_objective(objective, initial, *, bounds, options):
             return mapped["objective"], mapped["gradient"]
 
         if getattr(objective, "derivative_free", False):
+            scalar_objective = getattr(objective, "scalar_objective", None)
+            def scalar_transformed(values):
+                if scalar_objective is None:
+                    return transformed(values)[0]
+                physical = _cpp_gas.optimizer_coordinates(values, to_optimizer=False)
+                mapped = _cpp_gas.optimizer_coordinates(
+                    physical["parameters"],
+                    objective=scalar_objective(physical["parameters"]),
+                    objective_scale=scale)
+                return mapped["objective"]
+
+            scalar_budget = int(options.get("maxfun", 15000)) - evaluations_per_point
+            if scalar_budget <= 0:
+                scalar_budget = 1
             derivative_free_options = {
-                "maxfev": native_options.get("maxfun", 15000),
+                "maxfev": (scalar_budget if scalar_objective is not None
+                           else native_options.get("maxfun", 15000)),
                 "maxiter": native_options.get("maxiter", 15000),
                 "ftol": native_options.get("ftol", _DEFAULT_REFINEMENT_FTOL),
             }
-            result = minimize(lambda values: transformed(values)[0],
+            result = minimize(scalar_transformed,
                               start["parameters"], method="Powell", bounds=bounds,
                               options=derivative_free_options)
             result.fun, result.jac = transformed(result.x)
-            result.nfev += 1
+            result.nfev = (int(result.nfev) + evaluations_per_point
+                           if scalar_objective is not None else
+                           (int(result.nfev) + 1) * evaluations_per_point)
         else:
             result = minimize(transformed, start["parameters"], method="L-BFGS-B", jac=True,
                               bounds=bounds, options=native_options)
@@ -121,7 +138,8 @@ def _minimize_gas_objective(objective, initial, *, bounds, options):
             objective, initial, method="L-BFGS-B", jac=True,
             bounds=bounds, options=native_options,
         )
-    result.nfev = int(result.nfev) * evaluations_per_point
+    if not (mean_parameterization and getattr(objective, "derivative_free", False)):
+        result.nfev = int(result.nfev) * evaluations_per_point
     return result
 
 
@@ -186,6 +204,17 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine,
             provider, "gas_mean_parameterization", False)
         stage_objective.objective_scale = getattr(provider, "objective_scale", 1.0)
         stage_objective.derivative_free = getattr(provider, "derivative_free", False)
+        if hasattr(provider, "scalar_objective"):
+            def scalar_objective(values):
+                nonlocal initial_objective, best_evaluation
+                value = float(provider.scalar_objective(values))
+                if initial_objective is None:
+                    initial_objective = value
+                if (np.isfinite(value) and
+                        (best_evaluation is None or value < best_evaluation[0])):
+                    best_evaluation = (value, np.asarray(values).copy(), None)
+                return value
+            stage_objective.scalar_objective = scalar_objective
         result = _minimize_gas_objective(
             stage_objective, start, bounds=bounds, options=run_options)
         total_nfev += int(result.nfev)
@@ -295,7 +324,7 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine,
                  and best_evaluation[0] < selected.fun - _MATERIAL_LOGL_GAIN else selected.x)
         stationarity = verify(point)
         for index, provider in enumerate(recovery_objectives):
-            if stationarity["passed"]:
+            if stationarity["passed"] and not getattr(provider, "required_restart", False):
                 break
             recovery_options = dict(options, ftol=_DEFAULT_REFINEMENT_FTOL)
             start = np.asarray(getattr(provider, "restart_point", point)).copy()
@@ -391,15 +420,16 @@ class GASStrategy:
     ``eps`` and ``finite_diff_rel_step`` explicitly override it.
 
     ``success`` requires optimizer convergence and consistent finite
-    likelihoods at least as high as the nested static path. Fixed-correlation
-    fits additionally validate a native three-point gradient of the mean
-    negative log-likelihood in (stationary mean, gamma, beta) coordinates
+    likelihoods at least as high as the nested static path. Bivariate and
+    fixed-correlation multivariate fits validate a native three-point gradient
+    of the mean negative log-likelihood in (stationary mean, gamma, beta) coordinates
     against ``gtol``; diagnostics state its scale and coordinate system.
     Default validation balances three-point truncation and roundoff with
     h=cbrt(machine epsilon) and also requires the half-step estimate to agree.
     The optimizer itself retains the summed-objective tolerance. Automatic
-    fits that fail this check retry the existing starts at a second native
-    difference step, then polish in stationary-mean coordinates. It is not a
+    fixed-correlation multivariate fits complete both starts at a second native
+    difference step; bivariate fits retry them when validation fails. Any
+    unresolved point is then polished in stationary-mean coordinates. It is not a
     certificate of global optimality. Diagnostics retain each optimizer
     stage and its raw convergence status, including the projected gradient.
     """
@@ -892,48 +922,65 @@ class GASStrategy:
 
         validation_objective = None
         recovery_objectives = []
-        if is_multivariate_copula(copula):
-            explicit_difference_step = eps is not None or finite_diff_rel_step is not None
-            validation_steps = _cpp_gas.optimizer_validation_steps()
-            validation_step = (optimizer_gradient_eps if explicit_difference_step
-                               else validation_steps[0])
+        explicit_difference_step = eps is not None or finite_diff_rel_step is not None
+        validation_steps = _cpp_gas.optimizer_validation_steps()
+        validation_step = (optimizer_gradient_eps if explicit_difference_step
+                           else validation_steps[0])
 
-            def validation_provider(step):
+        def validation_provider(step):
+            provider = partial(
+                objective, gradient_eps=step, gradient_central=True,
+                gradient_mean_coordinates=True, allow_failure_penalty=False)
+            provider.evaluations_per_point = 7
+            provider.difference_step = step
+            return provider
+
+        validation_objective = validation_provider(validation_step)
+        if not explicit_difference_step:
+            validation_objective.finer_provider = validation_provider(validation_steps[1])
+            validation_objective.refinement_providers = [
+                validation_provider(step) for step in validation_steps[2:]]
+        validation_objective.gas_mean_parameterization = True
+        validation_objective.objective_scale = float(len(u))
+        if (automatic_initialization and ftol is None and not explicit_difference_step
+                and (inherited_initialization or
+                     (maxfun is None and maxiter is None and maxls is None))):
+            # Preserve both deterministic starts at a second derivative
+            # scale, then condition the local refinement in mean space.
+            for static in (False, True):
+                provider = partial(objective, gradient_eps=1e-7)
+                provider.evaluations_per_point = 4
+                provider.restart_point = np.asarray(gamma0).copy()
+                # Stationarity certifies a local point, not coverage of the
+                # automatic multistart plan for fixed-correlation models.
+                provider.required_restart = is_multivariate_copula(copula)
+                if static:
+                    provider.restart_point[1] = 0.0
+                recovery_objectives.append(provider)
+            for derivative_free in (False, True):
+                if derivative_free and int(optimizer_options.get("maxfun", 15000)) <= 7:
+                    # A scalar trial plus the final three-point gradient must
+                    # fit within this stage's explicitly configured budget.
+                    continue
                 provider = partial(
-                    objective, gradient_eps=step, gradient_central=True,
-                    gradient_mean_coordinates=True, allow_failure_penalty=False)
+                    objective, gradient_eps=validation_steps[0],
+                    gradient_central=True, gradient_mean_coordinates=True)
                 provider.evaluations_per_point = 7
-                provider.difference_step = step
-                return provider
-
-            validation_objective = validation_provider(validation_step)
-            if not explicit_difference_step:
-                validation_objective.finer_provider = validation_provider(validation_steps[1])
-                validation_objective.refinement_providers = [
-                    validation_provider(step) for step in validation_steps[2:]]
-            validation_objective.gas_mean_parameterization = True
-            validation_objective.objective_scale = float(len(u))
-            if (automatic_initialization and ftol is None and not explicit_difference_step
-                    and (inherited_initialization or
-                         (maxfun is None and maxiter is None and maxls is None))):
-                # Preserve both deterministic starts at a second derivative
-                # scale, then condition the local refinement in mean space.
-                for static in (False, True):
-                    provider = partial(objective, gradient_eps=1e-7)
-                    provider.evaluations_per_point = 4
-                    provider.restart_point = np.asarray(gamma0).copy()
-                    if static:
-                        provider.restart_point[1] = 0.0
-                    recovery_objectives.append(provider)
-                for derivative_free in (False, True):
-                    provider = partial(
-                        objective, gradient_eps=validation_steps[0],
-                        gradient_central=True, gradient_mean_coordinates=True)
-                    provider.evaluations_per_point = 7
-                    provider.gas_mean_parameterization = True
-                    provider.objective_scale = float(len(u))
-                    provider.derivative_free = derivative_free
-                    recovery_objectives.append(provider)
+                provider.gas_mean_parameterization = True
+                provider.objective_scale = float(len(u))
+                provider.derivative_free = derivative_free
+                if derivative_free:
+                    def scalar_objective(x):
+                        try:
+                            return gas_negloglik(
+                                x[0], x[1], x[2], u, copula,
+                                self.scaling, score_eps)
+                        except FloatingPointError:
+                            return model_policy.optimizer_failure_evaluation(
+                                x, gamma0, self.config.fail_value,
+                                directional_gradient=True)[0]
+                    provider.scalar_objective = scalar_objective
+                recovery_objectives.append(provider)
         result, optimizer_diagnostics = _fit_gas_starts(
             objective, gamma0, bounds=bounds, options=optimizer_options,
             automatic=automatic_initialization, refine=ftol is None,

@@ -227,7 +227,7 @@ def test_bivariate_scar_matrix_matches_regression_values():
     )
 
 
-def test_multivariate_student_scar_matrix_matches_regression_values():
+def test_multivariate_student_scar_matrix_matches_regression_values(monkeypatch):
     observations = np.array(
         [
             [0.12, 0.83, 0.41],
@@ -271,8 +271,34 @@ def test_multivariate_student_scar_matrix_matches_regression_values():
     )
     _assert_close(
         gradient,
-        [-4.64709660e-05, 2.42546895e-03, -2.43472988e-05],
+        [-4.679996276571427e-05, 2.4265879455802903e-03,
+         -2.3401763310902934e-05],
     )
+    # The old C1 PPF interpolant biased this gradient by up to 1.1e-6.
+    # Keep the original regression tolerance and use cache-free quantiles as
+    # the reference. Independently check the gradient against scalar values.
+    differences = []
+    parameters = np.asarray(PARAMS)
+    step = 1e-3
+    for coordinate in range(3):
+        direction = np.eye(3)[coordinate] * step
+        values = [_cpp_scar_ou.neg_loglik(
+            *(parameters + offset * direction), observations, copula, CONFIG)
+            for offset in (-2, -1, 1, 2)]
+        differences.append((values[0] - 8 * values[1]
+                            + 8 * values[2] - values[3]) / (12 * step))
+    np.testing.assert_allclose(gradient, differences, rtol=2e-7, atol=2e-10)
+
+    from functools import partial
+    from pyscarcopula.copula.multivariate import stochastic_student
+
+    monkeypatch.setattr(stochastic_student, "_PPFTable", partial(
+        stochastic_student._PPFTable, max_table_bytes=0))
+    exact_copula = StochasticStudentCopula(d=3, R=correlation)
+    exact_negative, exact_gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        *PARAMS, observations, exact_copula, CONFIG)
+    _assert_close(negative, exact_negative)
+    _assert_close(gradient, exact_gradient)
     _assert_close(
         predictive,
         [

@@ -177,7 +177,9 @@ def test_static_mle_owns_training_observations():
         factor_estimation="joint",
     )
 
-    result = model.fit(observations, method="mle", maxiter=120)
+    # Ownership is checked after convergence under the library's normal
+    # budget, not an iteration cap sensitive to the SciPy optimizer version.
+    result = model.fit(observations, method="mle")
     observations[0, 0] = 0.999
 
     assert result.success

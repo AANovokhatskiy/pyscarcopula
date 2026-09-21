@@ -229,6 +229,54 @@ void add_interpolation_weight(
     ++interpolation.count;
 }
 
+// Common derivatives at each knot make the quintic interpolant C2.  A local
+// quartic supplies accurate derivatives without another full-size PPF table.
+// Normalize the stencil before forming Lagrange coefficients: boundary-layer
+// intervals can be only 1e-10 wide, while the tail nodes extend to 1000.
+void add_knot_derivatives(
+    PpfInterpolation& interpolation, scar::DoubleView nodes, std::size_t knot,
+    double slope_value, double slope_derivative,
+    double curvature_value, double curvature_derivative) {
+    if (knot == 0 || knot + 1 == nodes.size()) {
+        const std::size_t left = knot == 0 ? 0 : knot - 1;
+        const double width = nodes[left + 1] - nodes[left];
+        add_interpolation_weight(interpolation, left,
+            -slope_value / width, -slope_derivative / width);
+        add_interpolation_weight(interpolation, left + 1,
+            slope_value / width, slope_derivative / width);
+        return;
+    }
+    const std::size_t count = std::min<std::size_t>(5, nodes.size());
+    const std::size_t first = std::min(
+        knot >= 2 ? knot - 2 : 0, nodes.size() - count);
+    const double scale = std::max(
+        nodes[knot] - nodes[first], nodes[first + count - 1] - nodes[knot]);
+    std::array<double, 5> offsets{};
+    for (std::size_t i = 0; i < count; ++i) {
+        offsets[i] = (nodes[first + i] - nodes[knot]) / scale;
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        std::array<double, 5> polynomial{};
+        polynomial[0] = 1.0;
+        std::size_t degree = 0;
+        double denominator = 1.0;
+        for (std::size_t j = 0; j < count; ++j) {
+            if (i == j) continue;
+            for (std::size_t k = degree + 1; k > 0; --k) {
+                polynomial[k] = polynomial[k - 1] - offsets[j] * polynomial[k];
+            }
+            polynomial[0] *= -offsets[j];
+            denominator *= offsets[i] - offsets[j];
+            ++degree;
+        }
+        const double slope = polynomial[1] / (denominator * scale);
+        const double curvature = 2.0 * polynomial[2] / (denominator * scale * scale);
+        add_interpolation_weight(interpolation, first + i,
+            slope_value * slope + curvature_value * curvature,
+            slope_derivative * slope + curvature_derivative * curvature);
+    }
+}
+
 }  // namespace
 
 bool student_ppf_cache_available(
@@ -284,47 +332,24 @@ PpfInterpolation make_ppf_interpolation(scar::DoubleView nodes, double df) {
         return interpolation;
     }
 
-    const double alpha2 = alpha * alpha;
-    const double alpha3 = alpha2 * alpha;
-    const double h00 = 2.0 * alpha3 - 3.0 * alpha2 + 1.0;
-    const double h10 = alpha3 - 2.0 * alpha2 + alpha;
-    const double h01 = -2.0 * alpha3 + 3.0 * alpha2;
-    const double h11 = alpha3 - alpha2;
-    const double dh00 = (6.0 * alpha2 - 6.0 * alpha) / interval;
-    const double dh10 = 3.0 * alpha2 - 4.0 * alpha + 1.0;
-    const double dh01 = (-6.0 * alpha2 + 6.0 * alpha) / interval;
-    const double dh11 = 3.0 * alpha2 - 2.0 * alpha;
-
-    const std::size_t lo_slope_node = idx == 0 ? idx : idx - 1;
-    const double lo_slope_interval =
-        nodes[idx + 1] - nodes[lo_slope_node];
-    const std::size_t hi_slope_node =
-        idx + 1 == nodes.size() - 1 ? idx + 1 : idx + 2;
-    const double hi_slope_interval =
-        nodes[hi_slope_node] - nodes[idx];
-
-    add_interpolation_weight(interpolation, idx, h00, dh00);
-    add_interpolation_weight(interpolation, idx + 1, h01, dh01);
-    add_interpolation_weight(
-        interpolation,
-        lo_slope_node,
-        -h10 * interval / lo_slope_interval,
-        -dh10 / lo_slope_interval);
-    add_interpolation_weight(
-        interpolation,
-        idx + 1,
-        h10 * interval / lo_slope_interval,
-        dh10 / lo_slope_interval);
-    add_interpolation_weight(
-        interpolation,
-        idx,
-        -h11 * interval / hi_slope_interval,
-        -dh11 / hi_slope_interval);
-    add_interpolation_weight(
-        interpolation,
-        hi_slope_node,
-        h11 * interval / hi_slope_interval,
-        dh11 / hi_slope_interval);
+    const double t2 = alpha * alpha;
+    const double t3 = t2 * alpha;
+    const double t4 = t3 * alpha;
+    const double t5 = t4 * alpha;
+    const double right_value = 10.0 * t3 - 15.0 * t4 + 6.0 * t5;
+    const double right_derivative = (30.0 * t2 - 60.0 * t3 + 30.0 * t4) / interval;
+    add_interpolation_weight(interpolation, idx, 1.0 - right_value, -right_derivative);
+    add_interpolation_weight(interpolation, idx + 1, right_value, right_derivative);
+    add_knot_derivatives(interpolation, nodes, idx,
+        interval * (alpha - 6.0 * t3 + 8.0 * t4 - 3.0 * t5),
+        1.0 - 18.0 * t2 + 32.0 * t3 - 15.0 * t4,
+        0.5 * interval * interval * (t2 - 3.0 * t3 + 3.0 * t4 - t5),
+        0.5 * interval * (2.0 * alpha - 9.0 * t2 + 12.0 * t3 - 5.0 * t4));
+    add_knot_derivatives(interpolation, nodes, idx + 1,
+        interval * (-4.0 * t3 + 7.0 * t4 - 3.0 * t5),
+        -12.0 * t2 + 28.0 * t3 - 15.0 * t4,
+        0.5 * interval * interval * (t3 - 2.0 * t4 + t5),
+        0.5 * interval * (3.0 * t2 - 8.0 * t3 + 5.0 * t4));
     return interpolation;
 }
 
@@ -352,12 +377,13 @@ double interpolate_ppf_value(
     scar::DoubleView table, std::size_t node_stride,
     const PpfInterpolation& interpolation, std::size_t offset, double* derivative) {
 
-    double value = 0.0;
+    const double anchor = table[interpolation.node[0] * node_stride + offset];
+    double value = anchor;
     double derivative_value = 0.0;
     for (int i = 0; i < interpolation.count; ++i) {
         const std::size_t index = static_cast<std::size_t>(i);
         const double table_value = table[
-            interpolation.node[index] * node_stride + offset];
+            interpolation.node[index] * node_stride + offset] - anchor;
         value += interpolation.value_weight[index] * table_value;
         derivative_value += (
             interpolation.derivative_weight[index] * table_value);
@@ -383,14 +409,16 @@ void interpolate_ppf_row(
     const std::size_t row_offset =
         static_cast<std::size_t>(row_index) * dimension_size;
     for (std::size_t column = 0; column < dimension_size; ++column) {
-        double value = 0.0;
+        const double anchor = cache.table[
+            interpolation.node[0] * node_stride + row_offset + column];
+        double value = anchor;
         double derivative = 0.0;
         for (int i = 0; i < interpolation.count; ++i) {
             const std::size_t index = static_cast<std::size_t>(i);
             const double table_value = cache.table[
                 interpolation.node[index] * node_stride
                 + row_offset
-                + column];
+                + column] - anchor;
             value += interpolation.value_weight[index] * table_value;
             derivative +=
                 interpolation.derivative_weight[index] * table_value;
@@ -414,8 +442,11 @@ void interpolate_bivariate_ppf(
     const std::size_t row_offset = observation * 2;
     const std::size_t node_stride =
         static_cast<std::size_t>(cache.observation_count) * 2;
-    first = 0.0;
-    second = 0.0;
+    const std::size_t anchor_offset = interpolation.node[0] * node_stride + row_offset;
+    const double anchor_first = cache.table[anchor_offset];
+    const double anchor_second = cache.table[anchor_offset + 1];
+    first = anchor_first;
+    second = anchor_second;
     first_derivative = 0.0;
     second_derivative = 0.0;
     for (int i = 0; i < interpolation.count; ++i) {
@@ -425,8 +456,8 @@ void interpolate_bivariate_ppf(
         const double value_weight = interpolation.value_weight[index];
         const double derivative_weight =
             interpolation.derivative_weight[index];
-        const double table_first = cache.table[offset];
-        const double table_second = cache.table[offset + 1];
+        const double table_first = cache.table[offset] - anchor_first;
+        const double table_second = cache.table[offset + 1] - anchor_second;
         first += value_weight * table_first;
         second += value_weight * table_second;
         first_derivative += derivative_weight * table_first;

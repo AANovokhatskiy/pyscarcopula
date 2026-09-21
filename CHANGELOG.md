@@ -4,6 +4,15 @@
 
 Version: `0.22.0` -> `0.22.1`
 
+- Use C2 quantile interpolation for Student caches, preserving a smooth GAS
+  score across df knots and reducing interpolation bias. Validate the fitted
+  Student likelihood independently with exact quantiles in regression tests.
+- Complete automatic fixed-correlation GAS restarts independently of local
+  stationarity. Use scalar evaluations in derivative-free recovery while
+  retaining genuine final gradients and scalar-objective budget accounting.
+- Validate bivariate GAS stationarity, including vine edges. Unresolved
+  convergence follows the existing explicit vine failure policy instead of
+  being reported as successful.
 - Stabilize Clayton density and score across the near-independence formula
   boundary, including extreme tail observations, with a cancellation-free
   log correction shared by scalar and grid evaluations.

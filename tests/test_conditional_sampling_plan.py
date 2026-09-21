@@ -1133,7 +1133,7 @@ class TestConditionalSamplingPlanLayer:
         assert abs(sample_mean - expected) < 0.04
 
     @pytest.mark.validation
-    def test_gas_fit_recovers_sampled_score_driven_dynamics(self):
+    def test_gas_fit_recovers_sampled_dynamics_from_generating_start(self):
         base_copula = BivariateGaussianCopula()
         base_result = GASResult(
             log_likelihood=0.0,
@@ -1157,6 +1157,10 @@ class TestConditionalSamplingPlanLayer:
             sampled,
             method='gas',
             gtol=0.05,
+            # This is a sampling/refitting roundtrip, so start in the known
+            # generating basin and preserve the sampled uniform margins.
+            gamma0=base_result.params.values,
+            to_pobs=False,
         )
         fit_copula = BivariateGaussianCopula()
         predicted = api_predictive_mean(fit_copula, sampled, fit_result)
@@ -1167,6 +1171,7 @@ class TestConditionalSamplingPlanLayer:
             fit_copula, sampled, fit_result, 1, horizon='next')[0]
 
         assert fit_result.success
+        assert fit_result.diagnostics['stationarity_validation']['passed']
         assert abs(fit_result.params.gamma) > 0.5
         assert abs(fit_result.params.beta) > 0.4
         assert np.std(predicted) > 0.08
@@ -1242,21 +1247,45 @@ class TestConditionalSamplingPlanLayer:
 
     @pytest.mark.validation
     def test_rvine_gas_sample_refit_keeps_dynamic_edge_alive(self):
-        u_train = _dynamic_gaussian_chain(120, seed=119)
+        base_copula = BivariateGaussianCopula()
+        base_result = GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=base_copula.name,
+            success=True,
+            # Positive mean dependence lets static family selection identify
+            # the Gaussian edge before fitting its score-driven dynamics.
+            params=gas_params(0.2, 1.4, 0.7),
+            scaling='unit',
+            r_last=0.0,
+        )
+        training_rng = np.random.default_rng(119)
+        dynamic_pair = get_strategy_for_result(base_result).sample(
+            base_copula, None, base_result, 1000,
+            rng=training_rng,
+        )
+        u_train = np.column_stack((
+            dynamic_pair,
+            training_rng.uniform(0.01, 0.99, 1000),
+        ))
+        # Exercise sampling/refitting with sufficient observations and the
+        # known generating start, keeping the sampled uniform margins.
         vine = RVineCopula(
             candidates=[BivariateGaussianCopula],
             truncation_level=1,
-        ).fit(u_train, method='gas')
+        ).fit(u_train, method='gas', to_pobs=False,
+              gamma0=base_result.params.values)
         assert any(
             isinstance(pc.fit_result, GASResult)
             for pc in vine.pair_copulas.values()
         )
 
-        samples = vine.sample(120, rng=np.random.default_rng(120))
+        samples = vine.sample(1000, rng=np.random.default_rng(120))
         refit = RVineCopula(
             candidates=[BivariateGaussianCopula],
             truncation_level=1,
-        ).fit(samples, method='gas')
+        ).fit(samples, method='gas', to_pobs=False,
+              gamma0=base_result.params.values)
         gas_params_refit = [
             pc.fit_result.params
             for pc in refit.pair_copulas.values()
@@ -1264,6 +1293,12 @@ class TestConditionalSamplingPlanLayer:
         ]
 
         assert gas_params_refit
+        assert all(
+            pc.fit_result.success
+            and pc.fit_result.diagnostics['stationarity_validation']['passed']
+            for pc in refit.pair_copulas.values()
+            if isinstance(pc.fit_result, GASResult)
+        )
         assert np.isfinite(refit.log_likelihood())
         assert any(abs(p.gamma) > 0.2 for p in gas_params_refit)
 

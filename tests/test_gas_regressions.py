@@ -40,7 +40,18 @@ from pyscarcopula.strategy.gas import GASStrategy
 
 model = getattr(pyscarcopula, family)(d=observations.shape[1])
 result = GASStrategy().fit(model, observations)
+exact_log_likelihood = None
+if family == 'StochasticStudentCopula':
+    from functools import partial
+    from pyscarcopula._native import gas
+    import pyscarcopula.copula.multivariate.stochastic_student as student
+    student._PPFTable = partial(student._PPFTable, max_table_bytes=0)
+    exact_model = pyscarcopula.StochasticStudentCopula(d=observations.shape[1])
+    exact_model._prepare_dynamic_fit(observations)
+    exact_log_likelihood = -gas.negative_log_likelihood(
+        *result.params.values, observations, exact_model)
 pickle.dump(dict(log_likelihood=result.log_likelihood, success=result.success,
+                 exact_log_likelihood=exact_log_likelihood,
                  diagnostics=result.diagnostics, message=result.message),
             sys.stdout.buffer)
 """
@@ -396,18 +407,82 @@ def test_bounded_difference_refinement_only_resolves_threshold_uncertainty(
     assert len(check["projected_gradient_norms"]) == 2
 
 
-def test_bivariate_fits_preserve_the_existing_stationarity_policy(monkeypatch):
+def test_bivariate_fits_reject_unresolved_stationarity_after_recovery(monkeypatch):
     from pyscarcopula import BivariateGaussianCopula
 
-    def unexpected_validation():
-        raise AssertionError("multivariate recovery must not change vine-edge fits")
+    def stopped(objective, initial, **kwargs):
+        point = np.array([0.1, 0.1, 0.5])
+        value, gradient = objective(point)
+        return SimpleNamespace(x=point, fun=value, jac=gradient,
+                               success=True, message="relative function stop",
+                               nfev=objective.evaluations_per_point)
 
-    monkeypatch.setattr(gas, "optimizer_validation_steps", unexpected_validation)
+    monkeypatch.setattr("pyscarcopula.strategy.gas._minimize_gas_objective", stopped)
     observations = np.random.default_rng(7281).uniform(0.03, 0.97, (30, 2))
     result = GASStrategy().fit(BivariateGaussianCopula(), observations)
-    assert result.diagnostics["stationarity_validation"] is None
-    assert not any(stage["stage"].startswith("recovery_")
-                   for stage in result.diagnostics["optimizer_stages"])
+    assert not result.success
+    assert result.diagnostics["optimizer_success"]
+    assert not result.diagnostics["stationarity_validation"]["passed"]
+    assert any(stage["stage"].startswith("recovery_")
+               for stage in result.diagnostics["optimizer_stages"])
+    assert "stationarity was not established" in result.message
+
+
+def test_derivative_free_recovery_uses_scalar_budget_and_reports_real_gradient():
+    from pyscarcopula.strategy.gas import _minimize_gas_objective
+
+    target = np.array([0.2, 0.3, 0.4])
+    calls = {"scalar": 0, "gradient": 0}
+
+    def objective(point):
+        calls["gradient"] += 1
+        delta = point - target
+        return float(delta @ delta), 2 * delta
+
+    def scalar(point):
+        calls["scalar"] += 1
+        delta = point - target
+        return float(delta @ delta)
+
+    objective.scalar_objective = scalar
+    objective.derivative_free = True
+    objective.gas_mean_parameterization = True
+    objective.objective_scale = 1.0
+    objective.evaluations_per_point = 7
+    result = _minimize_gas_objective(
+        objective, np.array([0.1, 0.1, 0.7]),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"maxfun": 1000, "maxiter": 100, "ftol": 1e-12, "gtol": 1e-3})
+    assert result.success
+    np.testing.assert_allclose(result.x, target, atol=1e-5)
+    np.testing.assert_allclose(result.jac, 2 * (result.x - target), atol=1e-12)
+    assert calls["gradient"] == 1
+    assert result.nfev == calls["scalar"] + 7
+    assert result.nfev <= 1000
+
+
+def test_stationarity_does_not_skip_required_automatic_restart():
+    def objective(point):
+        x = point[0]
+        value = x*x*(x-1)**2 - 0.1*(3*x*x-2*x**3) + point[1:] @ point[1:]
+        gradient = np.array([2*x*(x-1)*(2*x-1)-0.6*x*(1-x),
+                             2*point[1], 2*point[2]])
+        return float(value), gradient
+
+    def restart(point):
+        return objective(point)
+
+    restart.restart_point = np.array([1.0, 0.0, 0.0])
+    restart.required_restart = True
+    result, diagnostics = _fit_gas_starts(
+        objective, np.zeros(3),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"ftol": 1e-9, "gtol": 1e-3}, automatic=True, refine=False,
+        recovery_objectives=[restart], validation_objective=objective)
+    assert result.success
+    assert result.fun == pytest.approx(-0.1)
+    assert diagnostics["stationarity_validation"]["passed"]
+    assert diagnostics["optimizer_stages"][-1]["stage"] == "recovery_1"
 
 
 @pytest.mark.data
@@ -446,7 +521,7 @@ def test_student_default_fit_recovers_and_reports_stationarity(crypto_data_6d):
 
 
 @pytest.mark.data
-@pytest.mark.parametrize("dataset,minimum_loglik", [("hf", 8272.15), ("us6", 2232.299)])
+@pytest.mark.parametrize("dataset,minimum_loglik", [("hf", 8272.15), ("us6", 2232.2713)])
 def test_student_stationarity_is_robust_to_near_unit_persistence_and_noisy_score(
         dataset, minimum_loglik):
     from pathlib import Path
@@ -465,7 +540,12 @@ def test_student_stationarity_is_robust_to_near_unit_persistence_and_noisy_score
         returns = returns.iloc[:12000]
     observations = pobs(returns.dropna().values)
     result = _fit_with_single_threaded_blas(StochasticStudentCopula, observations)
+    # The former us6 threshold 2232.299 included the C1 cache's score-knot
+    # bias: its fitted point has exact logL 2232.2671. C2 interpolation reaches
+    # 2232.2714 under exact quantiles; check that independent objective too.
     assert result.log_likelihood >= minimum_loglik
+    assert result.exact_log_likelihood >= minimum_loglik
+    assert abs(result.log_likelihood - result.exact_log_likelihood) < 1e-4
     assert result.success
     check = result.diagnostics["stationarity_validation"]
     assert max(check["projected_gradient_norms"]) <= check["gtol"]

@@ -1138,7 +1138,8 @@ class TestConditionalPredict:
         assert 'finite_diff_rel_step' not in captured[0]
         assert captured[1]['ftol'] == pytest.approx(1e-12)
         assert captured[1]['maxfun'] == 4000 // 4
-        assert result.nfev == 8  # two native providers, four scalar calls each
+        # Two optimizer providers plus independent final stationarity checks.
+        assert result.nfev == 8 + result.diagnostics['verification_nfev']
         assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 
         result = GASStrategy().fit(

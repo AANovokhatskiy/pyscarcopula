@@ -29,6 +29,10 @@ _REVIEW_KINDS = {
 }
 
 _SYMBOL_REVIEWS = (
+    # GAS scalar recovery counts and fixed-correlation restart coverage only:
+    # objective/gradient evaluation and scaling stay native. Bivariate fits
+    # now reuse the existing native stationarity check. No new numerical
+    # permissions; tests/test_gas_regressions.py covers budgets and acceptance.
     # GAS bootstrap start provenance only changes optimizer orchestration:
     # inherited candidates, per-stage budgets and explicit retry starts.
     # No numerical exceptions were added. Covered by bootstrap parallelization
@@ -55,9 +59,9 @@ _SYMBOL_REVIEWS = (
     # bounds, not a model gradient or a projection of observations/states.
     # Covered by tests/test_gas_regressions.py and test_gas_optimizer.py.
     ('pyscarcopula.strategy.gas:_fit_gas_starts',
-     '298909d00fb7571757beaafba6d69e651cdbcbae71c4a6ba60061d7dba3e1799', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     'd43e9d4de6a9a4a1095b6b8a9cad4a7f5e70bb58f77b0dfdc8acd667ff2a66e5', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.strategy.gas:_fit_gas_starts.run',
-     '688f24aba7d3a59747f2f791ab120def9a59c8fe0287fbc056e0a764b1ebd4b3', 'bookkeeping', ('arithmetic',)),
+     '8924b6389b535c19ef92e402f9169c23f95334a995d8af78116652623ca461f2', 'bookkeeping', ('arithmetic',)),
     ('pyscarcopula.strategy.gas:GASStrategy._build_result',
      '8a64040abb9f2ae84ee3ce03bedb7a9a376384860129e454e2e4240867f2a4a4', 'bookkeeping', ('arithmetic', 'numerical-call')),
     # Bootstrap fitted defaults/thread routing and exact real/integer input
@@ -85,7 +89,7 @@ _SYMBOL_REVIEWS = (
     # tests/test_gas_optimizer.py, test_latent_parameter_routing.py,
     # test_sampling_resource_limits.py and test_conditional_orientation.py.
     ('pyscarcopula.strategy.gas:_minimize_gas_objective',
-     '49b1b5e1fc7c6188a5f3baf4b0ff337e73520814683d69e2453d9436a2748764', 'bookkeeping', ('arithmetic',)),
+     'a02483f9316b8ae7f707e1bf34667160b4b63eaa9aee471c52ac91c730c1ded6', 'bookkeeping', ('arithmetic',)),
     # Dynamic routing review: validation and restored strategy dispatch keep
     # existing buffer/parameter-count bookkeeping unchanged. Prepared OU
     # likelihood only reverses the sign of the validated native objective.
@@ -554,7 +558,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.gas:GASStrategy._fit_joint_static_shrinkage',
      '82bfe6bcb78c6b3e52c4881cbba48d89adaa227294706aa0c05585a6459834c4', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.gas:GASStrategy.fit',
-     '37aca72f52bd2adcab54b1852890e24eb6a879da515dab5233b983a94470a24a', 'fit_orchestration', ('arithmetic',)),
+     '0a21b4dc5cd1ea5db5fd18b49698170159bd327c8a2b115cca57180e104ce4f7', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.mle:MLEStrategy.fit',
      'b635918888bcc169f3f13806bd5d42db0445b339b5f795c65eca9982c4ed94c0', 'sign', ('arithmetic',)),
     # Final Jacobi validation delegates domain/objective/gradient checks to

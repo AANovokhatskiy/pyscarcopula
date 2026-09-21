@@ -105,7 +105,7 @@ reported convergence. A trial point that improves log likelihood by more
 than `0.001` is retained with `success=False` if convergence there was not
 established.
 
-For EquicorrGaussian and fixed-correlation StochasticStudent fits, a separate
+For bivariate, EquicorrGaussian and fixed-correlation StochasticStudent fits, a separate
 native three-point check validates the
 gradient of the **mean** negative log likelihood in stationary-mean coordinates
 `(omega/(1-beta), gamma, beta)`. Both the projected gradient and its discrepancy
@@ -122,10 +122,14 @@ from the original optimizer's summed-objective tolerance and is recorded in
 `diagnostics['stationarity_validation']` together with the coordinate system,
 steps, raw gradient, and discrepancy.
 
-Automatic multivariate fits without per-call optimizer overrides that fail validation retry the
-same two starts at a second native difference step, then, if needed, polish the
+Automatic multivariate fits without per-call optimizer overrides complete the
+same two starts at a second native difference step even when the first point
+passes stationarity. A stationary point does not establish multistart coverage.
+Bivariate fits use these additional starts when validation fails. If needed, they polish the
 best point in stationary-mean coordinates. A final bounded Powell stage can
-recover when noisy gradients prevent line-search progress. A verified stationary
+recover when noisy gradients prevent line-search progress. Its iterations evaluate
+only the scalar objective, reserving one final gradient evaluation within the
+scalar-objective budget. A verified stationary
 candidate can be preferred over a nonstationary candidate only within the existing
 `0.001` material log-likelihood tolerance; `stationary_selection_loglik_loss`
 records the exact loss. Explicit per-call starts, difference steps, function/iteration
@@ -136,7 +140,9 @@ whose final point fails validation has `success=False`. Saturated Equicorr
 transforms remain valid for scalar likelihood evaluation, but the optimizer
 gradient provider rejects their unresolvable sensitivity so line search can
 recover instead of accepting a large finite plateau with zero gradient.
-The existing bivariate GAS acceptance policy, including vine-edge fits, is unchanged.
+Bivariate vine-edge fits use the same independent check. If recovery does not
+establish stationarity, the existing vine `dynamic_failure_policy` determines
+whether to fall back to MLE, keep the unsuccessful result, or raise.
 
 Multivariate GAS bootstrap refits distinguish a library-inherited start from an
 explicit `bootstrap_fit_kwargs['gamma0']`. An inherited result adds a warm start
@@ -161,7 +167,7 @@ objectives, raw convergence messages and evaluation counts),
 `static_baseline_log_likelihood`, `objective_discrepancy`, and
 `likelihood_validation_passed`, and `stationarity_validation`. The original
 `projected_gradient_inf_norm` is informational; a small relative function
-decrease can still occur with a large gradient. The multivariate fits above use
+decrease can still occur with a large gradient. The fits above use
 the separately scaled, independently checked stationarity diagnostic for
 acceptance.
 Neither these checks nor multistart establish global optimality or guarantee
