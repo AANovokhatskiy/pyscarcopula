@@ -116,15 +116,24 @@ double frank_stable_score(double u, double v, double r) {
         return 0.5 * (2.0 * u - 1.0) * (2.0 * v - 1.0)
             + r * (2.0 * u * v * (1.0 - u) * (1.0 - v) - 1.0 / 12.0);
     }
-    const double log_a = -r * u + log1mexp(r * v);
-    const double log_b = -r * v + log1mexp(r * (1.0 - v));
-    const double log_d = logsumexp(log_a, log_b);
-    const double da = -u + (v == 0.0 ? 1.0 / r : v / std::expm1(r * v));
-    const double db = -v + (v == 1.0 ? 1.0 / r
-        : (1.0 - v) / std::expm1(r * (1.0 - v)));
-    return 1.0 / r + 1.0 / std::expm1(r) - u - v
-        - 2.0 * (std::exp(log_a - log_d) * da
-                 + std::exp(log_b - log_d) * db);
+    // Form the log-weight difference before multiplying the common large
+    // coordinate by r. Subtracting two rounded log weights loses the small
+    // diagonal score, even when neither exponential underflows.
+    const double delta = r * (v - u) + log1mexp(r * v)
+        - log1mexp(r * (1.0 - v));
+    const double ratio = std::exp(-std::abs(delta));
+    const double weight_a = delta >= 0.0 ? 1.0 / (1.0 + ratio)
+                                          : ratio / (1.0 + ratio);
+    const double weight_b = delta >= 0.0 ? ratio / (1.0 + ratio)
+                                          : 1.0 / (1.0 + ratio);
+    const double correction_a = v == 0.0 ? 1.0 / r : v / std::expm1(r * v);
+    const double correction_b = v == 1.0 ? 1.0 / r
+        : (1.0 - v) / std::expm1(r * (1.0 - v));
+    // Combine -u-v+2*(weight_a*u+weight_b*v) analytically so that
+    // a score of order 1/r is not cancelled by terms of order one.
+    return 1.0 / r + 1.0 / std::expm1(r)
+        + (u - v) * std::tanh(0.5 * delta)
+        - 2.0 * (weight_a * correction_a + weight_b * correction_b);
 }
 
 bool frank_score_needs_scaling(double u, double v, double r) {

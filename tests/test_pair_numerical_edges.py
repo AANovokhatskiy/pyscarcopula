@@ -99,3 +99,28 @@ def test_frank_score_at_upper_boundary(parameter):
     np.testing.assert_allclose(
         FrankCopula().dlog_pdf_dr_unrotated(1., 1., parameter), expected,
         rtol=1e-12, atol=1e-14)
+
+
+@pytest.mark.parametrize("parameter", [1e8, 1e10, 1e12, 1e16])
+@pytest.mark.parametrize("offset", [0.0, -2.0, 0.5, 2.0])
+def test_frank_large_parameter_score_retains_diagonal_and_nearby_limits(parameter, offset):
+    u, v = .9, .9 + offset / parameter
+    # On this interior strip the omitted exp(-theta*u), exp(-theta*v)
+    # and exp(-theta*(1-v)) terms are smaller than exp(-1e6).
+    # Differentiate theta/(4*cosh(theta*(u-v)/2)**2) in Decimal,
+    # preserving the actual float inputs rather than the requested offset.
+    with localcontext() as context:
+        context.prec = 80
+        theta, first, second = map(Decimal.from_float, (parameter, u, v))
+        difference = first - second
+        exponential = (theta * difference).exp()
+        reference = float(1 / theta + difference * (1 - exponential) / (1 + exponential))
+    copula = FrankCopula()
+    score = copula.dlog_pdf_dr_unrotated(u, v, parameter)
+    np.testing.assert_allclose(score, reference, rtol=2e-13, atol=1e-28)
+    state = copula.inv_transform(np.array([parameter]))
+    np.testing.assert_array_equal(copula.transform(state), [parameter])
+    density, gradient = copula.pdf_and_grad_on_grid(np.array([u, v]), state)
+    assert np.all(np.isfinite(density)) and np.all(density > 0)
+    # Shifted softplus has unit derivative here, so both scores agree.
+    np.testing.assert_allclose(gradient / density, reference, rtol=2e-13, atol=1e-28)
