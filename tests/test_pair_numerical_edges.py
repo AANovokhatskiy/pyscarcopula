@@ -53,6 +53,40 @@ def test_clayton_independence_limit(parameter, expected_log, expected_score):
                                expected_score, rtol=1e-12)
 
 
+@pytest.mark.parametrize("u,v", [(1e-300, .5), (1e-100, .2),
+                                   (1e-10, .2), (.3, .3), (1., 1.)])
+@pytest.mark.parametrize("scaled_parameter", [0.99e-5, 1.01e-5, 1.1e-5,
+                                               1e-3, .499999, .500001])
+def test_clayton_score_and_density_across_stable_formula_boundaries(u, v, scaled_parameter):
+    parameter = scaled_parameter / max(1., -np.log(u), -np.log(v))
+    # Differentiate the defining density in Decimal, independently of both
+    # native rearrangements and the truncated independence expansion.
+    with localcontext() as context:
+        context.prec = 90
+        first, second, theta = map(Decimal.from_float, (u, v, parameter))
+        x, y = -first.ln(), -second.ln()
+        a, b = (theta*x).exp(), (theta*y).exp()
+        total = a+b-1
+        log_total = total.ln()
+        slope = (x*a+y*b)/total
+        log_density = (1+theta).ln()+(1+theta)*(x+y)-(2+1/theta)*log_total
+        score = 1/(1+theta)+x+y+log_total/theta**2-(2+1/theta)*slope
+        reference_log, reference_score = float(log_density), float(score)
+    copula = ClaytonCopula(transform_type="exp")
+    np.testing.assert_allclose(copula.log_pdf(u, v, parameter), reference_log,
+                               rtol=2e-10, atol=2e-12)
+    np.testing.assert_allclose(copula.dlog_pdf_dr_unrotated(u, v, parameter),
+                               reference_score, rtol=2e-10, atol=2e-12)
+    # The latent exponential link has a 1e-4 offset; direct density/score
+    # also accept the smaller positive parameters covered above.
+    if parameter > 1e-4:
+        state = copula.inv_transform(np.array([parameter]))
+        density, gradient = copula.pdf_and_grad_on_grid(np.array([u, v]), state)
+        np.testing.assert_allclose(np.log(density), reference_log, rtol=2e-10, atol=2e-12)
+        np.testing.assert_allclose(gradient / density / copula.dtransform(state),
+                                   reference_score, rtol=2e-10, atol=2e-12)
+
+
 def test_finite_boundary_density_and_score():
     assert GumbelCopula().log_pdf(1., 1., 1.)[0] == 0.
     np.testing.assert_allclose(

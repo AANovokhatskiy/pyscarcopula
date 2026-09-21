@@ -23,9 +23,9 @@ double clayton_parameter_to_tau(double parameter) {
 namespace {
 
 bool clayton_near_independence(double u, double v, double r) {
-    if (!(r >= 0.0 && r < 1e-5)) return false;
+    if (!(r >= 0.0 && r < 0.5)) return false;
     return r * std::max({1.0, -std::log(std::max(u, kPdfEps)),
-                        -std::log(std::max(v, kPdfEps))}) < 1e-5;
+                        -std::log(std::max(v, kPdfEps))}) < 0.5;
 }
 
 // Taylor coefficients of the same log density; factoring out r avoids
@@ -34,6 +34,23 @@ void clayton_independence_value(double u, double v, double r,
                                 double& value, double& score) {
     const double x = -std::log(std::max(u, kPdfEps));
     const double y = -std::log(std::max(v, kPdfEps));
+    if (r * std::max({1.0, x, y}) >= 1e-5) {
+        // exp(rx)+exp(ry)-1 = exp(r(x+y)) * (1-A*B),
+        // A=1-exp(-rx), B=1-exp(-ry).  Its log correction is O(r^2),
+        // so the score never subtracts O(1/r) terms. For rx,ry < 0.5,
+        // 1-A*B stays above 0.84. Keep the Taylor path below for tiny r
+        // where forming A*B could underflow before division by r^2.
+        const double a = -std::expm1(-r * x);
+        const double b = -std::expm1(-r * y);
+        const double correction = std::log1p(-a * b);
+        const double derivative = -(x * std::exp(-r * x) * b
+            + y * std::exp(-r * y) * a) / (1.0 - a * b);
+        value = std::log1p(r) - r * (x + y)
+            - (2.0 + 1.0 / r) * correction;
+        score = 1.0 / (1.0 + r) - x - y - 2.0 * derivative
+            + (correction / r - derivative) / r;
+        return;
+    }
     const double xy = x * y;
     const double c1 = 1.0 - x - y + xy;
     const double c2 = -0.5 + 2.0 * xy - 0.5 * xy * (x + y);

@@ -4,6 +4,17 @@
 
 Version: `0.22.0` -> `0.22.1`
 
+- Stabilize Clayton density and score across the near-independence formula
+  boundary, including extreme tail observations, with a cancellation-free
+  log correction shared by scalar and grid evaluations.
+- Improve pair density and score limits for Clayton, Frank, Joe and Gaussian
+  copulas, and avoid cancellation in multivariate factor quadratic forms.
+- Store centered sums of squares in prepared equicorrelation data to retain
+  accuracy near singular correlations. Read existing prepared archives, but
+  reject evaluations where legacy sums cannot resolve the required variance.
+- Stabilize OU matrix transitions and sampling at small time steps, bound
+  transition-tail truncation, and streamline banded and spectral gradients.
+  Scale Gaussian spectral emissions to avoid density-row underflow.
 - Preserve the origin of multivariate GAS bootstrap starts. Library-inherited
   starts retain automatic multistart and bounded recovery; explicit `gamma0`
   is preserved across retries. Keep unresolved stationarity as a failure and
