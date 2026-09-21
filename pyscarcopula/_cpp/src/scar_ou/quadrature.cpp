@@ -13,6 +13,17 @@
 namespace scar_internal {
 namespace {
 
+bool spectral_message_mass_is_valid(double positive, double negative) {
+    // The exact backward message and emission are positive. Hermite
+    // truncation can introduce small signed tails; reject a *severe* loss
+    // of positivity without clipping them or evaluating another rule.
+    // N/(P+N) >= 1/4 means removing the negative mass would change the
+    // zeroth projection P-N by at least 50%. This sanity check is not a
+    // bound on spectral approximation error.
+    return std::isfinite(positive) && std::isfinite(negative)
+        && positive > 0.0 && negative / positive < 1.0 / 3.0;
+}
+
 double pythag(double a, double b) {
     return std::hypot(a, b);
 }
@@ -714,7 +725,7 @@ bool physicists_hermite_normal_rule(
     return true;
 }
 
-void project_multiply(
+bool project_multiply(
     const std::vector<double>& coeff,
     const std::vector<double>& fi_row,
     const std::vector<double>& basis,
@@ -726,6 +737,8 @@ void project_multiply(
     std::fill(out.begin(), out.end(), 0.0);
     const double* coeff_ptr = coeff.data();
     double* out_ptr = out.data();
+    double positive_mass = 0.0;
+    double negative_mass = 0.0;
     for (int q = 0; q < quad_order; ++q) {
         double value = 0.0;
         const std::size_t base =
@@ -737,13 +750,18 @@ void project_multiply(
             value += basis_row[n] * coeff_ptr[n];
         }
         const double factor = fi_row[static_cast<std::size_t>(q)] * value;
+        const double mass = weighted_row[0] * factor;
+        if (!std::isfinite(mass)) return false;
+        positive_mass += std::max(mass, 0.0);
+        negative_mass += std::max(-mass, 0.0);
         for (int n = 0; n < basis_order; ++n) {
             out_ptr[n] += weighted_row[n] * factor;
         }
     }
+    return spectral_message_mass_is_valid(positive_mass, negative_mass);
 }
 
-void project_multiply_with_grad(
+bool project_multiply_with_grad(
     const std::vector<double>& coeff,
     const std::vector<double>& dcoeff,
     const std::vector<double>& fi_row,
@@ -775,6 +793,8 @@ void project_multiply_with_grad(
         dx_dalpha.data() + static_cast<std::size_t>(quad_order);
     const double* dx2_ptr =
         dx_dalpha.data() + 2 * static_cast<std::size_t>(quad_order);
+    double positive_mass = 0.0;
+    double negative_mass = 0.0;
 
     for (int q = 0; q < quad_order; ++q) {
         const std::size_t basis_base =
@@ -799,6 +819,10 @@ void project_multiply_with_grad(
         const double fi = fi_row[static_cast<std::size_t>(q)];
         const double dfi = dfi_dx_row[static_cast<std::size_t>(q)];
         const double out_factor = fi * value;
+        const double mass = weighted_row[0] * out_factor;
+        if (!std::isfinite(mass)) return false;
+        positive_mass += std::max(mass, 0.0);
+        negative_mass += std::max(-mass, 0.0);
         const double dout0_factor = dfi * dx0_ptr[q] * value + fi * dvalue0;
         const double dout1_factor = dfi * dx1_ptr[q] * value + fi * dvalue1;
         const double dout2_factor = dfi * dx2_ptr[q] * value + fi * dvalue2;
@@ -811,6 +835,7 @@ void project_multiply_with_grad(
             dout2[n] += weighted_basis_value * dout2_factor;
         }
     }
+    return spectral_message_mass_is_valid(positive_mass, negative_mass);
 }
 
 void project_multiply_with_score_grad(

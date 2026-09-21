@@ -218,7 +218,8 @@ GasLogLikResult run_log_likelihood(
     const GasParams& params,
     const CopulaSpec& copula,
     ObservationView u,
-    const GasConfig& config) {
+    const GasConfig& config,
+    bool require_resolved_transform = false) {
 
     GasLogLikResult out;
     PreparedDynamicEmission emission =
@@ -241,6 +242,18 @@ GasLogLikResult run_log_likelihood(
             ? nullptr
             : u.values + static_cast<std::size_t>(u.dim) * t;
         const bool need_score = t + 1 < u.n_obs;
+        // A clamped equicorrelation remains a valid scalar likelihood, but
+        // a saturated transform has no representable optimizer sensitivity.
+        // Reject this trial only in the gradient provider so the optimizer's
+        // directional failure policy can backtrack instead of accepting a
+        // huge finite plateau with a zero finite-difference gradient.
+        if (require_resolved_transform
+            && copula.family == CopulaFamily::EquicorrGaussian
+            && gas_dtransform(emission, g) == 0.0) {
+            set_failure(out, SCAR_NUMERICAL_FAILURE,
+                        static_cast<std::int64_t>(t));
+            return out;
+        }
         const RowEvaluation evaluation = evaluate_row(
             emission,
             row,
@@ -376,8 +389,24 @@ GasObjectiveGradientResult optimizer_value_gradient(
         const double upper = bounded ? config.optimizer_upper_bounds[coordinate]
             : std::numeric_limits<double>::infinity();
         auto shifted = values;
-        shifted[coordinate] += optimizer_gradient_step(
+        double step = optimizer_gradient_step(
             config, values[coordinate], lower, upper);
+        double second_step = -step;
+        if (config.optimizer_gradient_central) {
+            step = std::abs(step);
+            if (values[coordinate] - step < lower
+                || values[coordinate] + step > upper) {
+                const double left = values[coordinate] - lower;
+                const double right = upper - values[coordinate];
+                step = right >= left
+                    ? std::min(step, right / 2.0)
+                    : -std::min(step, left / 2.0);
+                second_step = 2.0 * step;
+            } else {
+                second_step = -step;
+            }
+        }
+        shifted[coordinate] += step;
         // Floating-point addition determines the actual representable step.
         const double delta = shifted[coordinate] - values[coordinate];
         if (!std::isfinite(delta) || delta == 0.0) {
@@ -397,6 +426,26 @@ GasObjectiveGradientResult optimizer_value_gradient(
         }
         out.gradient[coordinate] = -(
             moved.log_likelihood - base.log_likelihood) / delta;
+        if (config.optimizer_gradient_central) {
+            auto second = values;
+            second[coordinate] += second_step;
+            const double delta2 = second[coordinate] - values[coordinate];
+            const GasLogLikResult moved2 = evaluate(second);
+            ++out.objective_evaluations;
+            if (!moved2.is_ok() || delta2 == 0.0 || delta2 == delta) {
+                out.status = moved2.is_ok()
+                    ? Status::NumericalFailure : moved2.status;
+                out.failure = moved2.failure;
+                out.failure.coordinate = static_cast<int>(coordinate);
+                out.gradient.clear();
+                return out;
+            }
+            const double slope2 = -(
+                moved2.log_likelihood - base.log_likelihood) / delta2;
+            out.gradient[coordinate] = (
+                delta2 * out.gradient[coordinate] - delta * slope2)
+                / (delta2 - delta);
+        }
         if (!std::isfinite(out.gradient[coordinate])) {
             out.status = Status::NumericalFailure;
             out.failure.coordinate = static_cast<int>(coordinate);
@@ -408,6 +457,73 @@ GasObjectiveGradientResult optimizer_value_gradient(
 }
 
 }  // namespace
+
+GasOptimizerCoordinatesResult gas_optimizer_coordinates(
+    const std::vector<double>& parameters,
+    const std::vector<double>& gradient,
+    double objective,
+    double objective_scale,
+    bool to_optimizer) {
+
+    GasOptimizerCoordinatesResult out;
+    if ((parameters.size() != 3 && parameters.size() != 4)
+        || (!gradient.empty() && gradient.size() != parameters.size())
+        || !std::isfinite(objective) || !std::isfinite(objective_scale)
+        || objective_scale <= 0.0) {
+        out.status = Status::InvalidParameter;
+        return out;
+    }
+    for (double value : parameters) {
+        if (!std::isfinite(value)) {
+            out.status = Status::InvalidParameter;
+            return out;
+        }
+    }
+    for (double value : gradient) {
+        if (!std::isfinite(value)) {
+            out.status = Status::NumericalFailure;
+            return out;
+        }
+    }
+    if (std::abs(parameters[2]) >= 1.0) {
+        out.status = Status::InvalidParameter;
+        return out;
+    }
+    out.parameters = parameters;
+    out.gradient = gradient;
+    const double persistence_gap = 1.0 - parameters[2];
+    if (to_optimizer) {
+        const double mu = parameters[0] / persistence_gap;
+        out.parameters[0] = mu;
+        if (!gradient.empty()) {
+            out.gradient[0] *= persistence_gap;
+            out.gradient[2] -= mu * gradient[0];
+            for (double& value : out.gradient) value /= objective_scale;
+        }
+        out.objective = objective / objective_scale;
+    } else {
+        out.parameters[0] *= persistence_gap;
+        if (!gradient.empty()) {
+            for (double& value : out.gradient) value *= objective_scale;
+            out.gradient[0] /= persistence_gap;
+            out.gradient[2] += parameters[0] * out.gradient[0];
+        }
+        out.objective = objective * objective_scale;
+    }
+    for (double value : out.parameters) {
+        if (!std::isfinite(value)) out.status = Status::NumericalFailure;
+    }
+    for (double value : out.gradient) {
+        if (!std::isfinite(value)) out.status = Status::NumericalFailure;
+    }
+    if (!std::isfinite(out.objective)) out.status = Status::NumericalFailure;
+    return out;
+}
+
+std::vector<double> gas_optimizer_validation_steps() {
+    const double step = std::cbrt(std::numeric_limits<double>::epsilon());
+    return {step, 0.5 * step, 0.25 * step, 0.125 * step};
+}
 
 GasStateResult GasEvaluator::initial_state(
     const GasParams& params,
@@ -538,12 +654,48 @@ GasEvaluator::negative_log_likelihood_and_gradient(
     ObservationView u,
     const GasConfig& config) const {
 
+    if (config.optimizer_gradient_mean_coordinates) {
+        GasObjectiveGradientResult failure;
+        failure.status = Status::InvalidParameter;
+        // The fit's intercept is unbounded. Finite intercept bounds become
+        // coupled constraints in mean/persistence coordinates, not a box.
+        if ((!config.optimizer_lower_bounds.empty()
+             || !config.optimizer_upper_bounds.empty())
+            && (config.optimizer_lower_bounds.size() != 3
+                || config.optimizer_upper_bounds.size() != 3
+                || config.optimizer_lower_bounds[0]
+                    != -std::numeric_limits<double>::infinity()
+                || config.optimizer_upper_bounds[0]
+                    != std::numeric_limits<double>::infinity())) {
+            return failure;
+        }
+        const auto mapped = gas_optimizer_coordinates(
+            {params.omega, params.gamma, params.beta}, {}, 0.0, 1.0, true);
+        if (mapped.status != Status::Ok) return failure;
+        auto result = optimizer_value_gradient(
+            std::array<double, 3>{mapped.parameters[0], params.gamma, params.beta},
+            config,
+            [&](const std::array<double, 3>& values) {
+                const GasParams point{
+                    values[0] * (1.0 - values[2]), values[1], values[2]};
+                return run_log_likelihood(point, copula, u, config, true);
+            });
+        if (!result.is_ok()) return result;
+        // Preserve the provider's physical-gradient contract. Validation and
+        // recovery can map it back exactly; the FD stencil itself is formed
+        // in well-conditioned mean coordinates, not transformed afterwards.
+        const auto physical = gas_optimizer_coordinates(
+            mapped.parameters, result.gradient, result.objective, 1.0, false);
+        result.status = physical.status;
+        result.gradient = physical.gradient;
+        return result;
+    }
     return optimizer_value_gradient(
         std::array<double, 3>{params.omega, params.gamma, params.beta},
         config,
         [&](const std::array<double, 3>& values) {
             const GasParams point{values[0], values[1], values[2]};
-            return run_log_likelihood(point, copula, u, config);
+            return run_log_likelihood(point, copula, u, config, true);
         });
 }
 

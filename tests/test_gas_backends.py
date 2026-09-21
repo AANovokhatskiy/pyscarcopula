@@ -260,6 +260,8 @@ def test_gas_optimizer_gradient_step_routes_to_native(
     assert native_kwargs == {
         "optimizer_gradient_eps": expected_eps,
         "optimizer_gradient_relative": expected_relative,
+        "optimizer_gradient_central": False,
+        "optimizer_gradient_mean_coordinates": False,
     }
     assert result.diagnostics["optimizer_gradient_eps"] == pytest.approx(
         expected_eps)
@@ -267,7 +269,7 @@ def test_gas_optimizer_gradient_step_routes_to_native(
         result.diagnostics["optimizer_gradient_relative"]
         is expected_relative
     )
-    assert result.nfev == 17 * 4
+    assert result.nfev == 17 * 4 + result.diagnostics["verification_nfev"]
     assert "objective_evaluations" not in result.diagnostics
     assert "requested_maxfun" not in result.diagnostics
 

@@ -107,14 +107,16 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
         fill_row(t, emission_log_scale);
         log_scale += emission_log_scale;
 
-        scar_internal::project_multiply(
+        if (!scar_internal::project_multiply(
             coeff,
             fi_row,
             basis,
             weighted_basis,
             config.spectral_quad_order,
             config.spectral_basis_order,
-            projected);
+            projected)) {
+            return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+        }
 
         double scale = 0.0;
         for (int n = 0; n < config.spectral_basis_order; ++n) {
@@ -135,14 +137,16 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
     double emission_log_scale = 0.0;
     fill_row(0, emission_log_scale);
     log_scale += emission_log_scale;
-    scar_internal::project_multiply(
+    if (!scar_internal::project_multiply(
         coeff,
         fi_row,
         basis,
         weighted_basis,
         config.spectral_quad_order,
         config.spectral_basis_order,
-        projected);
+        projected)) {
+        return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+    }
 
     const double likelihood_scaled = projected[0];
     if (!std::isfinite(likelihood_scaled) || likelihood_scaled <= 0.0) {

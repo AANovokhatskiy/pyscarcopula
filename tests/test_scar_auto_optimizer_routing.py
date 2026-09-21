@@ -69,3 +69,34 @@ def test_optimizer_auto_falls_back_to_matrix_for_failed_spectral_trial(monkeypat
         "local", "matrix", "local", "matrix"]
     assert info[1]["fallback_chain"] == ["spectral"]
     assert info[3]["fallback_chain"] == ["spectral"]
+
+
+def test_backend_diagnostics_clear_previous_fallback_after_spectral_success():
+    from pyscarcopula._native import scar_ou
+    from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+
+    observations = np.tile([[.001, .001], [.001, .999]], (25, 1))
+    model = BivariateGaussianCopula()
+    config = AutoTMConfig(
+        transition_method="auto", basis_order=3, quad_order=3,
+        K=300, max_K=300, adaptive=False)
+    objective = scar_ou.prepare_objective(observations, model, config)
+    diagnostics = scar_tm._new_backend_diagnostics()
+    kappa = .02 * (len(observations) - 1)
+    for sigma in (4.0, .001):
+        value, gradient, info = objective.neg_loglik_with_grad_info(
+            kappa, 0.0, sigma * np.sqrt(2.0 * kappa))
+        assert np.isfinite(value)
+        assert np.all(np.isfinite(gradient))
+        scar_tm._record_backend_diagnostics(diagnostics, info, "cpp")
+        if sigma == 4.0:
+            assert diagnostics["last_backend"] == "matrix"
+            assert diagnostics["last_fallback_chain"] == ("spectral",)
+
+    assert diagnostics["last_backend"] == "spectral"
+    assert diagnostics["last_fallback_chain"] == ()
+    # Clearing the last-call state must preserve the accumulated history.
+    assert diagnostics["objective_evaluations"] == 2
+    assert diagnostics["fallback_spectral_to_matrix"] == 1
+    assert diagnostics["spectral_failures"] == 1
+    assert diagnostics["matrix_evaluations"] == 1

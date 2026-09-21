@@ -282,8 +282,7 @@ def _record_backend_diagnostics(diagnostics: dict, info: dict,
                 + 1
             )
             diagnostics["last_spectral_basis_order"] = basis_order_int
-    if chain:
-        diagnostics["last_fallback_chain"] = tuple(chain)
+    diagnostics["last_fallback_chain"] = tuple(chain)
 
 
 class _PreparedScarOuFitCache:

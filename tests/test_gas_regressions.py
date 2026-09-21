@@ -96,3 +96,288 @@ def test_better_nonconverged_start_is_not_replaced_by_worse_success(monkeypatch)
     assert result.nfev == 8
     assert diagnostics["automatic_multistart"]
     assert diagnostics["initial_static_log_likelihood"] == 0.0
+
+
+@pytest.mark.parametrize("point", [
+    [1.0623299700264952, 0.034202001931613414, 0.9500386085738329],
+    [-1.0623299700264952, 0.034202001931613414, 0.9500386085738329],
+])
+def test_saturated_equicorr_is_finite_but_not_an_optimizer_plateau(point):
+    observations = np.array([[0.2, 0.7], [0.4, 0.6], [0.8, 0.3]])
+    model = EquicorrGaussianCopula(d=2)
+    # Stable density remains available for evaluation at extreme states.
+    assert np.isfinite(gas.negative_log_likelihood(*point, observations, model))
+    # Its transform has no representable sensitivity; returning a finite
+    # objective with a zero gradient caused false relative-function stops.
+    with pytest.raises(FloatingPointError, match="numerical_failure"):
+        gas.negative_log_likelihood_and_gradient(*point, observations, model)
+
+
+def test_relative_function_stop_requires_independent_stationarity(monkeypatch):
+    def objective(point):
+        return float(np.dot(point, point)), 2 * point
+
+    def stopped(fun, point, **kwargs):
+        value, gradient = fun(point)
+        return SimpleNamespace(x=point.copy(), fun=value, jac=gradient,
+                               success=True, nfev=4, message="relative reduction")
+
+    monkeypatch.setattr("pyscarcopula.strategy.gas._minimize_gas_objective", stopped)
+    result, diagnostics = _fit_gas_starts(
+        objective, np.array([0.1, 0.05, 0.95]),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"ftol": 1e-9, "gtol": 1e-3}, automatic=False, refine=False,
+        validation_objective=objective)
+    assert not result.success
+    assert result.raw_optimizer_success
+    assert not diagnostics["stationarity_validation"]["passed"]
+    assert "stationarity" in result.message
+
+
+def test_stationarity_rejects_disagreement_between_difference_scales(monkeypatch):
+    def coarse(point):
+        return 1.0, np.array([0.0008, 0.0, 0.0])
+
+    def fine(point):
+        return 1.0, np.array([-0.0008, 0.0, 0.0])
+
+    coarse.finer_provider = fine
+
+    def stopped(fun, point, **kwargs):
+        value, gradient = fun(point)
+        return SimpleNamespace(x=point.copy(), fun=value, jac=gradient,
+                               success=True, nfev=4, message="relative reduction")
+
+    monkeypatch.setattr("pyscarcopula.strategy.gas._minimize_gas_objective", stopped)
+    result, diagnostics = _fit_gas_starts(
+        coarse, np.array([0.1, 0.05, 0.95]),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"ftol": 1e-9, "gtol": 1e-3}, automatic=False, refine=False,
+        validation_objective=coarse)
+    check = diagnostics["stationarity_validation"]
+    assert check["projected_gradient_inf_norm"] < check["gtol"]
+    assert check["gradient_step_discrepancy"] > check["gtol"]
+    assert not result.success
+
+
+def test_recovery_starts_from_better_retained_trial(monkeypatch):
+    starts = []
+    def objective(point):
+        return float(np.dot(point, point)), 2 * point
+
+    def stopped(fun, point, **kwargs):
+        starts.append(point.copy())
+        value, gradient = fun(point)
+        if len(starts) == 1:
+            fun(point / 2)  # line search found this, but its final stop lost it
+            return SimpleNamespace(x=point.copy(), fun=value, jac=gradient,
+                                   success=True, nfev=8, message="relative reduction")
+        optimum = np.zeros(3)
+        value, gradient = fun(optimum)
+        return SimpleNamespace(x=optimum, fun=value, jac=gradient,
+                               success=True, nfev=8, message="gradient tolerance")
+
+    monkeypatch.setattr("pyscarcopula.strategy.gas._minimize_gas_objective", stopped)
+    initial = np.array([0.1, 0.05, 0.95])
+    result, diagnostics = _fit_gas_starts(
+        objective, initial,
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"ftol": 1e-9, "gtol": 1e-3}, automatic=False, refine=False,
+        recovery_objectives=[objective], validation_objective=objective)
+    np.testing.assert_array_equal(starts[1], initial / 2)
+    assert result.success
+    assert result.fun == 0
+    assert diagnostics["stationarity_validation"]["passed"]
+
+
+def test_validation_uses_the_same_material_trial_selection_as_the_result(monkeypatch):
+    starts = []
+
+    def objective(point):
+        return (0.9995 if point[0] else 1.0), np.zeros(3)
+
+    def validation(point):
+        return objective(point)[0], np.array([0.0 if point[0] else 1.0, 0.0, 0.0])
+
+    def stopped(fun, point, **kwargs):
+        starts.append(point.copy())
+        value, gradient = fun(point)
+        if len(starts) == 1:
+            fun(np.array([1.0, 0.0, 0.0]))
+        return SimpleNamespace(x=point.copy(), fun=value, jac=gradient,
+                               success=True, nfev=8, message="relative reduction")
+
+    monkeypatch.setattr("pyscarcopula.strategy.gas._minimize_gas_objective", stopped)
+    result, diagnostics = _fit_gas_starts(
+        objective, np.zeros(3),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"ftol": 1e-9, "gtol": 1e-3}, automatic=False, refine=False,
+        recovery_objectives=[objective], validation_objective=validation)
+    assert len(starts) == 2  # tiny better trial cannot suppress recovery
+    np.testing.assert_array_equal(starts[1], np.zeros(3))
+    assert not diagnostics["retained_best_trial"]
+    assert not result.success
+
+
+def test_equal_objective_prefers_the_converged_candidate(monkeypatch):
+    starts = []
+
+    def objective(point):
+        return 1.0, np.zeros(3)
+
+    def stopped(fun, point, **kwargs):
+        starts.append(point.copy())
+        value, gradient = fun(point)
+        return SimpleNamespace(x=point.copy(), fun=value, jac=gradient,
+                               success=len(starts) > 1, nfev=4, message="stopped")
+
+    monkeypatch.setattr("pyscarcopula.strategy.gas._minimize_gas_objective", stopped)
+    result, _ = _fit_gas_starts(
+        objective, np.array([0.1, 0.05, 0.95]),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"ftol": 1e-9}, automatic=True, refine=False)
+    assert result.success
+    assert result.x[1] == 0.0
+
+
+@pytest.mark.parametrize("loss,accepted", [(0.0005, True), (0.002, False)])
+def test_stationary_recovery_may_only_sacrifice_immaterial_likelihood(
+        monkeypatch, loss, accepted):
+    starts = []
+
+    def objective(point):
+        return 1.0 + loss * point[0], np.array([0.0 if point[0] else 1.0, 0.0, 0.0])
+
+    def stopped(fun, point, **kwargs):
+        starts.append(point.copy())
+        terminal = np.array([1.0, 0.0, 0.0]) if len(starts) > 1 else point.copy()
+        value, gradient = fun(terminal)
+        return SimpleNamespace(x=terminal, fun=value, jac=gradient,
+                               success=True, nfev=4, message="stopped")
+
+    monkeypatch.setattr("pyscarcopula.strategy.gas._minimize_gas_objective", stopped)
+    result, diagnostics = _fit_gas_starts(
+        objective, np.zeros(3),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"ftol": 1e-9, "gtol": 1e-3}, automatic=False, refine=False,
+        recovery_objectives=[objective], validation_objective=objective)
+    assert result.success is accepted
+    assert result.x[0] == float(accepted)
+    assert diagnostics["stationary_selection_loglik_loss"] == pytest.approx(
+        loss if accepted else 0.0)
+
+
+@pytest.mark.parametrize("gradients,used,passed", [
+    ([0.0015, 0.0008, 0.0003, 0.0002], 3, True),
+    ([0.005, 0.0051, 0.0, 0.0], 2, False),
+])
+def test_bounded_difference_refinement_only_resolves_threshold_uncertainty(
+        monkeypatch, gradients, used, passed):
+    providers = []
+    for value in gradients:
+        def provider(point, derivative=value):
+            return 1.0, np.array([derivative, 0.0, 0.0])
+        providers.append(provider)
+    providers[0].finer_provider = providers[1]
+    providers[0].refinement_providers = providers[2:]
+
+    def stopped(fun, point, **kwargs):
+        value, gradient = fun(point)
+        return SimpleNamespace(x=point.copy(), fun=value, jac=gradient,
+                               success=True, nfev=4, message="stopped")
+
+    monkeypatch.setattr("pyscarcopula.strategy.gas._minimize_gas_objective", stopped)
+    result, diagnostics = _fit_gas_starts(
+        providers[0], np.zeros(3),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"ftol": 1e-9, "gtol": 1e-3}, automatic=False, refine=False,
+        validation_objective=providers[0])
+    assert result.success is passed
+    check = diagnostics["stationarity_validation"]
+    assert len(check["all_projected_gradient_norms"]) == used
+    assert len(check["projected_gradient_norms"]) == 2
+
+
+def test_bivariate_fits_preserve_the_existing_stationarity_policy(monkeypatch):
+    from pyscarcopula import BivariateGaussianCopula
+
+    def unexpected_validation():
+        raise AssertionError("multivariate recovery must not change vine-edge fits")
+
+    monkeypatch.setattr(gas, "optimizer_validation_steps", unexpected_validation)
+    observations = np.random.default_rng(7281).uniform(0.03, 0.97, (30, 2))
+    result = GASStrategy().fit(BivariateGaussianCopula(), observations)
+    assert result.diagnostics["stationarity_validation"] is None
+    assert not any(stage["stage"].startswith("recovery_")
+                   for stage in result.diagnostics["optimizer_stages"])
+
+
+@pytest.mark.data
+def test_high_frequency_equicorr_default_fit_avoids_saturated_line_search():
+    from pathlib import Path
+    import pandas as pd
+    from pyscarcopula._utils import pobs
+    from threadpoolctl import threadpool_limits
+
+    path = Path(__file__).resolve().parents[1] / "data" / "btc_eth_combined_30m.csv"
+    if not path.exists():
+        pytest.skip("high-frequency regression data unavailable")
+    prices = pd.read_csv(path, index_col=0)[["BTC_close", "ETH_close"]]
+    observations = pobs(np.log(prices / prices.shift(1)).iloc[1:12001].dropna().values)
+    with threadpool_limits(limits=1):
+        result = GASStrategy().fit(EquicorrGaussianCopula(d=2), observations)
+    # The regression stopped at 8199.377 with a raw gradient above 3700.
+    assert result.log_likelihood >= 8279.35
+    assert result.success
+    check = result.diagnostics["stationarity_validation"]
+    assert check["passed"]
+    assert check["objective_scale"] == len(observations)
+
+
+@pytest.mark.data
+def test_student_default_fit_recovers_and_reports_stationarity(crypto_data_6d):
+    from threadpoolctl import threadpool_limits
+
+    with threadpool_limits(limits=1):
+        result = GASStrategy().fit(StochasticStudentCopula(d=6), crypto_data_6d)
+    # A retained trial at 824.972 used to terminate the entire fit.
+    assert result.log_likelihood >= 827.3
+    assert any(stage["stage"].startswith("recovery_")
+               for stage in result.diagnostics["optimizer_stages"])
+    check = result.diagnostics["stationarity_validation"]
+    assert result.success
+    assert check["passed"]
+    assert len(check["gradient_steps"]) == 2
+    assert max(check["projected_gradient_norms"]) <= check["gtol"]
+    assert check["gradient_step_discrepancy"] <= check["gtol"]
+
+
+@pytest.mark.data
+@pytest.mark.parametrize("dataset,minimum_loglik", [("hf", 8272.15), ("us6", 2232.299)])
+def test_student_stationarity_is_robust_to_near_unit_persistence_and_noisy_score(
+        dataset, minimum_loglik):
+    from pathlib import Path
+    import pandas as pd
+    from pyscarcopula._utils import pobs
+    from threadpoolctl import threadpool_limits
+
+    root = Path(__file__).resolve().parents[1] / "data"
+    path = root / ("btc_eth_combined_30m.csv" if dataset == "hf" else "us_equity_prices.csv")
+    if not path.exists():
+        pytest.skip("Student regression data unavailable")
+    columns = (["BTC_close", "ETH_close"] if dataset == "hf"
+               else ["AAPL", "JPM", "JNJ", "XOM", "PG", "BA"])
+    prices = pd.read_csv(path, index_col=0, sep="," if dataset == "hf" else ";")[columns]
+    returns = np.log(prices / prices.shift(1)).iloc[1:]
+    if dataset == "hf":
+        returns = returns.iloc[:12000]
+    observations = pobs(returns.dropna().values)
+    with threadpool_limits(limits=1):
+        result = GASStrategy().fit(StochasticStudentCopula(d=len(columns)), observations)
+    assert result.log_likelihood >= minimum_loglik
+    assert result.success
+    check = result.diagnostics["stationarity_validation"]
+    assert max(check["projected_gradient_norms"]) <= check["gtol"]
+    assert check["gradient_step_discrepancy"] <= check["gtol"]
+    assert len(check["projected_gradient_norms"]) == 2
+    assert result.diagnostics["stationary_selection_loglik_loss"] <= 0.001

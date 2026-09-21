@@ -666,6 +666,20 @@ class PreparedScarJacobiEvaluator:
                 "C++ prepared Jacobi objective returned a non-finite value")
         return value
 
+    def near_independence_candidate(
+            self, current, kappa_bounds, xi_bounds, tau_eps,
+            current_objective, gradient_tolerance):
+        module = load()
+        bounds = module.JacobiParameterBounds()
+        bounds.kappa_lower, bounds.kappa_upper = map(float, kappa_bounds)
+        bounds.xi_lower, bounds.xi_upper = map(float, xi_bounds)
+        bounds.tau_eps = float(tau_eps)
+        result = self._native.near_independence_candidate(
+            _params(*current), bounds, float(current_objective),
+            float(gradient_tolerance))
+        _evaluator_raise(result, "near-independence boundary candidate")
+        return dict(result)
+
     def neg_loglik_with_grad(self, kappa, m, xi):
         result = self._native.neg_loglik_with_grad(_params(kappa, m, xi))
         _evaluator_raise(result, "prepared objective gradient")

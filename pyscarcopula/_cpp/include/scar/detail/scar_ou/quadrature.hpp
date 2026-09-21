@@ -42,7 +42,9 @@ bool physicists_hermite_normal_rule(
     int order,
     std::vector<double>& nodes,
     std::vector<double>& weights);
-void project_multiply(
+// Return false on a severe loss of positivity in the weighted message.
+// This is a single-pass failure check, not an accuracy/convergence estimate.
+bool project_multiply(
     const std::vector<double>& coeff,
     const std::vector<double>& fi_row,
     const std::vector<double>& basis,
@@ -50,7 +52,7 @@ void project_multiply(
     int quad_order,
     int basis_order,
     std::vector<double>& out);
-void project_multiply_with_grad(
+bool project_multiply_with_grad(
     const std::vector<double>& coeff,
     const std::vector<double>& dcoeff,
     const std::vector<double>& fi_row,

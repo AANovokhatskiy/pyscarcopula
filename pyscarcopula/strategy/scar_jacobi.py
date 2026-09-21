@@ -595,6 +595,10 @@ class SCARJacobiStrategy:
         over ``eps`` and uses relative steps in raw optimizer coordinates.
         Otherwise ``eps`` controls absolute steps. Analytical gradients are
         provided by the native evaluator and do not use either step option.
+        With the default optimizer budget, evaluation-limit termination gets
+        one bounded warm-start retry. Explicit budgets disable this retry.
+        Near-independent Clayton fits also check a dynamic boundary candidate;
+        diagnostics distinguish this selection from optimizer convergence.
         """
         reject_unknown_strategy_kwargs("SCAR-TM-JACOBI", kwargs)
         self._check_kendall_mapping(copula)
@@ -663,25 +667,60 @@ class SCARJacobiStrategy:
                 evaluator=evaluator)
             return val, jacobi_native.raw_gradient(alpha, grad)
 
-        if self.analytical_grad:
-            result = minimize(
-                objective_raw_with_grad,
-                raw0,
-                method='L-BFGS-B',
-                jac=True,
-                bounds=bounds,
-                options=optimizer_options,
-            )
-        else:
-            result = minimize(
-                objective_raw,
-                raw0,
-                method='L-BFGS-B',
-                jac=('2-point' if optimizer_options.get(
-                    'finite_diff_rel_step') is not None else None),
-                bounds=bounds,
-                options=optimizer_options,
-            )
+        objective = (objective_raw_with_grad if self.analytical_grad
+                     else objective_raw)
+        jac = (True if self.analytical_grad else
+               '2-point' if optimizer_options.get('finite_diff_rel_step')
+               is not None else None)
+        result = minimize(objective, raw0, method='L-BFGS-B', jac=jac,
+                          bounds=bounds, options=optimizer_options)
+        optimizer_attempts = []
+
+        def record_attempt(attempt, start):
+            return {
+                "start_raw": np.asarray(start).tolist(),
+                "params": _raw_to_physical(attempt.x).tolist(),
+                "objective": float(attempt.fun),
+                "success": bool(attempt.success),
+                "message": str(attempt.message),
+                "nfev": int(attempt.nfev),
+            }
+
+        optimizer_attempts.append(record_attempt(result, raw0))
+        total_nfev = int(result.nfev)
+        # One fresh budget at the last point, only for the library default.
+        # Explicit fit/config budgets remain hard user choices. Do not retry
+        # iteration limits, invalid objectives, or arbitrary optimizer errors.
+        default_budget = (
+            maxfun is None
+            and self.config.scar_optimizer == DEFAULT_CONFIG.scar_optimizer)
+        if (default_budget and not result.success
+                and "EVALUATIONS EXCEEDS LIMIT" in str(result.message).upper()
+                and np.isfinite(result.fun)
+                and not native_validation.objective_is_invalid(result.fun)):
+            restart = np.asarray(result.x).copy()
+            retry = minimize(objective, restart, method='L-BFGS-B', jac=jac,
+                             bounds=bounds, options=optimizer_options)
+            optimizer_attempts.append(record_attempt(retry, restart))
+            total_nfev += int(retry.nfev)
+            # An unsuccessful retry must not discard a better finite point.
+            if (np.isfinite(retry.fun) and retry.fun <= result.fun):
+                result = retry
+        result.nfev = total_nfev
+
+        # Family gating, boundary construction, objective comparison and
+        # two-scale inward stationarity checks are owned by native Jacobi.
+        boundary_candidate = evaluator.near_independence_candidate(
+            _raw_to_physical(result.x), self.kappa_bounds, self.xi_bounds,
+            self.tau_eps, result.fun, optimizer_options.get('gtol', 1e-5))
+        result.nfev += int(boundary_candidate["nfev"])
+        if boundary_candidate["selected"]:
+            result.x = np.asarray(boundary_candidate["raw"], dtype=np.float64)
+            result.fun = float(boundary_candidate["objective"])
+            result.message = (
+                f"{result.message}; selected near-independence boundary "
+                "candidate with native validated inward differences "
+                "(dynamic parameters weakly identified)")
 
         alpha = _raw_to_physical(result.x)
         final_fun = float(self.config.fail_value)
@@ -752,6 +791,12 @@ class SCARJacobiStrategy:
                 alpha[0], alpha[1], alpha[2], len(u))
         diagnostics = self._gradient_diagnostics(selected_backend)
         diagnostics["initialization"] = initialization
+        diagnostics["optimizer_attempts"] = optimizer_attempts
+        diagnostics["optimizer_retry_count"] = len(optimizer_attempts) - 1
+        diagnostics["boundary_candidate"] = boundary_candidate
+        diagnostics["selected_point_source"] = (
+            "near_independence_boundary" if boundary_candidate["selected"]
+            else "optimizer")
         diagnostics["final_evaluation_status"] = final_evaluation_status
         diagnostics["final_objective_value"] = float(final_fun)
         diagnostics["final_gradient_objective_value"] = (

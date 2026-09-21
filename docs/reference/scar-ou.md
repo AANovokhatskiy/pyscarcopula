@@ -186,6 +186,19 @@ optimization. Explicit `matrix`, `local`, and `spectral` requests remain fixed.
 `auto_small_kdt=0.01` is a time-scale threshold. Auto routing checks numerical
 validity and does not compare likelihood values between backends. There is
 no cross-backend likelihood tolerance in this selection policy.
+The spectral multiplication also rejects severe loss of positivity in a
+backward message. In the existing quadrature pass it accumulates positive
+mass $P$ and absolute negative mass $N$, weighted by the current emission
+and quadrature weights. If $N \ge P/3$, it reports a numerical failure:
+discarding that negative contribution would change the zeroth projection
+$P-N$ by at least 50%. The same check applies to scalar and gradient paths,
+including the first observation. `auto` then uses the existing fallback;
+explicit `spectral` reports the failure. Small signed tails are not clipped.
+This is a sanity check, not an error bound or a convergence certificate.
+It does not rerun the likelihood with more modes/nodes, and does not change
+the default spectral orders. Explicit larger `spectral_basis_order` and
+`spectral_quad_order` can improve resolved cases, but increasing both is
+more expensive and does not guarantee convergence near singular emissions.
 Different valid approximations can introduce a likelihood jump when the
 optimizer crosses the routing threshold. Increasing `gh_order` alone does
 not remove the local method's interpolation error on a fixed latent grid.

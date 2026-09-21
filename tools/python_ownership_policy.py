@@ -29,6 +29,11 @@ _REVIEW_KINDS = {
 }
 
 _SYMBOL_REVIEWS = (
+    # Native derivatives and coordinates; only generic bound activity,
+    # gradient norm/disagreement checks, acceptance and counts remain here.
+    # Covered by tests/test_gas_regressions.py.
+    ('pyscarcopula.strategy.gas:_fit_gas_starts.verify',
+     '5e158e75ed552a073063ee3a1217a35dccaf34608417f78763ada9cd81456ae0', 'bookkeeping', ('arithmetic', 'numerical-call')),
     # Native FD stencil and O(T) variance-score summary; Python only calls rows.
     # Covered by tests/test_student_score_initialization.py.
     ('pyscarcopula._native.scar_ou:student_score_initial_point',
@@ -46,9 +51,9 @@ _SYMBOL_REVIEWS = (
     # bounds, not a model gradient or a projection of observations/states.
     # Covered by tests/test_gas_regressions.py and test_gas_optimizer.py.
     ('pyscarcopula.strategy.gas:_fit_gas_starts',
-     '1b2e86ffbb1d3316a5275d1b5f659c3b1aca8a71154198923ae2dc9812ebe2b2', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '7238c7d3ebb1aa68b8fb6036ab6f44fce40412703af64e3d6e560aacef0bc964', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.strategy.gas:_fit_gas_starts.run',
-     'e29e4c49f45cc525416851120e3720c8103bd4587984395bea9cc4446670567d', 'bookkeeping', ('arithmetic',)),
+     '688f24aba7d3a59747f2f791ab120def9a59c8fe0287fbc056e0a764b1ebd4b3', 'bookkeeping', ('arithmetic',)),
     ('pyscarcopula.strategy.gas:GASStrategy._build_result',
      '8a64040abb9f2ae84ee3ce03bedb7a9a376384860129e454e2e4240867f2a4a4', 'bookkeeping', ('arithmetic', 'numerical-call')),
     # Bootstrap fitted defaults/thread routing and exact real/integer input
@@ -71,11 +76,12 @@ _SYMBOL_REVIEWS = (
     # initialize_factor no longer require arithmetic exceptions.
     # Sampling/conditional routing and numerical-step changes preserve native
     # ownership of model mathematics. The GAS wrapper below only converts
-    # optimizer call budgets/counts to scalar-objective units; covered by
+    # optimizer call budgets/counts to scalar-objective units and delegates
+    # recovery-coordinate/gradient conversions to the native GAS helper; covered by
     # tests/test_gas_optimizer.py, test_latent_parameter_routing.py,
     # test_sampling_resource_limits.py and test_conditional_orientation.py.
     ('pyscarcopula.strategy.gas:_minimize_gas_objective',
-     '4e1da3bca460523d937c4b2c0b54daefa318842c98bf0d89dab8c94c063ad66c', 'bookkeeping', ('arithmetic',)),
+     '49b1b5e1fc7c6188a5f3baf4b0ff337e73520814683d69e2453d9436a2748764', 'bookkeeping', ('arithmetic',)),
     # Dynamic routing review: validation and restored strategy dispatch keep
     # existing buffer/parameter-count bookkeeping unchanged. Prepared OU
     # likelihood only reverses the sign of the validated native objective.
@@ -115,7 +121,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula._native.errors:raise_for_status',
      'dadaf69a392881507afc63f7f5c974a5e3a2c8ad0c9cd6ac013cfa8b8bc5adff', 'serialization', ('arithmetic',)),
     ('pyscarcopula._native.jacobi:<module>',
-     'f0742a876192e6a4525d5d0dfa905b048348ee6a123b68021db7871e047ae4a8', 'structure', ('arithmetic',)),
+     'd9dd6aaca59eaf6fa4c59a15189cdfb2fc7c4c8dbef7a8bcee09cc96d401ec6d', 'structure', ('arithmetic',)),
     ('pyscarcopula._native.gas:ou_initial_point',
      '208dea1d5f9800442553cfe83f2040aeba8fb90d767b8b9b62a0eaf7d0250286', 'native_policy_adapter', ('model-policy',)),
     ('pyscarcopula._native.jacobi:PreparedScarJacobiEvaluator.__init__',
@@ -378,7 +384,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.scar_tm:_projected_gradient_norm',
      'cf23b4d2607ccc44617e3d39580ffff806a24d79ce971ff791be9ca443d0754b', 'bookkeeping', ('numerical-call',)),
     ('pyscarcopula.strategy.scar_tm:_record_backend_diagnostics',
-     '59524e5e9b885d2663c80d4bc6c00ef82b64b8c1b9458a5eb11c025826b150b8', 'bookkeeping', ('arithmetic',)),
+     '5602b162405e0b0f3c03a2c06de061537c198acd5191519a23707d49beede61e', 'bookkeeping', ('arithmetic',)),
     ('pyscarcopula.vine._conditional_rvine:find_rvine_peel_order_for_given_suffix',
      'f41f469cf1aabb43f6610ab7784fd844259728b077fd6282693fb70cc3fdfc26', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine._conditional_rvine:find_rvine_peel_order_for_given_suffix.search',
@@ -500,9 +506,9 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.vine._vine_fit:VineEdgeFit.as_levels',
      '823290e264bb13f14661f297a08063bbcc6e1baeecd9ebcd077c64b7cb1e0d85', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.vine._vine_fit:_fit_tree_level',
-     '037a9365ed6ca30360140a59cba0dd61b79aa5059cdc624ce26ef2e52cf7d9bc', 'structure', ('arithmetic',)),
+     'f0df731944351eb1dc3ea1364ab02df67c5335f2c724bd7c2141bc73b2385c81', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine.vine:VineCopula._build_edge_fit_summary',
-     '5bcc49c9ba254f1fb6ab181f477992a3c064c0bd647551aa7cca4773b04b8bcc', 'bookkeeping', ('arithmetic',)),
+     'd08285cec99dde8ccd5068c0b71a4849134a47c4c114efe2b74ea342052f358b', 'bookkeeping', ('arithmetic',)),
     ('pyscarcopula.vine.vine:VineCopula._check_sample_memory_budget',
      'f5c0a5560391b6197604efefd0cebaa00b26f3cfe70272028899cdea29432a06', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine.vine:VineCopula._invalidate_native_rvine_cache',
@@ -544,14 +550,14 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.gas:GASStrategy._fit_joint_static_shrinkage',
      'e33d8977e88aa17fe505604c1268aaed9d68817294f0346ceb1635423803b5aa', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.gas:GASStrategy.fit',
-     'a356e4c6a153149a9aaea1da7012c4619a6a53b66b95e93859310486c31943b2', 'fit_orchestration', ('arithmetic',)),
+     '8403c801c3d6b56e70a6dcb3bdcab058e945d7c5a31be775ba52603edd88aff7', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.mle:MLEStrategy.fit',
      'b635918888bcc169f3f13806bd5d42db0445b339b5f795c65eca9982c4ed94c0', 'sign', ('arithmetic',)),
     # Final Jacobi validation delegates domain/objective/gradient checks to
     # native owners; failure and fallback regressions live in
     # tests/test_latent_parameter_routing.py.
     ('pyscarcopula.strategy.scar_jacobi:SCARJacobiStrategy.fit',
-     '005523ef561e805c57f748ed9b07ad545c90f0fc2b89bb01c77d0270c75be422', 'fit_orchestration', ('arithmetic',)),
+     '34acc23e731777e32450b781ddb2e82b10c9ac5551df5b5a6b8825b913ccbdbd', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static',
      '42273c2e70fc611d4e3e52bdccf6e925473364f6e816e3b8675b4af7482a90f8', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.objective_and_grad_scaled',

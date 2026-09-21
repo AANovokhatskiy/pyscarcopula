@@ -219,3 +219,88 @@ def test_fused_gas_sample_validates_threads_before_rng(threads):
         GASStrategy().sample(
             copula, None, _result(copula), 3, rng=NoDraws(),
             n_threads=threads)
+
+
+@pytest.mark.parametrize("point", POINTS)
+def test_native_three_point_gradient_matches_independent_provider(point):
+    model = GumbelCopula()
+    def objective(values):
+        return gas.negative_log_likelihood(*values, OBSERVATIONS, model)
+    expected = approx_derivative(
+        objective, np.asarray(point), method="3-point", abs_step=1e-5,
+        bounds=BOUNDS)
+    value, gradient = gas.negative_log_likelihood_and_gradient(
+        *point, OBSERVATIONS, model, optimizer_gradient_eps=1e-5,
+        optimizer_gradient_central=True, optimizer_bounds=BOUNDS)
+    assert value == objective(np.asarray(point))
+    np.testing.assert_allclose(gradient, expected, rtol=1e-7, atol=1e-6)
+
+
+def test_mean_state_recovery_preserves_physical_objective_and_gradient():
+    target = np.array([1.3, 0.01, 0.995])
+
+    def objective(point):
+        mu = point[0] / (1.0 - point[2])
+        delta = np.array([mu, point[1], point[2]]) - target
+        gradient = 2.0 * delta
+        gradient[0] /= 1.0 - point[2]
+        gradient[2] += mu * gradient[0]
+        return float(np.dot(delta, delta)), gradient
+
+    objective.gas_mean_parameterization = True
+    objective.objective_scale = 100.0
+    result = _minimize_gas_objective(
+        objective, np.array([0.05, 0.03, 0.95]),
+        bounds=Bounds([-np.inf, -20, -0.999], [np.inf, 20, 0.999]),
+        options={"gtol": 1e-8, "ftol": 1e-14, "maxfun": 1000})
+    expected_point = target.copy()
+    expected_point[0] *= 1.0 - expected_point[2]
+    assert result.success
+    np.testing.assert_allclose(result.x, expected_point, atol=1e-8)
+    value, gradient = objective(result.x)
+    assert result.fun == pytest.approx(value, abs=1e-14)
+    np.testing.assert_allclose(result.jac, gradient, atol=1e-10)
+
+
+@pytest.mark.parametrize("parameters,gradient,scale", [
+    ([0.1, 0.2], [], 1.0),
+    ([0.1, 0.2, 1.0], [], 1.0),
+    ([0.1, 0.2, 0.9], [1.0, 2.0], 1.0),
+    ([0.1, 0.2, 0.9], [], 0.0),
+])
+def test_native_optimizer_coordinate_mapping_rejects_invalid_domain(
+        parameters, gradient, scale):
+    with pytest.raises(ValueError):
+        gas.optimizer_coordinates(parameters, gradient=gradient,
+                                  objective_scale=scale)
+
+
+def test_three_point_stencil_is_formed_directly_in_mean_coordinates():
+    from pyscarcopula import EquicorrGaussianCopula
+
+    model = EquicorrGaussianCopula(d=2)
+    point = np.array([0.006, 0.013, 0.995])
+    mean_point = point.copy()
+    mean_point[0] /= 1.0 - mean_point[2]
+    step = gas.optimizer_validation_steps()[0]
+
+    def objective(values):
+        physical = values.copy()
+        physical[0] *= 1.0 - physical[2]
+        return gas.negative_log_likelihood(*physical, OBSERVATIONS, model)
+
+    expected = approx_derivative(objective, mean_point, method="3-point", abs_step=step)
+    value, physical_gradient = gas.negative_log_likelihood_and_gradient(
+        *point, OBSERVATIONS, model, optimizer_gradient_eps=step,
+        optimizer_gradient_central=True, optimizer_gradient_mean_coordinates=True)
+    mapped = gas.optimizer_coordinates(point, gradient=physical_gradient)
+    assert value == objective(mean_point)
+    np.testing.assert_allclose(mapped["gradient"], expected, rtol=1e-6, atol=1e-5)
+
+
+def test_joint_shrinkage_rejects_unimplemented_mean_coordinate_option():
+    model = StochasticStudentCopula(d=2, corr_mode="shrinkage")
+    with pytest.raises(TypeError, match="optimizer_gradient_mean_coordinates"):
+        gas.negative_log_likelihood_and_gradient_shrinkage(
+            0.03, 0.08, 0.72, -0.8, np.eye(2), OBSERVATIONS, model,
+            optimizer_gradient_mean_coordinates=True)

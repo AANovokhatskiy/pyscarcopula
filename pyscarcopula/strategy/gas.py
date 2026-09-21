@@ -1,6 +1,7 @@
 """GAS estimation strategy backed by the native numerical evaluator."""
 
 from copy import copy
+from functools import partial
 
 import numpy as np
 from scipy.optimize import Bounds, minimize
@@ -69,15 +70,57 @@ def _native_optimizer_gradient_config(options):
 
 def _minimize_gas_objective(objective, initial, *, bounds, options):
     """Keep maxfun and nfev in scalar-objective units across native FD."""
-    evaluations_per_point = int(np.size(initial)) + 1
+    evaluations_per_point = int(getattr(
+        objective, "evaluations_per_point", int(np.size(initial)) + 1))
     native_options = dict(options)
     if "maxfun" in native_options:
         native_options["maxfun"] = (
             int(native_options["maxfun"]) // evaluations_per_point)
-    result = minimize(
-        objective, initial, method="L-BFGS-B", jac=True,
-        bounds=bounds, options=native_options,
-    )
+    mean_parameterization = bool(getattr(objective, "gas_mean_parameterization", False))
+    if mean_parameterization:
+        # Recovery uses the stationary state mu=omega/(1-beta). This avoids
+        # the near-collinearity of intercept and persistence close to beta=1.
+        # Objective scaling only conditions line search; rescale gtol too so
+        # its units remain those of the summed objective in these coordinates.
+        scale = float(getattr(objective, "objective_scale", 1.0))
+        start = _cpp_gas.optimizer_coordinates(
+            initial, objective=float(native_options.get("gtol", 1e-3)),
+            objective_scale=scale)
+        native_options["gtol"] = start["objective"]
+
+        def transformed(values):
+            physical = _cpp_gas.optimizer_coordinates(values, to_optimizer=False)
+            value, gradient = objective(physical["parameters"])
+            mapped = _cpp_gas.optimizer_coordinates(
+                physical["parameters"], objective=value, gradient=gradient,
+                objective_scale=scale)
+            return mapped["objective"], mapped["gradient"]
+
+        if getattr(objective, "derivative_free", False):
+            derivative_free_options = {
+                "maxfev": native_options.get("maxfun", 15000),
+                "maxiter": native_options.get("maxiter", 15000),
+                "ftol": native_options.get("ftol", _DEFAULT_REFINEMENT_FTOL),
+            }
+            result = minimize(lambda values: transformed(values)[0],
+                              start["parameters"], method="Powell", bounds=bounds,
+                              options=derivative_free_options)
+            result.fun, result.jac = transformed(result.x)
+            result.nfev += 1
+        else:
+            result = minimize(transformed, start["parameters"], method="L-BFGS-B", jac=True,
+                              bounds=bounds, options=native_options)
+        physical = _cpp_gas.optimizer_coordinates(
+            result.x, objective=result.fun, gradient=result.jac,
+            objective_scale=scale, to_optimizer=False)
+        result.x = physical["parameters"]
+        result.fun = physical["objective"]
+        result.jac = physical["gradient"]
+    else:
+        result = minimize(
+            objective, initial, method="L-BFGS-B", jac=True,
+            bounds=bounds, options=native_options,
+        )
     result.nfev = int(result.nfev) * evaluations_per_point
     return result
 
@@ -94,7 +137,8 @@ def _automatic_gas_start(copula, u, config, initial_mle_result=None):
     return model_policy.gas_default_initial_point(mu_mle)
 
 
-def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine):
+def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine,
+                    recovery_objectives=(), validation_objective=None):
     """Try the nested static model and retain the best finite evaluation.
 
     A successful relative-function stopping test does not imply a good GAS
@@ -112,9 +156,9 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine):
     total_nfev = 0
     best_evaluation = None
 
-    def tracked(values):
+    def tracked(values, provider=objective):
         nonlocal best_evaluation
-        value, gradient = objective(values)
+        value, gradient = provider(values)
         if (np.isfinite(value) and np.all(np.isfinite(gradient))
                 and (best_evaluation is None or value < best_evaluation[0])):
             best_evaluation = (
@@ -122,17 +166,23 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine):
                 np.asarray(gradient).copy())
         return value, gradient
 
-    def run(start, run_options, label):
+    def run(start, run_options, label, provider=objective):
         nonlocal total_nfev
         initial_objective = None
 
         def stage_objective(values):
             nonlocal initial_objective
-            evaluated = tracked(values)
+            evaluated = tracked(values, provider)
             if initial_objective is None:
                 initial_objective = float(evaluated[0])
             return evaluated
 
+        stage_objective.evaluations_per_point = getattr(
+            provider, "evaluations_per_point", np.size(start) + 1)
+        stage_objective.gas_mean_parameterization = getattr(
+            provider, "gas_mean_parameterization", False)
+        stage_objective.objective_scale = getattr(provider, "objective_scale", 1.0)
+        stage_objective.derivative_free = getattr(provider, "derivative_free", False)
         result = _minimize_gas_objective(
             stage_objective, start, bounds=bounds, options=run_options)
         total_nfev += int(result.nfev)
@@ -153,11 +203,108 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine):
         run(start, options, "standard" if index == 0 else "nested_static")
     if not candidates:
         raise FloatingPointError("no finite GAS optimization result")
-    selected = min(candidates, key=lambda item: float(item.fun))
+    selected = min(candidates, key=lambda item: (float(item.fun), not bool(item.success)))
     if refine and float(options["ftol"]) > _DEFAULT_REFINEMENT_FTOL:
         refinement_options = dict(options, ftol=_DEFAULT_REFINEMENT_FTOL)
         run(np.asarray(selected.x).copy(), refinement_options, "refinement")
-        selected = min(candidates, key=lambda item: float(item.fun))
+        selected = min(candidates, key=lambda item: (float(item.fun), not bool(item.success)))
+    verification_nfev = 0
+    stationarity = None
+
+    def verify(point):
+        nonlocal verification_nfev
+        providers = [validation_objective]
+        finer = getattr(validation_objective, "finer_provider", None)
+        if finer is not None:
+            providers.append(finer)
+        providers.extend(getattr(validation_objective, "refinement_providers", ()))
+        used_providers = []
+        gradients = []
+        raw_norms = []
+        values = []
+        gradient_scale = float(getattr(validation_objective, "objective_scale", 1.0))
+        coordinates = "omega_gamma_beta"
+        def failed_validation():
+            return {"passed": False, "projected_gradient_inf_norm": float("inf"),
+                    "gradient_step_discrepancy": float("inf"),
+                    "gtol": float(options.get("gtol", 1e-3)),
+                    "reason": "native_gradient_unresolved"}
+
+        tolerance = float(options.get("gtol", 1e-3))
+        for provider in providers:
+            used_providers.append(provider)
+            verification_nfev += getattr(
+                provider, "evaluations_per_point", 2 * np.size(point) + 1)
+            try:
+                value, gradient = provider(point)
+                if not np.isfinite(value) or not np.all(np.isfinite(gradient)):
+                    return failed_validation()
+                gradient = np.asarray(gradient, dtype=float).copy()
+                raw_norms.append(float(np.max(np.abs(gradient))))
+                if getattr(validation_objective, "gas_mean_parameterization", False):
+                    mapped = _cpp_gas.optimizer_coordinates(
+                        point, objective=value, gradient=gradient,
+                        objective_scale=gradient_scale)
+                    gradient = mapped["gradient"]
+                    coordinates = "stationary_mean_gamma_beta"
+            except FloatingPointError:
+                return failed_validation()
+            gradient[(point <= bounds.lb) & (gradient > 0)] = 0.0
+            gradient[(point >= bounds.ub) & (gradient < 0)] = 0.0
+            gradients.append(gradient)
+            values.append(value)
+            if len(gradients) >= 2:
+                pair_norm = max(float(np.max(np.abs(item))) for item in gradients[-2:])
+                pair_discrepancy = float(np.max(np.abs(gradients[-2] - gradients[-1])))
+                if pair_norm <= tolerance and pair_discrepancy <= tolerance:
+                    break
+                # Refine only while FD uncertainty straddles the acceptance
+                # threshold. A resolved nonstationary gradient needs recovery,
+                # not a search for one convenient small difference step.
+                if pair_norm - pair_discrepancy > tolerance:
+                    break
+        all_norms = [float(np.max(np.abs(gradient))) for gradient in gradients]
+        norms = all_norms[-2:]
+        norm = max(norms)
+        uncertainty = (float(np.max(np.abs(gradients[-2] - gradients[-1])))
+                       if len(gradients) >= 2 else 0.0)
+        passed = bool(np.all(np.isfinite(values)) and np.isfinite(norm)
+                      and norm <= tolerance and uncertainty <= tolerance)
+        return {"passed": passed, "projected_gradient_inf_norm": norm,
+                "projected_gradient_norms": norms,
+                "gradient_step_discrepancy": uncertainty,
+                "gradient_steps": [getattr(provider, "difference_step", None)
+                                   for provider in used_providers[-2:]],
+                "all_gradient_steps": [getattr(provider, "difference_step", None)
+                                       for provider in used_providers],
+                "all_projected_gradient_norms": all_norms,
+                "refinement_count": max(0, len(used_providers) - 2),
+                "gtol": tolerance,
+                "gradient_kind": "native_three_point",
+                "coordinates": coordinates,
+                "raw_gradient_inf_norm": max(raw_norms),
+                "objective_scale": gradient_scale,
+                "objective_units": "mean_negative_log_likelihood"}
+
+    if validation_objective is not None:
+        point = (best_evaluation[1] if best_evaluation is not None
+                 and best_evaluation[0] < selected.fun - _MATERIAL_LOGL_GAIN else selected.x)
+        stationarity = verify(point)
+        for index, provider in enumerate(recovery_objectives):
+            if stationarity["passed"]:
+                break
+            recovery_options = dict(options, ftol=_DEFAULT_REFINEMENT_FTOL)
+            start = np.asarray(getattr(provider, "restart_point", point)).copy()
+            recovered = run(start, recovery_options, f"recovery_{index + 1}", provider)
+            selected = min(candidates, key=lambda item: (float(item.fun), not bool(item.success)))
+            if (bool(recovered.success)
+                    and float(recovered.fun) <= float(selected.fun) + _MATERIAL_LOGL_GAIN):
+                recovered_check = verify(np.asarray(recovered.x))
+                if recovered_check["passed"]:
+                    selected = recovered
+            point = (best_evaluation[1] if best_evaluation is not None
+                     and best_evaluation[0] < selected.fun - _MATERIAL_LOGL_GAIN else selected.x)
+            stationarity = verify(point)
     result = copy(selected)
     result.raw_optimizer_success = bool(selected.success)
     result.raw_optimizer_message = str(selected.message)
@@ -170,17 +317,31 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine):
         result.message = (
             f"{result.message}; retained a better finite evaluation; "
             "convergence at this point was not established")
-    result.nfev = total_nfev
+    if validation_objective is not None:
+        stationarity = verify(np.asarray(result.x))
+        if not stationarity["passed"]:
+            result.success = False
+            result.message = (
+                f"{result.message}; GAS stationarity was not established "
+                f"(projected gradient {stationarity['projected_gradient_inf_norm']:.6g})")
+    result.nfev = total_nfev + verification_nfev
     diagnostics = {
         "optimizer_stages": traces,
         "retained_best_trial": retained_trial,
         "automatic_multistart": automatic,
+        "stationarity_validation": stationarity,
+        "verification_nfev": verification_nfev,
+        "stationary_selection_loglik_loss": (
+            max(0.0, float(result.fun) - best_evaluation[0])
+            if best_evaluation is not None else 0.0),
     }
     if automatic:
         diagnostics["initial_static_log_likelihood"] = -traces[1]["initial_objective"]
-    if traces[-1]["stage"] == "refinement":
-        previous = min(traces[:-1], key=lambda item: item["objective"])
-        last = traces[-1]
+    refinement_index = next((i for i, stage in enumerate(traces)
+                             if stage["stage"] == "refinement"), None)
+    if refinement_index is not None:
+        previous = min(traces[:refinement_index], key=lambda item: item["objective"])
+        last = traces[refinement_index]
         diagnostics["optimizer_refinement"] = {
             "enabled": True,
             "first_ftol": float(options["ftol"]),
@@ -191,7 +352,7 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine):
             "loglik_gain": previous["objective"] - last["objective"],
             "first_success": previous["optimizer_success"],
             "refined_success": last["optimizer_success"],
-            "first_nfev": sum(stage["nfev"] for stage in traces[:-1]),
+            "first_nfev": sum(stage["nfev"] for stage in traces[:refinement_index]),
             "refined_nfev": last["nfev"],
             "selected_stage": (
                 "refined" if last["objective"] < previous["objective"]
@@ -226,7 +387,15 @@ class GASStrategy:
     ``eps`` and ``finite_diff_rel_step`` explicitly override it.
 
     ``success`` requires optimizer convergence and consistent finite
-    likelihoods at least as high as the nested static path. It is not a
+    likelihoods at least as high as the nested static path. Fixed-correlation
+    fits additionally validate a native three-point gradient of the mean
+    negative log-likelihood in (stationary mean, gamma, beta) coordinates
+    against ``gtol``; diagnostics state its scale and coordinate system.
+    Default validation balances three-point truncation and roundoff with
+    h=cbrt(machine epsilon) and also requires the half-step estimate to agree.
+    The optimizer itself retains the summed-objective tolerance. Automatic
+    fits that fail this check retry the existing starts at a second native
+    difference step, then polish in stationary-mean coordinates. It is not a
     certificate of global optimality. Diagnostics retain each optimizer
     stage and its raw convergence status, including the projected gradient.
     """
@@ -677,7 +846,9 @@ class GASStrategy:
         bounds = Bounds(*model_policy.latent_bounds(
             "gas", gamma_bound=gamma_bound, beta_bound=beta_bound))
 
-        def objective(x):
+        def objective(x, *, gradient_eps=optimizer_gradient_eps,
+                      gradient_central=False, gradient_mean_coordinates=False,
+                      allow_failure_penalty=True):
             try:
                 return _cpp_gas.negative_log_likelihood_and_gradient(
                     x[0],
@@ -687,11 +858,15 @@ class GASStrategy:
                     copula,
                     self.scaling,
                     score_eps,
-                    optimizer_gradient_eps=optimizer_gradient_eps,
+                    optimizer_gradient_eps=gradient_eps,
+                    optimizer_gradient_central=gradient_central,
+                    optimizer_gradient_mean_coordinates=gradient_mean_coordinates,
                     optimizer_gradient_relative=optimizer_gradient_relative,
                     optimizer_bounds=(bounds.lb, bounds.ub),
                 )
             except FloatingPointError:
+                if not allow_failure_penalty:
+                    raise
                 return model_policy.optimizer_failure_evaluation(
                     x,
                     gamma0,
@@ -699,9 +874,54 @@ class GASStrategy:
                     directional_gradient=True,
                 )
 
+        validation_objective = None
+        recovery_objectives = []
+        if is_multivariate_copula(copula):
+            explicit_difference_step = eps is not None or finite_diff_rel_step is not None
+            validation_steps = _cpp_gas.optimizer_validation_steps()
+            validation_step = (optimizer_gradient_eps if explicit_difference_step
+                               else validation_steps[0])
+
+            def validation_provider(step):
+                provider = partial(
+                    objective, gradient_eps=step, gradient_central=True,
+                    gradient_mean_coordinates=True, allow_failure_penalty=False)
+                provider.evaluations_per_point = 7
+                provider.difference_step = step
+                return provider
+
+            validation_objective = validation_provider(validation_step)
+            if not explicit_difference_step:
+                validation_objective.finer_provider = validation_provider(validation_steps[1])
+                validation_objective.refinement_providers = [
+                    validation_provider(step) for step in validation_steps[2:]]
+            validation_objective.gas_mean_parameterization = True
+            validation_objective.objective_scale = float(len(u))
+            if (automatic_initialization and ftol is None and not explicit_difference_step
+                    and maxfun is None and maxiter is None and maxls is None):
+                # Preserve both deterministic starts at a second derivative
+                # scale, then condition the local refinement in mean space.
+                for static in (False, True):
+                    provider = partial(objective, gradient_eps=1e-7)
+                    provider.evaluations_per_point = 4
+                    provider.restart_point = np.asarray(gamma0).copy()
+                    if static:
+                        provider.restart_point[1] = 0.0
+                    recovery_objectives.append(provider)
+                for derivative_free in (False, True):
+                    provider = partial(
+                        objective, gradient_eps=validation_steps[0],
+                        gradient_central=True, gradient_mean_coordinates=True)
+                    provider.evaluations_per_point = 7
+                    provider.gas_mean_parameterization = True
+                    provider.objective_scale = float(len(u))
+                    provider.derivative_free = derivative_free
+                    recovery_objectives.append(provider)
         result, optimizer_diagnostics = _fit_gas_starts(
             objective, gamma0, bounds=bounds, options=optimizer_options,
             automatic=automatic_initialization, refine=ftol is None,
+            recovery_objectives=recovery_objectives,
+            validation_objective=validation_objective,
         )
         parameter_count = None
         corr_effective_num_params = getattr(

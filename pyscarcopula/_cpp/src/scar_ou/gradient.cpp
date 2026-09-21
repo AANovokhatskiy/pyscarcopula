@@ -1154,7 +1154,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         }
         log_scale += emission_log_scale;
 
-        scar_internal::project_multiply_with_grad(
+        if (!scar_internal::project_multiply_with_grad(
             coeff,
             dcoeff,
             fi_row,
@@ -1165,7 +1165,9 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             quad_order,
             basis_order,
             projected,
-            dprojected, correlation_gradient ? &message_values : nullptr);
+            dprojected, correlation_gradient ? &message_values : nullptr)) {
+            return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+        }
         if (correlation_gradient) {
             const double* row =
                 observation_values
@@ -1313,7 +1315,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             &emission_log_scale);
     }
     log_scale += emission_log_scale;
-    scar_internal::project_multiply_with_grad(
+    if (!scar_internal::project_multiply_with_grad(
         coeff,
         dcoeff,
         fi_row,
@@ -1324,7 +1326,9 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         quad_order,
         basis_order,
         projected,
-        dprojected, correlation_gradient ? &message_values : nullptr);
+        dprojected, correlation_gradient ? &message_values : nullptr)) {
+        return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+    }
     if (correlation_gradient) {
         if (directional) {
             if (!scar_internal::student_corr_directional_score_row(

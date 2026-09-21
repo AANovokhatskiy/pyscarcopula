@@ -1,6 +1,7 @@
 """Shared pair-edge fitting for an already specified regular vine."""
 
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -335,6 +336,14 @@ def _fit_tree_level(
                     "attempted_message": str(
                         getattr(dynamic_result, "message", "") or ""),
                 })
+                attempted_params = getattr(dynamic_result, "params", None)
+                edge_fit_diagnostics["attempted_params"] = (
+                    dict(zip(attempted_params.names, attempted_params.values.tolist()))
+                    if hasattr(attempted_params, "names") else None)
+                edge_fit_diagnostics["attempted_log_likelihood"] = getattr(
+                    dynamic_result, "log_likelihood", None)
+                edge_fit_diagnostics["attempted_diagnostics"] = deepcopy(
+                    getattr(dynamic_result, "diagnostics", None))
                 result = dynamic_result
                 if not edge_fit_diagnostics["attempted_success"]:
                     if dynamic_failure_policy == "fallback":

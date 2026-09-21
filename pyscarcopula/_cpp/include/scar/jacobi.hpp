@@ -288,6 +288,11 @@ public:
 
     JacobiFilterResult filter(const JacobiParams& params) const;
     JacobiObjectiveResult loglik(const JacobiParams& params) const;
+    JacobiBoundaryCandidateResult near_independence_candidate(
+        const JacobiParams& current,
+        const JacobiParameterBounds& bounds,
+        double current_objective,
+        double gradient_tolerance) const;
     JacobiGradientResult neg_loglik_with_grad(
         const JacobiParams& params) const;
     JacobiEvaluatorVectorResult predictive_mean(

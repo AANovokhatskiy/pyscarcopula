@@ -146,6 +146,22 @@ scar::ObservationView set_equicorr_prepared(
 }  // namespace
 
 void bind_gas(py::module_& m) {
+    m.def("gas_optimizer_coordinates", [](
+            const std::vector<double>& parameters,
+            const std::vector<double>& gradient, double objective,
+            double objective_scale, bool to_optimizer) {
+        const auto result = scar::gas_optimizer_coordinates(
+            parameters, gradient, objective, objective_scale, to_optimizer);
+        py::dict output;
+        output["parameters"] = vector_to_array(result.parameters);
+        output["gradient"] = vector_to_array(result.gradient);
+        output["objective"] = result.objective;
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    }, py::arg("parameters"), py::arg("gradient"), py::arg("objective"),
+       py::arg("objective_scale"), py::arg("to_optimizer"));
+    m.def("gas_optimizer_validation_steps", &scar::gas_optimizer_validation_steps);
+
     py::enum_<scar::GasScaling>(
         m, "GasScaling", "Scaling applied to the GAS score.")
         .value("Unit", scar::GasScaling::Unit)
@@ -175,6 +191,12 @@ void bind_gas(py::module_& m) {
         .def_readwrite(
             "optimizer_gradient_relative",
             &scar::GasConfig::optimizer_gradient_relative)
+        .def_readwrite(
+            "optimizer_gradient_central",
+            &scar::GasConfig::optimizer_gradient_central)
+        .def_readwrite(
+            "optimizer_gradient_mean_coordinates",
+            &scar::GasConfig::optimizer_gradient_mean_coordinates)
         .def_readwrite(
             "optimizer_lower_bounds",
             &scar::GasConfig::optimizer_lower_bounds)

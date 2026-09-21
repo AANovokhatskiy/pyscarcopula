@@ -32,6 +32,15 @@ struct GasObjectiveGradientResult {
     }
 };
 
+/// Stationary-mean optimizer coordinates and their objective/gradient units.
+struct GasOptimizerCoordinatesResult {
+    std::vector<double> parameters;
+    std::vector<double> gradient;
+    double objective = 0.0;
+    Status status = Status::Ok;
+    FailureContext failure{};
+};
+
 /// Full filtered GAS paths and their total log-likelihood.
 struct GasFilterResult {
     std::vector<double> g_path;

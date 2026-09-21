@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Recover GAS optimization from unresolved equicorrelation transform plateaus
+  without changing the public scalar likelihood. Add bounded recovery and
+  independent stationarity diagnostics instead of relying on relative-function
+  stopping alone; preserve explicit optimizer settings.
+- Reject severe loss of positivity during Hermite OU multiplication in the
+  existing scalar/gradient pass. Auto uses its existing matrix/local fallback;
+  explicit spectral reports numerical failure. Default mode and quadrature
+  orders are unchanged; the check is not an approximation-error certificate.
+- Retry Jacobi evaluation-budget failures once under the library defaults
+  before dynamic-vine fallback. Preserve attempt parameters, likelihoods and
+  diagnostics. Validate a near-independent Clayton boundary candidate before
+  selecting it, retaining the requested dynamic model.
+
 ## 0.22.0 - 2026-09-06
 
 Version: `0.21.0` -> `0.22.0`
