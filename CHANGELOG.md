@@ -1,7 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.22.1 - 2026-09-21
 
+Version: `0.22.0` -> `0.22.1`
+
+- Preserve the origin of multivariate GAS bootstrap starts. Library-inherited
+  starts retain automatic multistart and bounded recovery; explicit `gamma0`
+  is preserved across retries. Keep unresolved stationarity as a failure and
+  test parallel bootstrap reproducibility on converged fits.
 - Recover GAS optimization from unresolved equicorrelation transform plateaus
   without changing the public scalar likelihood. Add bounded recovery and
   independent stationarity diagnostics instead of relying on relative-function
@@ -18,6 +24,9 @@
 ## 0.22.0 - 2026-09-06
 
 Version: `0.21.0` -> `0.22.0`
+
+Commit: `4b4f9e1`
+Merge PR: #51 (`9f5237a`, 2026-09-06)
 
 - Use the stable central Student CDF in ordinary quantile inversion as well
   as emission caches, removing spurious likelihood jumps near the median.

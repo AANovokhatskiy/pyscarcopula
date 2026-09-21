@@ -29,6 +29,10 @@ _REVIEW_KINDS = {
 }
 
 _SYMBOL_REVIEWS = (
+    # GAS bootstrap start provenance only changes optimizer orchestration:
+    # inherited candidates, per-stage budgets and explicit retry starts.
+    # No numerical exceptions were added. Covered by bootstrap parallelization
+    # and GAS regression tests, including unresolved-stationarity rejection.
     # Native derivatives and coordinates; only generic bound activity,
     # gradient norm/disagreement checks, acceptance and counts remain here.
     # Covered by tests/test_gas_regressions.py.
@@ -51,7 +55,7 @@ _SYMBOL_REVIEWS = (
     # bounds, not a model gradient or a projection of observations/states.
     # Covered by tests/test_gas_regressions.py and test_gas_optimizer.py.
     ('pyscarcopula.strategy.gas:_fit_gas_starts',
-     '7238c7d3ebb1aa68b8fb6036ab6f44fce40412703af64e3d6e560aacef0bc964', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '298909d00fb7571757beaafba6d69e651cdbcbae71c4a6ba60061d7dba3e1799', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.strategy.gas:_fit_gas_starts.run',
      '688f24aba7d3a59747f2f791ab120def9a59c8fe0287fbc056e0a764b1ebd4b3', 'bookkeeping', ('arithmetic',)),
     ('pyscarcopula.strategy.gas:GASStrategy._build_result',
@@ -344,11 +348,11 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.numerical.jacobi_tm:sample_jacobi_grid_trajectory',
      'a87698071c583b044ba091ba2a04353da73210a2b30fd78373d7c71eb09c023a', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.stattests:<module>',
-     'dd1b14462e11893995040219802cffa2b5745e18b36cf3b2b19ca208ec0f5192', 'gof', ('numerical-import',)),
+     '5af5e5ba793254f4de97afd2642f308d12c62f4a39949facd6faf7d2e2b4be86', 'gof', ('numerical-import',)),
     ('pyscarcopula.stattests:_bootstrap_gof',
-     '3c25deed706be6d940b308d5e061b89c69f2de4be9f345e2de8b7d783e3b0496', 'gof', ('arithmetic', 'numerical-call')),
+     '544ffd79c0bd75e3f88fb4126e44a5fc8eee58bfd35b2ef6a49153898f6efb48', 'gof', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.stattests:_bootstrap_gof_worker',
-     '71c3e6498bf884b77515b306de07191ee4c3c03adfa7cc654271f0388f02d65b', 'gof', ('arithmetic', 'numerical-call')),
+     '605774430ac1be27016c4c4903cdba141f1c2d159e684b494010ac831aa3cd5b', 'gof', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.stattests:cvm_test',
      '43ff32a725c82da8ea2e763f612dce26482a0de1e41d2eff9fca3e2469938e78', 'gof', ('numerical-call',)),
     ('pyscarcopula.strategy.gas:GASStrategy._fit_joint_static_shrinkage.objective',
@@ -548,9 +552,9 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.copula.multivariate.student:StudentCopula._fit_joint_factor',
      'e20386a0da4f745cd9251c9a23d5ec77d4e89ab3e652945aba76d698546933d9', 'fit_orchestration', ('numerical-call',)),
     ('pyscarcopula.strategy.gas:GASStrategy._fit_joint_static_shrinkage',
-     'e33d8977e88aa17fe505604c1268aaed9d68817294f0346ceb1635423803b5aa', 'fit_orchestration', ('arithmetic',)),
+     '82bfe6bcb78c6b3e52c4881cbba48d89adaa227294706aa0c05585a6459834c4', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.gas:GASStrategy.fit',
-     '8403c801c3d6b56e70a6dcb3bdcab058e945d7c5a31be775ba52603edd88aff7', 'fit_orchestration', ('arithmetic',)),
+     '37aca72f52bd2adcab54b1852890e24eb6a879da515dab5233b983a94470a24a', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.mle:MLEStrategy.fit',
      'b635918888bcc169f3f13806bd5d42db0445b339b5f795c65eca9982c4ed94c0', 'sign', ('arithmetic',)),
     # Final Jacobi validation delegates domain/objective/gradient checks to

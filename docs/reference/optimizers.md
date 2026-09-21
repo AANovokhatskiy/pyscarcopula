@@ -138,6 +138,16 @@ gradient provider rejects their unresolvable sensitivity so line search can
 recover instead of accepting a large finite plateau with zero gradient.
 The existing bivariate GAS acceptance policy, including vine-edge fits, is unchanged.
 
+Multivariate GAS bootstrap refits distinguish a library-inherited start from an
+explicit `bootstrap_fit_kwargs['gamma0']`. An inherited result adds a warm start
+alongside starts computed from the bootstrap sample's static MLE; it does not
+disable automatic recovery. Each recovery stage uses the supplied `maxfun`,
+`maxiter`, and `maxls`; the total work can span several stage budgets. Explicit
+`gamma0`, difference steps, and `ftol` retain their existing control over recovery.
+An explicit `gamma0` is also preserved on the bootstrap retry. Both attempts use
+the same simulated sample. Unresolved stationarity still raises a bootstrap
+failure rather than accepting the fit or drawing a replacement sample.
+
 `success` additionally requires the optimizer's objective to agree with the
 reported likelihood within `1e-6`, and the likelihood to be no more than
 `0.001` below either the initial nested static likelihood (automatic starts)

@@ -138,7 +138,8 @@ def _automatic_gas_start(copula, u, config, initial_mle_result=None):
 
 
 def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine,
-                    recovery_objectives=(), validation_objective=None):
+                    recovery_objectives=(), validation_objective=None,
+                    inherited_start=None):
     """Try the nested static model and retain the best finite evaluation.
 
     A successful relative-function stopping test does not imply a good GAS
@@ -151,6 +152,8 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine,
         static = starts[0].copy()
         static[1] = 0.0
         starts.append(static)
+    if inherited_start is not None:
+        starts.append(np.asarray(inherited_start, dtype=np.float64).copy())
     candidates = []
     traces = []
     total_nfev = 0
@@ -200,7 +203,8 @@ def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine,
         return result
 
     for index, start in enumerate(starts):
-        run(start, options, "standard" if index == 0 else "nested_static")
+        run(start, options, ("standard" if index == 0 else
+                            "nested_static" if index == 1 else "inherited"))
     if not candidates:
         raise FloatingPointError("no finite GAS optimization result")
     selected = min(candidates, key=lambda item: (float(item.fun), not bool(item.success)))
@@ -613,6 +617,7 @@ class GASStrategy:
         verbose,
         initial_mle_result=None,
         refine=True,
+        initial_gas_result=None,
     ):
         n_corr = int(copula._corr_num_params())
         self._ensure_correlation_initialized(copula, u)
@@ -701,6 +706,8 @@ class GASStrategy:
         result, optimizer_diagnostics = _fit_gas_starts(
             objective, joint0, bounds=bounds, options=optimizer_options,
             automatic=gamma0 is None, refine=refine,
+            inherited_start=(np.concatenate([initial_gas_result.params.values, corr0])
+                             if gamma0 is None and initial_gas_result is not None else None),
         )
         try:
             copula._set_corr_from_params(result.x[3:])
@@ -756,9 +763,16 @@ class GASStrategy:
         beta_bound: float | None = None,
         verbose: bool = False,
         initial_mle_result=None,
+        initial_gas_result=None,
         **kwargs,
     ) -> GASResult:
-        """Fit the native GAS model."""
+        """Fit the native GAS model.
+
+        ``initial_gas_result`` supplies a library-owned warm start in addition
+        to the automatic starts. An explicit ``gamma0`` takes precedence and
+        retains single-start semantics. Each recovery stage retains the
+        configured optimizer budget and explicit difference/tolerance settings.
+        """
         if "backend" in kwargs:
             raise TypeError(
                 "GAS backend selection was removed; native execution is "
@@ -816,6 +830,7 @@ class GASStrategy:
             raise ValueError("beta_bound must be in (0, 1)")
 
         automatic_initialization = gamma0 is None
+        inherited_initialization = automatic_initialization and initial_gas_result is not None
         if corr_num_params:
             return self._fit_joint_static_shrinkage(
                 copula,
@@ -830,6 +845,7 @@ class GASStrategy:
                 verbose,
                 initial_mle_result,
                 refine=ftol is None,
+                initial_gas_result=initial_gas_result,
             )
 
         if gamma0 is None:
@@ -898,7 +914,8 @@ class GASStrategy:
             validation_objective.gas_mean_parameterization = True
             validation_objective.objective_scale = float(len(u))
             if (automatic_initialization and ftol is None and not explicit_difference_step
-                    and maxfun is None and maxiter is None and maxls is None):
+                    and (inherited_initialization or
+                         (maxfun is None and maxiter is None and maxls is None))):
                 # Preserve both deterministic starts at a second derivative
                 # scale, then condition the local refinement in mean space.
                 for static in (False, True):
@@ -922,6 +939,8 @@ class GASStrategy:
             automatic=automatic_initialization, refine=ftol is None,
             recovery_objectives=recovery_objectives,
             validation_objective=validation_objective,
+            inherited_start=(initial_gas_result.params.values
+                             if inherited_initialization else None),
         )
         parameter_count = None
         corr_effective_num_params = getattr(

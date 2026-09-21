@@ -12,6 +12,63 @@ from pyscarcopula._native import gas
 from pyscarcopula.strategy.gas import GASStrategy, _fit_gas_starts
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("family", [EquicorrGaussianCopula, StochasticStudentCopula])
+def test_inherited_start_preserves_budget_and_explicit_start_precedence(monkeypatch, explicit, family):
+    from pyscarcopula._types import gas_params
+    from pyscarcopula.strategy import gas as strategy_module
+
+    inherited = SimpleNamespace(params=gas_params(omega=.01, gamma=.02, beta=.8))
+    calls = []
+    original = strategy_module._minimize_gas_objective
+
+    def recorded(objective, initial, *, bounds, options):
+        calls.append(dict(options))
+        return original(objective, initial, bounds=bounds, options=options)
+
+    monkeypatch.setattr(strategy_module, "_minimize_gas_objective", recorded)
+    observations = np.random.default_rng(924).uniform(.1, .9, (24, 3))
+    result = GASStrategy().fit(
+        family(d=3), observations,
+        initial_gas_result=inherited,
+        gamma0=np.array([.02, .03, .7]) if explicit else None,
+        maxfun=40, maxiter=3, maxls=5)
+    stages = result.diagnostics["optimizer_stages"]
+    assert result.diagnostics["automatic_multistart"] is (not explicit)
+    if explicit:
+        assert all(stage["stage"] in {"standard", "refinement"} for stage in stages)
+        np.testing.assert_array_equal(stages[0]["initial_params"], [.02, .03, .7])
+    else:
+        inherited_stage = next(stage for stage in stages if stage["stage"] == "inherited")
+        np.testing.assert_array_equal(inherited_stage["initial_params"], inherited.params.values)
+        assert any(stage["stage"] == "nested_static" for stage in stages)
+    assert calls
+    assert all((options["maxfun"], options["maxiter"], options["maxls"]) == (40, 3, 5)
+               for options in calls)
+    np.testing.assert_array_equal(inherited.params.values, [.01, .02, .8])
+
+
+@pytest.mark.parametrize("override", [
+    {"ftol": 1e-4}, {"eps": 1e-6}, {"finite_diff_rel_step": 1e-5},
+])
+def test_inherited_start_does_not_override_explicit_numerical_settings(override):
+    from pyscarcopula._types import gas_params
+
+    inherited = SimpleNamespace(params=gas_params(omega=.01, gamma=.02, beta=.8))
+    observations = np.random.default_rng(924).uniform(.1, .9, (24, 3))
+    result = GASStrategy().fit(
+        EquicorrGaussianCopula(3), observations, initial_gas_result=inherited,
+        maxfun=40, maxiter=3, **override)
+    assert all(not stage["stage"].startswith("recovery_")
+               for stage in result.diagnostics["optimizer_stages"])
+    if "ftol" in override:
+        assert "optimizer_refinement" not in result.diagnostics
+    else:
+        assert result.diagnostics["optimizer_gradient_eps"] == next(iter(override.values()))
+        assert result.diagnostics["optimizer_gradient_relative"] is (
+            "finite_diff_rel_step" in override)
+
+
 def test_joint_shrinkage_objective_uses_the_reported_ppf_cache():
     observations = np.random.default_rng(66).uniform(0.001, 0.999, (80, 4))
     model = StochasticStudentCopula(d=4, corr_mode="shrinkage")
