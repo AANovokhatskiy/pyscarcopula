@@ -374,15 +374,13 @@ def test_high_frequency_equicorr_default_fit_avoids_saturated_line_search():
     from pathlib import Path
     import pandas as pd
     from pyscarcopula._utils import pobs
-    from threadpoolctl import threadpool_limits
 
     path = Path(__file__).resolve().parents[1] / "data" / "btc_eth_combined_30m.csv"
     if not path.exists():
         pytest.skip("high-frequency regression data unavailable")
     prices = pd.read_csv(path, index_col=0)[["BTC_close", "ETH_close"]]
     observations = pobs(np.log(prices / prices.shift(1)).iloc[1:12001].dropna().values)
-    with threadpool_limits(limits=1):
-        result = GASStrategy().fit(EquicorrGaussianCopula(d=2), observations)
+    result = GASStrategy().fit(EquicorrGaussianCopula(d=2), observations)
     # The regression stopped at 8199.377 with a raw gradient above 3700.
     assert result.log_likelihood >= 8279.35
     assert result.success
@@ -393,10 +391,7 @@ def test_high_frequency_equicorr_default_fit_avoids_saturated_line_search():
 
 @pytest.mark.data
 def test_student_default_fit_recovers_and_reports_stationarity(crypto_data_6d):
-    from threadpoolctl import threadpool_limits
-
-    with threadpool_limits(limits=1):
-        result = GASStrategy().fit(StochasticStudentCopula(d=6), crypto_data_6d)
+    result = GASStrategy().fit(StochasticStudentCopula(d=6), crypto_data_6d)
     # A retained trial at 824.972 used to terminate the entire fit.
     assert result.log_likelihood >= 827.3
     assert any(stage["stage"].startswith("recovery_")
@@ -416,7 +411,6 @@ def test_student_stationarity_is_robust_to_near_unit_persistence_and_noisy_score
     from pathlib import Path
     import pandas as pd
     from pyscarcopula._utils import pobs
-    from threadpoolctl import threadpool_limits
 
     root = Path(__file__).resolve().parents[1] / "data"
     path = root / ("btc_eth_combined_30m.csv" if dataset == "hf" else "us_equity_prices.csv")
@@ -429,8 +423,7 @@ def test_student_stationarity_is_robust_to_near_unit_persistence_and_noisy_score
     if dataset == "hf":
         returns = returns.iloc[:12000]
     observations = pobs(returns.dropna().values)
-    with threadpool_limits(limits=1):
-        result = GASStrategy().fit(StochasticStudentCopula(d=len(columns)), observations)
+    result = GASStrategy().fit(StochasticStudentCopula(d=len(columns)), observations)
     assert result.log_likelihood >= minimum_loglik
     assert result.success
     check = result.diagnostics["stationarity_validation"]
