@@ -754,7 +754,8 @@ void project_multiply_with_grad(
     int quad_order,
     int basis_order,
     std::vector<double>& out,
-    std::vector<double>& dout) {
+    std::vector<double>& dout,
+    std::vector<double>* message_values) {
 
     std::fill(out.begin(), out.end(), 0.0);
     std::fill(dout.begin(), dout.end(), 0.0);
@@ -794,6 +795,7 @@ void project_multiply_with_grad(
             dvalue2 += basis_value * dcoeff2[n];
         }
 
+        if (message_values) (*message_values)[static_cast<std::size_t>(q)] = value;
         const double fi = fi_row[static_cast<std::size_t>(q)];
         const double dfi = dfi_dx_row[static_cast<std::size_t>(q)];
         const double out_factor = fi * value;
@@ -812,7 +814,7 @@ void project_multiply_with_grad(
 }
 
 void project_multiply_with_score_grad(
-    const std::vector<double>& coeff,
+    const std::vector<double>& message_values,
     const std::vector<double>& dcoeff,
     const std::vector<double>& fi_row,
     const std::vector<double>& scores,
@@ -821,47 +823,46 @@ void project_multiply_with_score_grad(
     int quad_order,
     int basis_order,
     int n_params,
-    std::vector<double>& out,
     std::vector<double>& dout) {
 
-    std::fill(out.begin(), out.end(), 0.0);
     std::fill(dout.begin(), dout.end(), 0.0);
     for (int q = 0; q < quad_order; ++q) {
-        const std::size_t basis_base =
-            static_cast<std::size_t>(q)
-            * static_cast<std::size_t>(basis_order);
-        const double* basis_row = basis.data() + basis_base;
-        const double* weighted_row = weighted_basis.data() + basis_base;
-        double value = 0.0;
-        for (int n = 0; n < basis_order; ++n) {
-            value += basis_row[n] * coeff[static_cast<std::size_t>(n)];
-        }
-
+        const auto base = static_cast<std::size_t>(q) * basis_order;
+        const double* b = basis.data() + base;
+        const double* w = weighted_basis.data() + base;
+        const double value = message_values[static_cast<std::size_t>(q)];
         const double fi = fi_row[static_cast<std::size_t>(q)];
-        for (int n = 0; n < basis_order; ++n) {
-            out[static_cast<std::size_t>(n)] +=
-                weighted_row[n] * fi * value;
+        int p = 0;
+        // Keep four dot products in registers, preserving each summation order.
+        for (; p + 3 < n_params; p += 4) {
+            const auto offset = static_cast<std::size_t>(p) * basis_order;
+            const double* d0 = dcoeff.data() + offset;
+            const double* d1 = d0 + basis_order;
+            const double* d2 = d1 + basis_order;
+            const double* d3 = d2 + basis_order;
+            double v0 = 0., v1 = 0., v2 = 0., v3 = 0.;
+            for (int n = 0; n < basis_order; ++n) {
+                v0 += b[n] * d0[n]; v1 += b[n] * d1[n];
+                v2 += b[n] * d2[n]; v3 += b[n] * d3[n];
+            }
+            const double* score = scores.data() + static_cast<std::size_t>(q) * n_params + p;
+            const double f0 = fi * (score[0] * value + v0);
+            const double f1 = fi * (score[1] * value + v1);
+            const double f2 = fi * (score[2] * value + v2);
+            const double f3 = fi * (score[3] * value + v3);
+            for (int n = 0; n < basis_order; ++n) {
+                dout[offset + n] += w[n] * f0;
+                dout[offset + basis_order + n] += w[n] * f1;
+                dout[offset + 2 * basis_order + n] += w[n] * f2;
+                dout[offset + 3 * basis_order + n] += w[n] * f3;
+            }
         }
-        for (int p = 0; p < n_params; ++p) {
-            const std::size_t param_base =
-                static_cast<std::size_t>(p)
-                * static_cast<std::size_t>(basis_order);
-            double dvalue = 0.0;
-            for (int n = 0; n < basis_order; ++n) {
-                dvalue += basis_row[n] * dcoeff[
-                    param_base + static_cast<std::size_t>(n)];
-            }
-            const double factor = fi * (
-                scores[
-                    static_cast<std::size_t>(q)
-                        * static_cast<std::size_t>(n_params)
-                    + static_cast<std::size_t>(p)]
-                * value
-                + dvalue);
-            for (int n = 0; n < basis_order; ++n) {
-                dout[param_base + static_cast<std::size_t>(n)] +=
-                    weighted_row[n] * factor;
-            }
+        for (; p < n_params; ++p) {
+            const auto offset = static_cast<std::size_t>(p) * basis_order;
+            double dv = 0.;
+            for (int n = 0; n < basis_order; ++n) dv += b[n] * dcoeff[offset + n];
+            const double factor = fi * (scores[static_cast<std::size_t>(q) * n_params + p] * value + dv);
+            for (int n = 0; n < basis_order; ++n) dout[offset + n] += w[n] * factor;
         }
     }
 }

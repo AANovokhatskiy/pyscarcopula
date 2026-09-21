@@ -1,6 +1,7 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
+#include "gaussian_spectral.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
@@ -78,24 +79,32 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
     std::vector<double> r_grid;
     std::vector<double> dpsi_grid;
     emission.prepare_grid_transform(x_grid, r_grid, dpsi_grid);
+    std::vector<double> fi_row(
+        static_cast<std::size_t>(config.spectral_quad_order), 0.0);
+    ScarOuSpectralGradientWorkspace gaussian_workspace;
+    const bool gaussian = spectral_detail::prepare_gaussian_spectral_terms(
+        copula, r_grid, gaussian_workspace);
+    auto fill_row = [&](std::int64_t t, double& scale) {
+        if (gaussian) {
+            spectral_detail::gaussian_spectral_pdf_and_grad_row(
+                copula, t, observation_values, r_grid, dpsi_grid,
+                gaussian_workspace, fi_row.data(), nullptr, scale);
+        } else {
+            emission.fill_density_row(observation_values, t, r_grid, fi_row.data(), &scale);
+        }
+    };
+
 
     std::vector<double> coeff(
         static_cast<std::size_t>(config.spectral_basis_order), 0.0);
     std::vector<double> projected(
         static_cast<std::size_t>(config.spectral_basis_order), 0.0);
-    std::vector<double> fi_row(
-        static_cast<std::size_t>(config.spectral_quad_order), 0.0);
     coeff[0] = 1.0;
     double log_scale = 0.0;
 
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
         double emission_log_scale = 0.0;
-        emission.fill_density_row(
-            observation_values,
-            t,
-            r_grid,
-            fi_row.data(),
-            &emission_log_scale);
+        fill_row(t, emission_log_scale);
         log_scale += emission_log_scale;
 
         scar_internal::project_multiply(
@@ -124,12 +133,7 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
     }
 
     double emission_log_scale = 0.0;
-    emission.fill_density_row(
-        observation_values,
-        0,
-        r_grid,
-        fi_row.data(),
-        &emission_log_scale);
+    fill_row(0, emission_log_scale);
     log_scale += emission_log_scale;
     scar_internal::project_multiply(
         coeff,
@@ -146,6 +150,9 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
     }
     LogLikResult out;
     out.log_likelihood = std::log(likelihood_scaled) + log_scale;
+    if (!std::isfinite(out.log_likelihood)) {
+        return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+    }
     out.backend = OuBackend::Spectral;
     return out;
 }

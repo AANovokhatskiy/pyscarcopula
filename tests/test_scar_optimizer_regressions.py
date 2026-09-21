@@ -1,5 +1,6 @@
 """Regression checks for native trial failures and transition support."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -66,11 +67,10 @@ def test_trial_conversion_does_not_hide_unsupported_or_final_failure():
          [1.342189053803724, 2.3710386400947225, -0.7199303878884512]),
     ],
 )
-def test_five_sigma_band_boundary_preserves_released_values(
+def test_old_five_sigma_boundary_now_agrees_with_dense(
         delta, expected, expected_gradient):
-    # Released 0.20.1 references on both sides of band=ceil(5*2.4).
-    # The contract retains the discrete band change; it does not require
-    # equality to a full dense transition across this boundary.
+    # These released values record the old discontinuity at ceil(5*2.4).
+    # The tail-controlled operator must instead agree with the dense result.
     n, K = 120, 80
     kappa = -.5 * (n - 1) * np.log1p(-(2.4 * 10 / (K - 1)) ** 2)
     u = np.random.default_rng(724).uniform(.02, .98, (n, 2))
@@ -79,9 +79,12 @@ def test_five_sigma_band_boundary_preserves_released_values(
                           adaptive=False, max_K=None, grid_method="sparse")
     args = (kappa + delta, 1.7, 9.1, u, copula)
     value, gradient = scar_ou.neg_loglik_with_grad(*args, config)
-    assert value == pytest.approx(expected, rel=0, abs=1e-10)
-    np.testing.assert_allclose(
-        gradient, expected_gradient, rtol=1e-10, atol=1e-11)
+    dense_value, dense_gradient = scar_ou.neg_loglik_with_grad(
+        *args, replace(config, grid_method="dense"))
+    assert value == pytest.approx(dense_value, rel=0, abs=1e-10)
+    np.testing.assert_allclose(gradient, dense_gradient, rtol=1e-10, atol=1e-11)
+    assert abs(value-expected) > 1e-8
+    assert np.max(np.abs(gradient-expected_gradient)) > 1e-8
     assert scar_ou.neg_loglik(*args, config) == pytest.approx(
         value, rel=0, abs=1e-10)
 

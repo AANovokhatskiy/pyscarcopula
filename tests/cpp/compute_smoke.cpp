@@ -38,6 +38,7 @@ int run_factor_rosenblatt_gaussian_plan_tests();
 int run_equicorr_stochastic_student_tests();
 int run_gas_model_tests();
 int run_ou_model_tests();
+int run_ou_matrix_engineering_tests();
 int run_ou_quadrature_cache_tests();
 int run_vine_model_tests();
 int run_multivariate_model_tests();
@@ -108,6 +109,7 @@ int main() {
     if (gas_model_status != 0) {
         return 650 + gas_model_status;
     }
+    if (run_ou_matrix_engineering_tests() != 0) return 99;
     const int ou_model_status = run_ou_model_tests();
     if (ou_model_status != 0) {
         return 675 + ou_model_status;

@@ -59,12 +59,12 @@ def test_student_optimizer_reselects_auto_backend_for_each_trial(monkeypatch, mo
 
 
 def test_optimizer_auto_falls_back_to_matrix_for_failed_spectral_trial(monkeypatch):
-    observations = np.random.default_rng(1).uniform(.001, .999, (50, 2))
-    # Two spectral nodes see nearly singular Gaussian correlations, whereas
-    # the matrix grid resolves finite-density states. Native kernels are real.
+    observations = np.tile([[.001, .001], [.001, .999]], (25, 1))
+    # Three Hermite modes produce negative mass for these alternating tails;
+    # scaling the emissions cannot remove this truncation failure.
     info = _trace_trial_backends(
-        monkeypatch, BivariateGaussianCopula(), observations, mu=0., sigma=10./np.sqrt(.2),
-        spectral_basis_order=2, spectral_quad_order=2)
+        monkeypatch, BivariateGaussianCopula(), observations, mu=0., sigma=4.,
+        spectral_basis_order=3, spectral_quad_order=3)
     assert [item["backend"] for item in info] == [
         "local", "matrix", "local", "matrix"]
     assert info[1]["fallback_chain"] == ["spectral"]

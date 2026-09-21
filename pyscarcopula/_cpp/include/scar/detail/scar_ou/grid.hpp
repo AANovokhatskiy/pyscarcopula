@@ -7,12 +7,16 @@
 
 namespace scar_internal {
 
-// Preserve the five-sigma transition support used by the 0.20.1 contract.
-// Scalar likelihood and analytical gradients must use the same band rule.
-inline constexpr double kOuTransitionTailSigma = 5.0;
+// Absolute omitted row-mass/log-a-tangent budget, divided over transitions.
+// This controls the operator tail, not the conditioned likelihood error.
+inline constexpr double kOuTransitionTailBudget = 1e-14;
+int gaussian_transition_band(int K, double kernel_grid_ratio, double a,
+                             double radius, std::int64_t observations);
 
 struct OuGrid {
     int K = 0;
+    double a = 0.0;
+    std::int64_t observations = 0;
     double K_requested = 0.0;
     double rho = 0.0;
     double sigma = 0.0;

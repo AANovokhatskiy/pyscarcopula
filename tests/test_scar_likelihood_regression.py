@@ -71,7 +71,7 @@ def _assert_close(actual, expected):
         ),
     ],
 )
-def test_bivariate_scar_sparse_and_dense_match_their_references(
+def test_bivariate_scar_sparse_matches_dense_after_tail_fix(
         copula, expected, legacy_negative, legacy_gradient):
     observations = np.random.default_rng(20260831).uniform(
         0.01, 0.99, size=(64, 2))
@@ -87,15 +87,16 @@ def test_bivariate_scar_sparse_and_dense_match_their_references(
     negative, gradient = _cpp_scar_ou.neg_loglik_with_grad(
         100.0, -3.25, 0.14, observations, copula, config)
 
-    # Dense and five-sigma sparse are distinct numerical contracts. Keep
-    # the dense references and the released 0.20.1 sparse references separate.
+    # Preserve the dense reference; the historical five-sigma values below
+    # document the truncation defect instead of requiring it in production.
     np.testing.assert_allclose(gradient, expected, rtol=2e-11, atol=1e-14)
     sparse_config = replace(config, grid_method="sparse")
     sparse_negative, sparse_gradient = _cpp_scar_ou.neg_loglik_with_grad(
         100.0, -3.25, 0.14, observations, copula, sparse_config)
-    assert sparse_negative == pytest.approx(legacy_negative, rel=0, abs=2e-13)
+    assert sparse_negative == pytest.approx(negative, rel=0, abs=2e-13)
     np.testing.assert_allclose(
-        sparse_gradient, legacy_gradient, rtol=2e-11, atol=1e-14)
+        sparse_gradient, gradient, rtol=2e-11, atol=1e-14)
+    assert abs(legacy_gradient[0] - gradient[0]) > 1e-8
     assert _cpp_scar_ou.neg_loglik(
         100.0, -3.25, 0.14, observations, copula,
         sparse_config) == pytest.approx(sparse_negative, rel=0, abs=2e-13)

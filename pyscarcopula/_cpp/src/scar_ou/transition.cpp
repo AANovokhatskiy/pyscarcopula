@@ -103,12 +103,13 @@ bool build_dense_transition_matrix(const OuGrid& grid, std::vector<double>& matr
     matrix.assign(matrix_size, 0.0);
     const double coeff = 1.0 / (grid.sigma_cond * std::sqrt(2.0 * kPi));
     for (int row = 0; row < grid.K; ++row) {
-        const double mean = grid.rho * grid.z[static_cast<std::size_t>(row)];
+        const double z_row = grid.z[static_cast<std::size_t>(row)];
+        const double shift = -std::expm1(-grid.a) * z_row;
         const std::size_t row_offset = static_cast<std::size_t>(row) * K;
         for (int col = 0; col < grid.K; ++col) {
             const std::size_t idx =
                 row_offset + static_cast<std::size_t>(col);
-            const double diff = grid.z[static_cast<std::size_t>(col)] - mean;
+            const double diff = (grid.z[static_cast<std::size_t>(col)] - z_row) + shift;
             matrix[idx] = coeff
                 * std::exp(-0.5 * (diff / grid.sigma_cond) * (diff / grid.sigma_cond))
                 * grid.trap_w[static_cast<std::size_t>(col)];
@@ -125,7 +126,8 @@ bool build_sparse_transition_matrix(
     int K,
     int band,
     SparseTransitionMatrix& matrix,
-    const std::vector<double>* i_centers) {
+    const std::vector<double>* i_centers,
+    double one_minus_rho) {
 
     matrix = {};
     std::size_t grid_size = 0;
@@ -141,6 +143,8 @@ bool build_sparse_transition_matrix(
         return false;
     }
 
+    if (one_minus_rho < 0.0) one_minus_rho = 1.0 - rho;
+    if (!std::isfinite(one_minus_rho)) return false;
     const double z0 = z.front();
     const double dz = z[1] - z[0];
     if (!std::isfinite(z0) || !std::isfinite(dz) || dz <= 0.0) {
@@ -196,7 +200,7 @@ bool build_sparse_transition_matrix(
     }
 
     matrix.data.resize(nnz);
-    matrix.indices.resize(nnz);
+    matrix.row_start.resize(grid_size);
     for (int row = 0; row < K; ++row) {
         const double center = rho * z[static_cast<std::size_t>(row)];
         const double i_center = i_centers == nullptr
@@ -213,11 +217,12 @@ bool build_sparse_transition_matrix(
         const int end =
             matrix.indptr[static_cast<std::size_t>(row) + 1];
 
+        matrix.row_start[static_cast<std::size_t>(row)] = lo;
         for (int offset = begin; offset < end; ++offset) {
             const int col = lo + offset - begin;
             const std::size_t idx = static_cast<std::size_t>(col);
-            const double scaled_diff = (z[idx] - center) / sigma_cond;
-            matrix.indices[static_cast<std::size_t>(offset)] = col;
+            const double scaled_diff = ((z[idx] - z[static_cast<std::size_t>(row)])
+                + one_minus_rho * z[static_cast<std::size_t>(row)]) / sigma_cond;
             matrix.data[static_cast<std::size_t>(offset)] =
                 coeff * std::exp(-0.5 * scaled_diff * scaled_diff)
                 * trap_w[idx];
@@ -239,8 +244,8 @@ void sparse_matvec(
         const int end = matrix.indptr[static_cast<std::size_t>(row) + 1];
         for (int offset = begin; offset < end; ++offset) {
             const std::size_t idx = static_cast<std::size_t>(offset);
-            value += matrix.data[idx]
-                * v[static_cast<std::size_t>(matrix.indices[idx])];
+            const int col = matrix.row_start[static_cast<std::size_t>(row)] + offset - begin;
+            value += matrix.data[idx] * v[static_cast<std::size_t>(col)];
         }
         out[static_cast<std::size_t>(row)] = value;
     }
@@ -259,26 +264,19 @@ void sparse_transpose_matvec(
         const int end = matrix.indptr[static_cast<std::size_t>(row) + 1];
         for (int offset = begin; offset < end; ++offset) {
             const std::size_t idx = static_cast<std::size_t>(offset);
-            out[static_cast<std::size_t>(matrix.indices[idx])] +=
+            const int col = matrix.row_start[static_cast<std::size_t>(row)] + offset - begin;
+            out[static_cast<std::size_t>(col)] +=
                 matrix.data[idx] * source;
         }
     }
 }
 
 int matrix_transition_band(const OuGrid& grid) {
-    if (grid.K < 2
-        || !std::isfinite(grid.r_kernel_grid)
-        || grid.r_kernel_grid <= 0.0) {
-        return -1;
-    }
-    const double band_value =
-        std::ceil(kOuTransitionTailSigma * grid.r_kernel_grid);
-    if (!std::isfinite(band_value)
-        || band_value < 0.0
-        || band_value > static_cast<double>(std::numeric_limits<int>::max())) {
-        return -1;
-    }
-    return static_cast<int>(band_value);
+    if (grid.K < 2 || grid.z.size() != static_cast<std::size_t>(grid.K)
+        || !std::isfinite(grid.sigma) || grid.sigma <= 0.0) return -1;
+    return gaussian_transition_band(grid.K, grid.r_kernel_grid, grid.a,
+        std::max(std::abs(grid.z.front()), std::abs(grid.z.back())) / grid.sigma,
+        grid.observations);
 }
 
 bool build_matrix_transition_operator(
@@ -310,8 +308,8 @@ bool build_matrix_transition_operator(
             0.5 * static_cast<double>(grid.K - 1);
         for (int row = 0; row < grid.K; ++row) {
             i_centers[static_cast<std::size_t>(row)] =
-                grid.rho * static_cast<double>(row)
-                + (1.0 - grid.rho) * midpoint;
+                static_cast<double>(row)
+                - std::expm1(-grid.a) * (midpoint - row);
         }
         return build_sparse_transition_matrix(
             grid.z,
@@ -321,7 +319,7 @@ bool build_matrix_transition_operator(
             grid.K,
             band,
             op.csr,
-            &i_centers);
+            &i_centers, -std::expm1(-grid.a));
     }
     return build_dense_transition_matrix(grid, op.dense);
 }

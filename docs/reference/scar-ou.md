@@ -25,7 +25,7 @@ does not introduce simulation noise.
 | `spectral_basis_order` | strategy kwarg | `'auto'` | Hermite basis size for the spectral likelihood. The auto policy uses 128, 96, 64, or 32 from the current $\kappa\,dt$; pass an integer to fix the basis size. |
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
 | `analytical_grad` | strategy kwarg | `True` | Uses the analytical gradient and avoids optimizer finite differences. |
-| `corr_gradient_block_bytes` | strategy kwarg | `67108864` (64 MiB) | Budget for three active blocks in grid-based correlation gradients; larger blocks reduce repeated forward passes. |
+| `corr_gradient_block_bytes` | strategy kwarg | `67108864` (64 MiB) | Budget for active grid correlation-gradient blocks or the spectral correlation workspace. Larger grid blocks reduce repeated forward passes. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
 | `log_stationary_scale_optimization` | strategy kwarg | `None` | For bivariate models, `True` enables `[log(kappa), mu, log(sigma_x)]` with `kappa, sigma_x >= 0.001`; `False` forces scaled physical coordinates; `None` keeps the model default. |
 | `stationary_scale_bounds` | strategy kwarg | `None` | Overrides model bounds for `sigma_x` in log-stationary coordinates. `StochasticStudentCopula` and bivariate models use separate policies, both defaulting to `(0.001, 10000.0)`. |
@@ -53,10 +53,18 @@ configuration. Inspect
 The correlation-gradient budget covers active entries in the density,
 state-derivative and forward-history blocks. It does not cap total process
 memory: PPF tables, transition operators, checkpoint vectors and allocator
-capacity are additional. The matrix and local backends use this setting;
-ordinary OU-only and spectral gradients keep their existing storage policy.
+capacity are additional for the matrix and local backends.
+For spectral correlation gradients, the same setting covers the precision
+matrix, correlation coefficient buffers, node scores, shared nodal message,
+score-row scratch and returned correlation gradient, including retained
+workspace capacities. A call that cannot fit returns `invalid_size` before
+allocating these buffers. It does not cap total process memory or the ordinary
+OU workspace, Hermite tables, prepared observations or PPF caches. Directional
+correlation gradients require only one tangent and can fit when a full gradient
+cannot. Ordinary OU-only gradients are unaffected by this budget.
 `corr_gradient_block_bytes=25165824` (24 MiB) reproduces the former block size.
-The budget must hold at least one row, or `24 * effective_K` bytes. With
+For matrix/local gradients the budget must hold at least one row, or
+`24 * effective_K` bytes. With
 multiple workers, budget each worker separately. This setting does not change
 transition support, grid resolution, backend selection or optimizer tolerances.
 The setting is saved in fit diagnostics and restored for bootstrap refits;
@@ -350,12 +358,22 @@ are finite. Such conversion failures receive the finite optimization penalty
 and are counted as `invalid_parameter_trials`. Unsupported kernels and
 invalid final parameter conversions still raise their original errors.
 
-Sparse matrix transitions retain the historical five conditional Gaussian
-standard deviations on either side of each transition center, covering about
-99.99994% of the continuous standard-normal mass. Likelihood and analytical
-gradient use the same support rule. The integer band can change with the OU
-parameters; it is not widened by the optimizer. Transition support and
-adaptive-grid resolution are separate settings.
+Sparse matrix transitions retain contiguous row segments of the original
+Gaussian-density/trapezoid operator. A shared likelihood/gradient rule chooses
+the band from a Gaussian tail envelope for both mass and the absolute
+`log(kappa * dt)` transition tangent. The per-transition budget is
+`1e-14 / (T-1)`; one extra grid cell covers lattice endpoint effects. Rows
+are not renormalized. This replaces the historical fixed five-sigma cutoff,
+which could accumulate visible score bias even when the grid was refined.
+
+The budget bounds omitted operator tails in exact arithmetic, not the final
+relative likelihood or score error: emissions and conditioning can amplify it.
+Finite-domain and spatial errors remain separate and need convergence checks.
+The integer band can change with parameters; analytical scores differentiate
+the retained Gaussian coefficients, not the discrete support-selection rule.
+Compact rows store one starting column per row. Matrix likelihood/OU-gradient
+propagation reads each coefficient once for four message columns. Conditional
+variance uses `-expm1(-2*kappa*dt)` consistently in scalar and gradient paths.
 
 Bootstrap refits retry once on the same simulated sample after an unsuccessful
 fit. The retry starts from the failed candidate when its parameters are finite

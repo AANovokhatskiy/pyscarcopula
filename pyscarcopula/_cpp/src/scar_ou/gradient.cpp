@@ -2,9 +2,9 @@
 
 #include "evaluator_internal.hpp"
 #include "gradient_workspace.hpp"
+#include "gaussian_spectral.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/copula/multivariate/student/density.hpp"
-#include "scar/detail/linalg.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
@@ -65,90 +65,6 @@ const PreparedDynamicEmission& select_emission(
     return *owner;
 }
 
-bool prepare_gaussian_spectral_terms(
-    const CopulaSpec& copula,
-    std::int64_t n_obs,
-    const std::vector<double>& r_grid,
-    SpectralGradientWorkspace& workspace) {
-
-    const std::size_t n_obs_size = static_cast<std::size_t>(n_obs);
-    if (copula.family != CopulaFamily::Gaussian
-        || copula.pair_gaussian_first_scores().size() != n_obs_size
-        || copula.pair_gaussian_second_scores().size() != n_obs_size) {
-        return false;
-    }
-
-    const std::size_t grid_size = r_grid.size();
-    workspace.gaussian_r2.resize(grid_size);
-    workspace.gaussian_omr2.resize(grid_size);
-    workspace.gaussian_log_norm.resize(grid_size);
-    workspace.gaussian_dlog_det.resize(grid_size);
-    workspace.gaussian_omr2_squared.resize(grid_size);
-    for (std::size_t j = 0; j < grid_size; ++j) {
-        const double r = r_grid[j];
-        const double r2 = r * r;
-        const double omr2 = 1.0 - r2;
-        workspace.gaussian_r2[j] = r2;
-        workspace.gaussian_omr2[j] = omr2;
-        workspace.gaussian_log_norm[j] = -0.5 * std::log(omr2);
-        workspace.gaussian_dlog_det[j] = r / omr2;
-        workspace.gaussian_omr2_squared[j] = omr2 * omr2;
-    }
-    return true;
-}
-
-void gaussian_spectral_pdf_and_grad_row(
-    const CopulaSpec& copula,
-    std::int64_t row,
-    const std::vector<double>& r_grid,
-    const std::vector<double>& dpsi_grid,
-    const SpectralGradientWorkspace& workspace,
-    double* fi_row,
-    double* dfi_dx_row) {
-
-    const std::size_t row_index = static_cast<std::size_t>(row);
-    const double z1 = copula.pair_gaussian_first_scores()[row_index];
-    const double z2 = copula.pair_gaussian_second_scores()[row_index];
-    const double sum_squares = z1 * z1 + z2 * z2;
-    const double cross_product = z1 * z2;
-    for (std::size_t j = 0; j < r_grid.size(); ++j) {
-        const double r = r_grid[j];
-        const double r2 = workspace.gaussian_r2[j];
-        const double omr2 = workspace.gaussian_omr2[j];
-        const double numerator =
-            r2 * sum_squares - 2.0 * r * cross_product;
-        const double log_pdf =
-            workspace.gaussian_log_norm[j] - 0.5 * numerator / omr2;
-        const double pdf = std::exp(log_pdf);
-        fi_row[j] = pdf;
-
-        const double derivative_numerator =
-            (2.0 * r * sum_squares - 2.0 * cross_product) * omr2
-            + 2.0 * r * numerator;
-        const double derivative_quadratic = derivative_numerator
-            / workspace.gaussian_omr2_squared[j];
-        const double derivative_log_pdf =
-            workspace.gaussian_dlog_det[j]
-            - 0.5 * derivative_quadratic;
-        dfi_dx_row[j] =
-            pdf * derivative_log_pdf * dpsi_grid[j];
-    }
-}
-
-void dense_grid_matvec(
-    const std::vector<double>& matrix,
-    int K,
-    const std::vector<double>& v,
-    std::vector<double>& out) {
-
-    scar_internal::linalg::row_major_matvec(
-        matrix.data(),
-        static_cast<std::size_t>(K),
-        static_cast<std::size_t>(K),
-        v.data(),
-        out.data());
-}
-
 void local_grid_matvec(
     const GridGradientOperators& op,
     const std::vector<double>& values,
@@ -169,41 +85,6 @@ void local_grid_matvec(
     }
 }
 
-void sparse_grid_matvec(
-    const GridGradientOperators& op,
-    const std::vector<double>& values,
-    const std::vector<double>& v,
-    std::vector<double>& out) {
-
-    std::fill(out.begin(), out.end(), 0.0);
-    for (int row = 0; row < op.K; ++row) {
-        double acc = 0.0;
-        const int begin = op.indptr[static_cast<std::size_t>(row)];
-        const int end = op.indptr[static_cast<std::size_t>(row) + 1];
-        for (int offset = begin; offset < end; ++offset) {
-            const std::size_t idx = static_cast<std::size_t>(offset);
-            acc += values[idx]
-                * v[static_cast<std::size_t>(op.cols[idx])];
-        }
-        out[static_cast<std::size_t>(row)] = acc;
-    }
-}
-
-void operator_matvec(
-    const GridGradientOperators& op,
-    bool gradient,
-    const std::vector<double>& v,
-    std::vector<double>& out) {
-
-    if (op.local) {
-        local_grid_matvec(op, gradient ? op.grad_vals : op.vals, v, out);
-    } else if (op.sparse) {
-        sparse_grid_matvec(op, gradient ? op.grad_vals : op.vals, v, out);
-    } else {
-        dense_grid_matvec(gradient ? op.dense_grad : op.dense, op.K, v, out);
-    }
-}
-
 void operator_transpose_matvec(
     const GridGradientOperators& op,
     const std::vector<double>& v,
@@ -221,7 +102,9 @@ void operator_transpose_matvec(
                 : begin + op.width;
             for (int offset = begin; offset < end; ++offset) {
                 const std::size_t idx = static_cast<std::size_t>(offset);
-                out[static_cast<std::size_t>(op.cols[idx])] +=
+                out[static_cast<std::size_t>(op.sparse
+                    ? op.row_start[static_cast<std::size_t>(row)] + offset - begin
+                    : op.cols[idx])] +=
                     op.vals[idx] * source;
             }
         }
@@ -237,6 +120,37 @@ void operator_transpose_matvec(
             out[static_cast<std::size_t>(col)] +=
                 op.dense[offset + static_cast<std::size_t>(col)] * source;
         }
+    }
+}
+
+// Apply P to four columns and dP/drho to the value column in one row scan.
+// Inputs/outputs do not alias; local-GH retains its interpolation path.
+void matrix_score_products(
+    const GridGradientOperators& op, const std::vector<double>& targets,
+    std::vector<double>& next, std::vector<double>& derivatives,
+    std::vector<double>& transition_grad) {
+    const std::size_t K = static_cast<std::size_t>(op.K);
+    const auto& values = op.sparse ? op.vals : op.dense;
+    const auto& gradients = op.sparse ? op.grad_vals : op.dense_grad;
+    for (int row = 0; row < op.K; ++row) {
+        const std::size_t begin = op.sparse ? op.indptr[row] : row * K;
+        const std::size_t end = op.sparse ? op.indptr[row + 1] : begin + K;
+        const std::size_t first = op.sparse ? op.row_start[row] : 0;
+        double b = 0.0, d0 = 0.0, d1 = 0.0, d2 = 0.0, dr = 0.0;
+        for (std::size_t i = begin; i < end; ++i) {
+            const std::size_t j = first + i - begin;
+            const double v = values[i];
+            b += v * targets[j];
+            d0 += v * targets[K + j];
+            d1 += v * targets[2 * K + j];
+            d2 += v * targets[3 * K + j];
+            dr += gradients[i] * targets[j];
+        }
+        next[row] = b;
+        derivatives[row] = d0;
+        derivatives[K + row] = d1;
+        derivatives[2 * K + row] = d2;
+        transition_grad[row] = dr;
     }
 }
 
@@ -263,10 +177,11 @@ bool build_dense_grid_gradient_operator(
     const std::vector<double>& xi,
     const std::vector<double>& base_w,
     double rho,
+    double omr2,
+    double one_minus_rho,
     GridGradientOperators& op) {
 
     const int K = static_cast<int>(xi.size());
-    const double omr2 = 1.0 - rho * rho;
     if (K < 2 || omr2 <= 0.0) {
         return false;
     }
@@ -288,8 +203,8 @@ bool build_dense_grid_gradient_operator(
         const std::size_t row_offset =
             static_cast<std::size_t>(row) * K_size;
         for (int col = 0; col < K; ++col) {
-            const double q = xi[static_cast<std::size_t>(col)]
-                - rho * xi[static_cast<std::size_t>(row)];
+            const double q = (xi[static_cast<std::size_t>(col)] - xi[static_cast<std::size_t>(row)])
+                + one_minus_rho * xi[static_cast<std::size_t>(row)];
             const double tw = coeff
                 * std::exp(-0.5 * q * q / omr2)
                 * base_w[static_cast<std::size_t>(col)];
@@ -309,11 +224,12 @@ bool build_sparse_grid_gradient_operator(
     const std::vector<double>& xi,
     const std::vector<double>& base_w,
     double rho,
+    double omr2,
+    double one_minus_rho,
     int band,
     GridGradientOperators& op) {
 
     const int K = static_cast<int>(xi.size());
-    const double omr2 = 1.0 - rho * rho;
     if (K < 2 || omr2 <= 0.0 || base_w.size() != xi.size()) {
         return false;
     }
@@ -332,8 +248,7 @@ bool build_sparse_grid_gradient_operator(
     const double midpoint = 0.5 * static_cast<double>(K - 1);
     for (int row = 0; row < K; ++row) {
         const double i_center =
-            rho * static_cast<double>(row)
-            + (1.0 - rho) * midpoint;
+            static_cast<double>(row) + one_minus_rho * (midpoint - row);
         const double lo_value = std::floor(i_center) - band;
         const double hi_value = std::ceil(i_center) + band + 1.0;
         const int lo = lo_value <= 0.0
@@ -357,17 +272,15 @@ bool build_sparse_grid_gradient_operator(
             static_cast<int>(nnz);
     }
 
-    op.cols.resize(nnz);
+    op.row_start.resize(static_cast<std::size_t>(K));
     op.vals.resize(nnz);
     op.grad_vals.resize(nnz);
     const double coeff =
         1.0 / (std::sqrt(omr2) * std::sqrt(2.0 * scar_internal::kPi));
     for (int row = 0; row < K; ++row) {
         const double xi_row = xi[static_cast<std::size_t>(row)];
-        const double center = rho * xi_row;
         const double i_center =
-            rho * static_cast<double>(row)
-            + (1.0 - rho) * midpoint;
+            static_cast<double>(row) + one_minus_rho * (midpoint - row);
         const double lo_value = std::floor(i_center) - band;
         const int lo = lo_value <= 0.0
             ? 0
@@ -376,10 +289,11 @@ bool build_sparse_grid_gradient_operator(
                 : static_cast<int>(lo_value));
         const int begin = op.indptr[static_cast<std::size_t>(row)];
         const int end = op.indptr[static_cast<std::size_t>(row) + 1];
+        op.row_start[static_cast<std::size_t>(row)] = lo;
         for (int offset = begin; offset < end; ++offset) {
             const int col = lo + offset - begin;
             const double q =
-                xi[static_cast<std::size_t>(col)] - center;
+                (xi[static_cast<std::size_t>(col)] - xi_row) + one_minus_rho * xi_row;
             const double tw = coeff
                 * std::exp(-0.5 * q * q / omr2)
                 * base_w[static_cast<std::size_t>(col)];
@@ -387,7 +301,6 @@ bool build_sparse_grid_gradient_operator(
                 + q * xi_row / omr2
                 - rho * q * q / (omr2 * omr2);
             const std::size_t idx = static_cast<std::size_t>(offset);
-            op.cols[idx] = col;
             op.vals[idx] = tw;
             op.grad_vals[idx] = dlog * tw;
         }
@@ -632,23 +545,20 @@ GradLogLikResult grid_neg_loglik_with_grad(
         built = build_local_grid_gradient_operator(
             xi, rho, config.gh_order, op);
     } else {
-        const double band_value =
-            std::ceil(scar_internal::kOuTransitionTailSigma * r_kernel_grid);
-        if (!std::isfinite(band_value)
-            || band_value < 0.0
-            || band_value > static_cast<double>(INT_MAX)) {
-            return invalid_grad(SCAR_INVALID_SIZE, backend);
-        }
-        const int band = static_cast<int>(band_value);
+        const int band = scar_internal::gaussian_transition_band(
+            K_eff, r_kernel_grid, params.kappa * dt, config.grid_range, n_obs);
+        if (band < 0) return invalid_grad(SCAR_INVALID_SIZE, backend);
         const bool sparse =
             config.grid_method == OuGridMethod::Sparse
             || (config.grid_method == OuGridMethod::Auto
                 && (K_eff_size > scar_internal::kMaxDenseGridSize
-                    || band_value < static_cast<double>(K_eff / 4)));
+                    || band < K_eff / 4));
         built = sparse
             ? build_sparse_grid_gradient_operator(
-                xi, base_w, rho, band, op)
-            : build_dense_grid_gradient_operator(xi, base_w, rho, op);
+                xi, base_w, rho, conditional_variance,
+                -std::expm1(-params.kappa * dt), band, op)
+            : build_dense_grid_gradient_operator(xi, base_w, rho, conditional_variance,
+                -std::expm1(-params.kappa * dt), op);
     }
     if (!built) {
         return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
@@ -713,6 +623,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
     d_target.assign(K_size, 0.0);
     contrib.assign(K_size, 0.0);
     transition_grad.assign(K_size, 0.0);
+    if (!op.local) ws.matrix_targets.resize(4 * K_size);
 
     std::vector<double> corr_grad;
     const bool directional =
@@ -846,7 +757,21 @@ GradLogLikResult grid_neg_loglik_with_grad(
             for (std::size_t j = 0; j < K_size; ++j) {
                 target[j] = fi_row[j] * beta[j];
             }
-            operator_matvec(op, false, target, next);
+            if (op.local) {
+                local_grid_matvec(op, op.vals, target, next);
+            } else {
+                std::copy(target.begin(), target.end(), ws.matrix_targets.begin());
+                for (std::size_t p = 0; p < 3; ++p) {
+                    for (std::size_t j = 0; j < K_size; ++j) {
+                        const std::size_t offset = p * K_size + j;
+                        const double dfi = dfi_dx_row[j] * dx_dalpha[offset];
+                        ws.matrix_targets[K_size + offset] =
+                            dfi * beta[j] + fi_row[j] * d_beta[offset];
+                    }
+                }
+                matrix_score_products(op, ws.matrix_targets, next,
+                                      new_d_beta, transition_grad);
+            }
             double scale = 0.0;
             for (double value : next) {
                 scale = std::max(scale, std::abs(value));
@@ -854,16 +779,20 @@ GradLogLikResult grid_neg_loglik_with_grad(
             if (!std::isfinite(scale) || scale <= 0.0) {
                 return false;
             }
-            operator_matvec(op, true, target, transition_grad);
+            if (op.local) local_grid_matvec(op, op.grad_vals, target, transition_grad);
             const double inv_scale = 1.0 / scale;
             for (int p = 0; p < 3; ++p) {
                 const std::size_t p_offset =
                     static_cast<std::size_t>(p) * K_size;
-                for (std::size_t j = 0; j < K_size; ++j) {
-                    const double dfi = dfi_dx_row[j] * dx_dalpha[p_offset + j];
-                    d_target[j] = dfi * beta[j] + fi_row[j] * d_beta[p_offset + j];
+                if (op.local) {
+                    for (std::size_t j = 0; j < K_size; ++j) {
+                        const double dfi = dfi_dx_row[j] * dx_dalpha[p_offset + j];
+                        d_target[j] = dfi * beta[j] + fi_row[j] * d_beta[p_offset + j];
+                    }
+                    local_grid_matvec(op, op.vals, d_target, contrib);
+                } else {
+                    std::copy_n(new_d_beta.data() + p_offset, K_size, contrib.data());
                 }
-                operator_matvec(op, false, d_target, contrib);
                 if (p == 0) {
                     for (std::size_t j = 0; j < K_size; ++j) {
                         contrib[j] += transition_grad[j] * drho_dkappa;
@@ -1052,13 +981,16 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     const double rho = std::exp(-params.kappa * dt);
 
     std::vector<double>& powers = ws.powers;
-    std::vector<double>& dpowers_dkappa = ws.dpowers_dkappa;
+    std::vector<double>& dpowers_dlog_kappa = ws.dpowers_dlog_kappa;
     powers.assign(static_cast<std::size_t>(basis_order), 1.0);
-    dpowers_dkappa.assign(static_cast<std::size_t>(basis_order), 0.0);
+    dpowers_dlog_kappa.assign(static_cast<std::size_t>(basis_order), 0.0);
     for (int n = 1; n < basis_order; ++n) {
         const std::size_t idx = static_cast<std::size_t>(n);
         powers[idx] = powers[idx - 1] * rho;
-        dpowers_dkappa[idx] = -dt * static_cast<double>(n) * powers[idx];
+        // Once the mode has underflowed, its derivative is zero as well.
+        // Avoid an overflowing n*kappa*dt multiplied by zero.
+        dpowers_dlog_kappa[idx] = powers[idx] == 0.0 ? 0.0
+            : -params.kappa * dt * static_cast<double>(n) * powers[idx];
     }
 
     std::size_t triple_quad = 0;
@@ -1076,11 +1008,12 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     for (int q = 0; q < quad_order; ++q) {
         const std::size_t idx = static_cast<std::size_t>(q);
         x_grid[idx] = params.mu + sigma * z[idx];
-        dx_dalpha[idx] = -0.5 * sigma / params.kappa * z[idx];
+        // Internal tangents: (log kappa, mu, log stationary sigma).
+        dx_dalpha[idx] = 0.0;
         dx_dalpha[static_cast<std::size_t>(quad_order) + idx] = 1.0;
         dx_dalpha[
             2 * static_cast<std::size_t>(quad_order) + idx] =
-            sigma / params.nu * z[idx];
+            sigma * z[idx];
     }
     std::vector<double>& r_grid = ws.r_grid;
     std::vector<double>& dpsi_grid = ws.dpsi_grid;
@@ -1088,38 +1021,80 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     dpsi_grid.clear();
     emission.prepare_grid_transform(x_grid, r_grid, dpsi_grid);
     const bool use_gaussian_spectral_terms =
-        prepare_gaussian_spectral_terms(copula, n_obs, r_grid, ws);
+        spectral_detail::prepare_gaussian_spectral_terms(copula, r_grid, ws);
 
-    std::size_t n_corr = 0;
+    const bool directional = corr_gradient_mode == CorrGradientMode::Directional;
+    std::size_t n_corr = 0, square = 0;
+    if (correlation_gradient &&
+        (!scar_internal::valid_student_correlation_count(copula.dim, n_corr) ||
+         !scar_internal::valid_student_dimension(copula.dim, square))) {
+        return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
+    }
+    if (directional && (!corr_direction || corr_direction->size() != n_corr)) {
+        return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
+    }
+    if (directional && !std::all_of(corr_direction->begin(), corr_direction->end(),
+                                   [](double v) { return std::isfinite(v); })) {
+        return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
+    }
+    const std::size_t corr_param_count = directional ? 1 : n_corr;
+    std::size_t corr_basis_elements = 0, score_elements = 0;
+    if (!scar_internal::checked_size_mul(corr_param_count, basis_order, corr_basis_elements) ||
+        !scar_internal::checked_size_mul(corr_param_count, quad_order, score_elements)) {
+        return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
+    }
     std::vector<double>& precision = ws.precision;
-    precision.clear();
-    if (correlation_gradient
-        && (!scar_internal::valid_student_correlation_count(
-                copula.dim, n_corr)
-            || !scar_internal::student_precision_matrix(
-                copula, precision))) {
-        return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
-    }
-    const bool directional =
-        corr_gradient_mode == CorrGradientMode::Directional;
-    if (directional
-        && (corr_direction == nullptr || corr_direction->size() != n_corr)) {
-        return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
-    }
-    const std::size_t corr_param_count =
-        directional ? 1 : n_corr;
-    std::size_t corr_basis_elements = 0;
-    std::size_t score_elements = 0;
-    if (correlation_gradient
-        && (!scar_internal::checked_size_mul(
-                corr_param_count,
-                static_cast<std::size_t>(basis_order),
-                corr_basis_elements)
-            || !scar_internal::checked_size_mul(
-                static_cast<std::size_t>(quad_order),
-                corr_param_count,
-                score_elements))) {
-        return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
+    if (correlation_gradient) {
+        // Include retained capacities, score-row scratch and the returned
+        // correlation gradient. Reclaim an
+        // oversized previous full-gradient workspace before a smaller call.
+        const std::size_t limit = config.corr_gradient_block_bytes / sizeof(double);
+        auto fits = [&](bool retained) {
+            std::size_t used = 0;
+            auto add = [&](std::size_t size) {
+                if (size > limit - used) return false;
+                used += size;
+                return true;
+            };
+            auto buffer = [&](const std::vector<double>& v, std::size_t requested) {
+                return add(retained ? std::max(v.capacity(), requested) : requested);
+            };
+            return add(3 * static_cast<std::size_t>(copula.dim)) &&
+                add(corr_param_count) &&
+                buffer(precision, square) &&
+                buffer(ws.corr_coeff, corr_basis_elements) &&
+                buffer(ws.corr_projected, corr_basis_elements) &&
+                buffer(ws.corr_raw, corr_basis_elements) &&
+                buffer(ws.scores, score_elements) &&
+                buffer(ws.corr_dlog_scale, corr_param_count) &&
+                buffer(ws.message_values, quad_order);
+        };
+        if (!fits(false))
+            return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
+        if (!fits(true)) {
+            for (auto* v : {&precision, &ws.corr_coeff, &ws.corr_projected,
+                           &ws.corr_raw, &ws.scores, &ws.corr_dlog_scale,
+                           &ws.message_values})
+                std::vector<double>().swap(*v);
+        }
+        // Avoid implementation-dependent geometric capacity growth.
+        auto reserve_exact = [](std::vector<double>& v, std::size_t size) {
+            if (v.capacity() < size) {
+                std::vector<double>().swap(v);
+                std::vector<double>(size).swap(v);
+            }
+        };
+        reserve_exact(precision, square);
+        reserve_exact(ws.corr_coeff, corr_basis_elements);
+        reserve_exact(ws.corr_projected, corr_basis_elements);
+        reserve_exact(ws.corr_raw, corr_basis_elements);
+        reserve_exact(ws.scores, score_elements);
+        reserve_exact(ws.corr_dlog_scale, corr_param_count);
+        reserve_exact(ws.message_values, quad_order);
+        if (!scar_internal::student_precision_matrix(copula, precision) ||
+            !std::all_of(precision.begin(), precision.end(),
+                         [](double v) { return std::isfinite(v); }))
+            return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
     }
 
     std::vector<double>& coeff = ws.coeff;
@@ -1133,7 +1108,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     std::vector<double>& corr_coeff = ws.corr_coeff;
     std::vector<double>& corr_projected = ws.corr_projected;
     std::vector<double>& corr_raw = ws.corr_raw;
-    std::vector<double>& corr_value_projected = ws.corr_value_projected;
+    std::vector<double>& message_values = ws.message_values;
     std::vector<double>& scores = ws.scores;
     std::vector<double>& corr_dlog_scale = ws.corr_dlog_scale;
     coeff.assign(static_cast<std::size_t>(basis_order), 0.0);
@@ -1147,8 +1122,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     corr_coeff.assign(corr_basis_elements, 0.0);
     corr_projected.assign(corr_basis_elements, 0.0);
     corr_raw.assign(corr_basis_elements, 0.0);
-    corr_value_projected.assign(
-        static_cast<std::size_t>(basis_order), 0.0);
+    message_values.resize(correlation_gradient ? quad_order : 0);
     scores.assign(score_elements, 0.0);
     corr_dlog_scale.assign(corr_param_count, 0.0);
 
@@ -1159,14 +1133,15 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
         double emission_log_scale = 0.0;
         if (use_gaussian_spectral_terms) {
-            gaussian_spectral_pdf_and_grad_row(
+            spectral_detail::gaussian_spectral_pdf_and_grad_row(
                 copula,
                 t,
+                observation_values,
                 r_grid,
                 dpsi_grid,
                 ws,
                 fi_row.data(),
-                dfi_dx_row.data());
+                dfi_dx_row.data(), emission_log_scale);
         } else {
             emission.fill_density_and_gradient_row(
                 observation_values,
@@ -1190,7 +1165,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             quad_order,
             basis_order,
             projected,
-            dprojected);
+            dprojected, correlation_gradient ? &message_values : nullptr);
         if (correlation_gradient) {
             const double* row =
                 observation_values
@@ -1221,7 +1196,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 }
             }
             scar_internal::project_multiply_with_score_grad(
-                coeff,
+                message_values,
                 corr_coeff,
                 fi_row,
                 scores,
@@ -1230,7 +1205,6 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 quad_order,
                 basis_order,
                 static_cast<int>(corr_param_count),
-                corr_value_projected,
                 corr_projected);
         }
 
@@ -1250,7 +1224,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                             * static_cast<std::size_t>(basis_order)
                         + static_cast<std::size_t>(n)];
             }
-            draw[idx] += dpowers_dkappa[idx] * projected[idx];
+            draw[idx] += dpowers_dlog_kappa[idx] * projected[idx];
             if (std::abs(raw[idx]) > scale) {
                 scale = std::abs(raw[idx]);
                 scale_idx = n;
@@ -1291,8 +1265,8 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                     static_cast<std::size_t>(p)
                         * static_cast<std::size_t>(basis_order)
                     + static_cast<std::size_t>(n);
-                dcoeff[didx] = (draw[didx] * scale - raw[idx] * dscale[p])
-                    / (scale * scale);
+                dcoeff[didx] = draw[didx] / scale
+                    - coeff[idx] * (dscale[p] / scale);
             }
         }
         log_scale += std::log(scale);
@@ -1309,10 +1283,8 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                         + static_cast<std::size_t>(scale_idx)];
                 for (int n = 0; n < basis_order; ++n) {
                     const std::size_t idx = static_cast<std::size_t>(n);
-                    corr_coeff[param_base + idx] = (
-                        corr_raw[param_base + idx] * scale
-                        - raw[idx] * corr_scale_derivative
-                    ) / (scale * scale);
+                    corr_coeff[param_base + idx] = corr_raw[param_base + idx] / scale
+                        - coeff[idx] * (corr_scale_derivative / scale);
                 }
                 corr_dlog_scale[p] += corr_scale_derivative / scale;
             }
@@ -1321,14 +1293,15 @@ GradLogLikResult spectral_neg_loglik_with_grad(
 
     double emission_log_scale = 0.0;
     if (use_gaussian_spectral_terms) {
-        gaussian_spectral_pdf_and_grad_row(
+        spectral_detail::gaussian_spectral_pdf_and_grad_row(
             copula,
             0,
+            observation_values,
             r_grid,
             dpsi_grid,
             ws,
             fi_row.data(),
-            dfi_dx_row.data());
+            dfi_dx_row.data(), emission_log_scale);
     } else {
         emission.fill_density_and_gradient_row(
             observation_values,
@@ -1351,7 +1324,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         quad_order,
         basis_order,
         projected,
-        dprojected);
+        dprojected, correlation_gradient ? &message_values : nullptr);
     if (correlation_gradient) {
         if (directional) {
             if (!scar_internal::student_corr_directional_score_row(
@@ -1378,7 +1351,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             }
         }
         scar_internal::project_multiply_with_score_grad(
-            coeff,
+            message_values,
             corr_coeff,
             fi_row,
             scores,
@@ -1387,7 +1360,6 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             quad_order,
             basis_order,
             static_cast<int>(corr_param_count),
-            corr_value_projected,
             corr_projected);
     }
 
@@ -1408,6 +1380,9 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             + dlog_scale[p];
         out.neg_gradient[static_cast<std::size_t>(p)] = -grad;
     }
+    // Convert eta derivatives to the unchanged public (kappa, mu, nu) API.
+    out.neg_gradient[0] = (out.neg_gradient[0] - 0.5 * out.neg_gradient[2]) / params.kappa;
+    out.neg_gradient[2] /= params.nu;
     out.neg_corr_gradient.assign(corr_param_count, 0.0);
     for (std::size_t p = 0; p < corr_param_count; ++p) {
         const double grad =
@@ -1417,6 +1392,12 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             + corr_dlog_scale[p];
         out.neg_corr_gradient[p] = -grad;
     }
+    if (!std::isfinite(out.neg_log_likelihood) ||
+        !std::all_of(out.neg_gradient.begin(), out.neg_gradient.end(),
+                     [](double v) { return std::isfinite(v); }) ||
+        !std::all_of(out.neg_corr_gradient.begin(), out.neg_corr_gradient.end(),
+                     [](double v) { return std::isfinite(v); }))
+        return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
     out.backend = OuBackend::Spectral;
     out.status = Status::Ok;
     return out;

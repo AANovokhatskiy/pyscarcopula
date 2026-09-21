@@ -15,7 +15,8 @@ namespace scar_internal {
 
 struct SparseTransitionMatrix {
     std::vector<double> data;
-    std::vector<int> indices;
+    // Each row contains consecutive columns; no per-entry column indices.
+    std::vector<int> row_start;
     std::vector<int> indptr;
 };
 
@@ -104,7 +105,8 @@ bool build_sparse_transition_matrix(
     int K,
     int band,
     SparseTransitionMatrix& matrix,
-    const std::vector<double>* i_centers = nullptr);
+    const std::vector<double>* i_centers = nullptr,
+    double one_minus_rho = -1.0);
 void sparse_matvec(
     const SparseTransitionMatrix& matrix,
     int K,

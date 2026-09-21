@@ -61,9 +61,10 @@ void project_multiply_with_grad(
     int quad_order,
     int basis_order,
     std::vector<double>& out,
-    std::vector<double>& dout);
+    std::vector<double>& dout,
+    std::vector<double>* message_values = nullptr);
 void project_multiply_with_score_grad(
-    const std::vector<double>& coeff,
+    const std::vector<double>& message_values,
     const std::vector<double>& dcoeff,
     const std::vector<double>& fi_row,
     const std::vector<double>& scores,
@@ -72,7 +73,6 @@ void project_multiply_with_score_grad(
     int quad_order,
     int basis_order,
     int n_params,
-    std::vector<double>& out,
     std::vector<double>& dout);
 void local_gh_matvec(
     const std::vector<double>& z,
