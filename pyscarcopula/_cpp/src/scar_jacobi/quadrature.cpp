@@ -53,33 +53,34 @@ bool jacobi_recurrence_coefficients(
     if (!valid_shape(alpha, beta) || !valid_order(order)) {
         return false;
     }
-    // Parameters of scipy.special.roots_jacobi for tau=(x+1)/2.
-    const double a = beta - 1.0;
-    const double b = alpha - 1.0;
-    const double sum = a + b;
+    // Keep the beta shapes intact: subtracting one and adding it back loses
+    // small positive shapes and can move quadrature nodes outside [0, 1].
+    const double sum = alpha + beta;
+    if (!std::isfinite(sum)) {
+        return false;
+    }
     const std::size_t count = static_cast<std::size_t>(order);
     diagonal.assign(count, 0.0);
     off_diagonal.assign(count, 0.0);
-    diagonal[0] = (b - a) / (sum + 2.0);
+    diagonal[0] = (alpha - beta) / sum;
 
     for (int index = 1; index < order; ++index) {
         const double n = static_cast<double>(index);
-        const double two_n_sum = 2.0 * n + sum;
+        const double two_n_sum = (2.0 * n - 2.0) + sum;
         diagonal[static_cast<std::size_t>(index)] =
-            (b * b - a * a)
-            / (two_n_sum * (two_n_sum + 2.0));
+            ((alpha - beta) / two_n_sum)
+            * ((sum - 2.0) / (two_n_sum + 2.0));
 
         double square = 0.0;
         if (index == 1) {
             square =
-                4.0 * (1.0 + a) * (1.0 + b)
-                / ((sum + 2.0) * (sum + 2.0) * (sum + 3.0));
+                4.0 * (alpha / sum) * (beta / sum) / (sum + 1.0);
         } else {
             square =
-                4.0 * n * (n + a) * (n + b) * (n + sum)
-                / (two_n_sum * two_n_sum
-                    * (two_n_sum + 1.0)
-                    * (two_n_sum - 1.0));
+                4.0 * (n / two_n_sum)
+                * (((n - 1.0) + alpha) / two_n_sum)
+                * (((n - 1.0) + beta) / (two_n_sum + 1.0))
+                * (((n - 2.0) + sum) / (two_n_sum - 1.0));
         }
         if (!(square > 0.0) || !std::isfinite(square)) {
             return false;
@@ -255,6 +256,13 @@ JacobiQuadratureResult gauss_jacobi_probability_rule(
         }
         for (double& node : result.value.nodes) {
             node = 0.5 * (node + 1.0);
+            constexpr double support_tolerance =
+                64.0 * std::numeric_limits<double>::epsilon();
+            if (!std::isfinite(node) || node < -support_tolerance
+                || node > 1.0 + support_tolerance) {
+                return failure<JacobiQuadratureResult>(Status::NumericalFailure);
+            }
+            node = std::clamp(node, 0.0, 1.0);
         }
         return result;
     } catch (const std::bad_alloc&) {

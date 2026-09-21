@@ -476,7 +476,7 @@ def estimate_factor_loadings_from_projection(
 
 
 def prepare_equicorr_statistics(
-        u, *, dimension_tile=16384, n_threads=1):
+        u, *, dimension_tile=16384, n_threads=1, include_centered=False):
     """Compute equicorrelation sufficient statistics for one dense block."""
     if isinstance(dimension_tile, (bool, np.bool_)) or not isinstance(
             dimension_tile, (int, np.integer)):
@@ -508,7 +508,7 @@ def prepare_equicorr_statistics(
             f"failure_index={result['failure_index']}")
     axis = {0: "sequential", 1: "rows", 2: "dimension_tiles"}.get(
         int(result["parallel_axis"]), "unknown")
-    return (
+    statistics = (
         np.asarray(result["sum_z"], dtype=np.float64),
         np.asarray(result["sum_z2"], dtype=np.float64),
         {
@@ -521,6 +521,11 @@ def prepare_equicorr_statistics(
             "nonfinite_values": int(result["nonfinite_values"]),
         },
     )
+    if include_centered:
+        return (statistics[0], statistics[1],
+                np.asarray(result["centered_squares"], dtype=np.float64),
+                statistics[2])
+    return statistics
 
 
 def _student_cache_block(copula, u, cache, t_index, *, prepare):
@@ -579,6 +584,7 @@ def _log_pdf_and_dlog_rows_result(
             u.sum_z2,
             _values(r),
             _validated_n_threads(n_threads),
+            u.centered_squares,
         ))
         if result["status"] != module.SCAR_OK:
             raise NativeError(
@@ -648,6 +654,7 @@ def _pdf_and_grad_grid_result(
             u.sum_z2,
             grid,
             _validated_n_threads(n_threads),
+            u.centered_squares,
         ))
         if result["status"] != module.SCAR_OK:
             raise NativeError(

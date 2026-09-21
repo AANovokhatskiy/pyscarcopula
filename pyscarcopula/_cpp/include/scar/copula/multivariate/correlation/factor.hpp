@@ -49,6 +49,9 @@ public:
         std::size_t rows,
         int n_threads = 1) const;
     void solve_core_inplace(double* values) const;
+    // Positive residual form, given the solved rank-dimensional projection.
+    double quadratic_form_from_core(
+        const double* values, const double* solved) const;
 
 private:
     std::vector<double> loadings_;

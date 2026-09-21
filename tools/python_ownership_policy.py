@@ -223,14 +223,18 @@ _SYMBOL_REVIEWS = (
      '7dff1b9914366ba146eb44b99034c4c9895ac5cfb0210bd3dd256b48d5f96e8e', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula._sample_output_bytes',
      '6ea2c70920d9e727f992086bd1abd259665e0632440914c29d4396640d133550', 'structure', ('arithmetic',)),
+    # Optional centered native statistics are only concatenated/sliced here;
+    # numerical reductions stay native. Covered by test_equicorr_centered_prepared.py.
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.pdf_and_grad_on_grid_batches',
-     'ff41d3080e56086a9e71925e8eb7c24d03e3d6d4eecb17c83cc7d18bcfb48446', 'structure', ('arithmetic', 'numerical-call')),
+     '44a47676e20e65f4dcd8edde0f7b5b72556110efec6dac347316a835954bfbbc', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.predict',
      '15f3cd7da582e38b87f007c87990d81f4e31ca5e205d03d1d16c6e1bd4f4016b', 'structure', ('numerical-call',)),
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.predict_batches',
      'f065fd11cab06062e15128b79fe395ab9146e4d49aff3176898a1d47502902a7', 'structure', ('numerical-call',)),
+    # Optional centered native statistics are only concatenated/sliced here;
+    # numerical reductions stay native. Covered by test_equicorr_centered_prepared.py.
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.prepare_sufficient_statistics',
-     'a10d78d28e6ea1a1dd4920e9dd4f38ad7173057ecb353ee01b0c5efdfa52b869', 'bookkeeping', ('arithmetic', 'numerical-call')),
+     '937775cc40bade7b930790bd61c2b1709e7a38ea4e33e3cb23850fec0b187437', 'bookkeeping', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.sample_batches',
      'c5ae5a972df15c677ac99db89da22f0bdc9b58e51ad2534d39bebfa9deb48274', 'structure', ('numerical-call',)),
     ('pyscarcopula.copula.multivariate.factor_correlation:FactorCorrelation.storage_bytes',

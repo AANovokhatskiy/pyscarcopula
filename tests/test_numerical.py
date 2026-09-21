@@ -186,7 +186,7 @@ def test_ou_sampling_does_not_swallow_native_failure(monkeypatch):
 
 @pytest.mark.parametrize("params", [(-1., .2, .9), (0., .2, .9),
                                     (1.4, np.nan, .9), (1.4, .2, -1.),
-                                    (1.4, .2, 1e300)])
+                                    (1e-300, .2, 1e300)])
 def test_invalid_ou_parameters_do_not_advance_rng(params):
     rng, reference = np.random.default_rng(51), np.random.default_rng(51)
     with pytest.raises(ValueError):

@@ -41,7 +41,7 @@ def test_native_statistics_match_dense_reference_and_report_clipping():
         sum_z2, np.square(z).sum(axis=1), rtol=1e-9, atol=5e-9)
     assert diagnostics["clipping_events"] == 2
     assert diagnostics["nonfinite_values"] == 0
-    assert diagnostics["temporary_values"] == 12
+    assert diagnostics["temporary_values"] == 24
 
 
 def test_transformed_static_objective_owns_equicorr_chain_rule():
@@ -101,7 +101,7 @@ def test_model_streams_blocks_and_retains_only_o_t_statistics():
     assert not hasattr(dense, "u")
     assert (
         dense.diagnostics["peak_temporary_values"]
-        <= 2 * 4 * int(np.ceil(257 / 32))
+        <= 4 * 4 * int(np.ceil(257 / 32))
     )
     with pytest.raises(ValueError):
         dense.sum_z[0] = 0.0
@@ -547,9 +547,10 @@ def test_large_dimension_preparation_has_t_bounded_output_and_tile_workspace():
         n_threads=1,
     )
 
-    assert prepared.sum_z.nbytes + prepared.sum_z2.nbytes == 32
+    assert (prepared.sum_z.nbytes + prepared.sum_z2.nbytes
+            + prepared.centered_squares.nbytes) == 48
     assert prepared.diagnostics["peak_temporary_values"] <= (
-        2 * int(np.ceil(dimension / 4096))
+        4 * int(np.ceil(dimension / 4096))
     )
     assert not hasattr(prepared, "u")
 

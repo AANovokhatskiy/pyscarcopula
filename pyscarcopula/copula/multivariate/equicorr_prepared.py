@@ -37,7 +37,7 @@ class EquicorrPreparedData:
 
     The original pseudo-observations are deliberately not retained. Use
     :meth:`save_npz` for a compact portable file or :meth:`save_mmap` when
-    subsequent processes should open the two statistic vectors without
+    subsequent processes should open the statistic vectors without
     copying them into memory.
     """
 
@@ -48,6 +48,7 @@ class EquicorrPreparedData:
     format_version: int = EQUICORR_PREPARED_FORMAT_VERSION
     clipping_epsilon: float = PSEUDO_OBS_EPS
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    centered_squares: np.ndarray | None = field(default=None, kw_only=True)
     _copy_arrays: InitVar[bool] = True
 
     def __post_init__(self, _copy_arrays: bool) -> None:
@@ -69,12 +70,16 @@ class EquicorrPreparedData:
         if sum_z.shape != expected or sum_z2.shape != expected:
             raise ValueError(
                 f"sum_z and sum_z2 must have shape {expected}")
+        centered = None
+        if self.centered_squares is not None:
+            as_float64_array(self.centered_squares, name="centered_squares")
+            centered = convert(self.centered_squares, dtype=np.float64)
+            if centered.shape != expected:
+                raise ValueError(f"centered_squares must have shape {expected}")
+            centered.setflags(write=False)
         native_validation.validate_equicorr_prepared(
-            sum_z,
-            sum_z2,
-            dimension,
-            clipping_epsilon,
-        )
+            sum_z, sum_z2, dimension, clipping_epsilon, centered)
+        object.__setattr__(self, "centered_squares", centered)
 
         sum_z.setflags(write=False)
         sum_z2.setflags(write=False)
@@ -96,11 +101,14 @@ class EquicorrPreparedData:
             target = Path(f"{target}.npz")
         metadata = json.dumps(
             _metadata(self), sort_keys=True, separators=(",", ":"))
+        optional = ({} if self.centered_squares is None else
+                    {"centered_squares": np.asarray(self.centered_squares)})
         np.savez_compressed(
             target,
             sum_z=np.asarray(self.sum_z),
             sum_z2=np.asarray(self.sum_z2),
             metadata=np.asarray(metadata),
+            **optional,
         )
         return target
 
@@ -112,6 +120,8 @@ class EquicorrPreparedData:
             return cls(
                 sum_z=archive["sum_z"],
                 sum_z2=archive["sum_z2"],
+                centered_squares=(archive["centered_squares"]
+                                  if "centered_squares" in archive else None),
                 **metadata,
             )
 
@@ -121,6 +131,8 @@ class EquicorrPreparedData:
         target.mkdir(parents=True, exist_ok=False)
         np.save(target / "sum_z.npy", np.asarray(self.sum_z))
         np.save(target / "sum_z2.npy", np.asarray(self.sum_z2))
+        if self.centered_squares is not None:
+            np.save(target / "centered_squares.npy", np.asarray(self.centered_squares))
         (target / "metadata.json").write_text(
             json.dumps(
                 _metadata(self), sort_keys=True, separators=(",", ":")),
@@ -139,6 +151,9 @@ class EquicorrPreparedData:
                 source / "sum_z.npy", mmap_mode="r", allow_pickle=False),
             sum_z2=np.load(
                 source / "sum_z2.npy", mmap_mode="r", allow_pickle=False),
+            centered_squares=(np.load(
+                source / "centered_squares.npy", mmap_mode="r", allow_pickle=False)
+                if (source / "centered_squares.npy").exists() else None),
             _copy_arrays=False,
             **metadata,
         )

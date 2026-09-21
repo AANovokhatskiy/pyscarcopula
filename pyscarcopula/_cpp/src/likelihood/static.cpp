@@ -171,6 +171,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
     if (spec_.family == CopulaFamily::EquicorrGaussian) {
         equicorr_sums_.resize(u_.size(), 0.0);
         equicorr_sum_squares_.resize(u_.size(), 0.0);
+        spec_.equicorr_centered_squares().resize(u_.size(), 0.0);
         for (std::size_t i = 0; i < u_.size(); ++i) {
             scar_internal::EquicorrStats stats;
             if (!scar_internal::equicorr_sufficient_statistics(
@@ -182,6 +183,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
             }
             equicorr_sums_[i] = stats.sum;
             equicorr_sum_squares_[i] = stats.sum_squares;
+            spec_.equicorr_centered_squares()[i] = stats.centered_squares;
         }
         spec_.equicorr_sum_scores() = equicorr_sums_;
         spec_.equicorr_sum_squares() = equicorr_sum_squares_;
@@ -235,14 +237,19 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
         return;
     }
     if (n_obs_ == 0
-        || equicorr_sum_squares_.size() != n_obs_) {
+        || equicorr_sum_squares_.size() != n_obs_
+        || (!spec_.equicorr_centered_squares().empty()
+            && spec_.equicorr_centered_squares().size() != n_obs_)) {
         status_ = SCAR_INVALID_SIZE;
         return;
     }
     for (std::size_t row = 0; row < n_obs_; ++row) {
         if (!std::isfinite(equicorr_sums_[row])
             || !std::isfinite(equicorr_sum_squares_[row])
-            || equicorr_sum_squares_[row] < 0.0) {
+            || equicorr_sum_squares_[row] < 0.0
+            || (!spec_.equicorr_centered_squares().empty()
+                && (!std::isfinite(spec_.equicorr_centered_squares()[row])
+                    || spec_.equicorr_centered_squares()[row] < 0.0))) {
             status_ = SCAR_INVALID_PARAMETER;
             return;
         }

@@ -51,6 +51,7 @@ struct MultivariateGridResult {
 struct EquicorrPreparationResult {
     std::vector<double> sum_z;
     std::vector<double> sum_z2;
+    std::vector<double> centered_squares;
     Status status = Status::Ok;
     FailureContext failure{};
     int n_threads_requested = 1;

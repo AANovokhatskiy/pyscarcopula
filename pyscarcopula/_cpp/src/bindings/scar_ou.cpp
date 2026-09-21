@@ -209,7 +209,12 @@ make_prepared_equicorr_scar_ou_evaluator(
     py::object raw_sum_z,
     py::object raw_sum_z2,
     const scar::OuNumericalConfig& config,
-    const std::string& method) {
+    const std::string& method, py::object centered_squares) {
+    copula.equicorr_centered_squares().clear();
+    if (!centered_squares.is_none()) {
+        copula.equicorr_centered_squares() = vector_from_array(
+            real_float64_array_from_object(centered_squares, "centered_squares"));
+    }
     auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
     auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
 
@@ -779,7 +784,10 @@ void bind_scar_ou(py::module_& m) {
 
     py::class_<scar::PreparedScarOuEvaluator>(m, "PreparedScarOuEvaluator")
         .def(py::init(&make_prepared_scar_ou_evaluator))
-        .def(py::init(&make_prepared_equicorr_scar_ou_evaluator))
+        .def(py::init(&make_prepared_equicorr_scar_ou_evaluator),
+            py::arg("copula"), py::arg("sum_z"), py::arg("sum_z2"),
+            py::arg("config"), py::arg("method"),
+            py::arg("centered_squares") = py::none())
         .def("configure_student_emission_cache",
             [](scar::PreparedScarOuEvaluator& evaluator, double min_coordinate,
                double max_coordinate, double value_tolerance, double score_tolerance,

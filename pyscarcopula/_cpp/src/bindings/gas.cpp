@@ -6,7 +6,9 @@
 
 #include <pybind11/stl.h>
 
+#include <cmath>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace py = pybind11;
@@ -108,7 +110,8 @@ py::dict gas_ou_initialization_to_dict(
 scar::ObservationView set_equicorr_prepared(
     scar::CopulaSpec& copula,
     const Float64Array& sum_z,
-    const Float64Array& sum_z2) {
+    const Float64Array& sum_z2,
+    const py::object& raw_centered_squares) {
 
     copula.equicorr_sum_scores() = vector_from_array(sum_z);
     copula.equicorr_sum_squares() = vector_from_array(sum_z2);
@@ -117,6 +120,21 @@ scar::ObservationView set_equicorr_prepared(
             != copula.equicorr_sum_scores().size()) {
         throw std::invalid_argument(
             "prepared Equicorr statistics must be non-empty and equal-sized");
+    }
+    copula.equicorr_centered_squares().clear();
+    if (!raw_centered_squares.is_none()) {
+        auto centered = real_float64_array_from_object(
+            raw_centered_squares, "centered_squares");
+        auto values = vector_from_array(centered);
+        if (values.size() != copula.equicorr_sum_scores().size()) {
+            throw std::invalid_argument("centered_squares must match prepared statistics");
+        }
+        for (double value : values) {
+            if (!std::isfinite(value) || value < 0.0) {
+                throw std::invalid_argument("centered_squares must be finite and non-negative");
+            }
+        }
+        copula.equicorr_centered_squares() = std::move(values);
     }
     return {
         nullptr,
@@ -260,11 +278,12 @@ void bind_gas(py::module_& m) {
                scar::CopulaSpec copula,
                py::object raw_sum_z,
                py::object raw_sum_z2,
-               const scar::GasConfig& config) {
+               const scar::GasConfig& config,
+               py::object centered_squares) {
                 auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
                 auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
-                    copula, sum_z, sum_z2);
+                    copula, sum_z, sum_z2, centered_squares);
                 scar::GasFilterResult result;
                 {
                     py::gil_scoped_release release;
@@ -277,7 +296,8 @@ void bind_gas(py::module_& m) {
             py::arg("copula"),
             py::arg("sum_z"),
             py::arg("sum_z2"),
-            py::arg("config"))
+            py::arg("config"),
+            py::arg("centered_squares") = py::none())
         .def(
             "log_likelihood",
             [](const scar::GasEvaluator& evaluator,
@@ -308,11 +328,12 @@ void bind_gas(py::module_& m) {
                scar::CopulaSpec copula,
                py::object raw_sum_z,
                py::object raw_sum_z2,
-               const scar::GasConfig& config) {
+               const scar::GasConfig& config,
+               py::object centered_squares) {
                 auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
                 auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
-                    copula, sum_z, sum_z2);
+                    copula, sum_z, sum_z2, centered_squares);
                 scar::GasLogLikResult result;
                 {
                     py::gil_scoped_release release;
@@ -325,7 +346,8 @@ void bind_gas(py::module_& m) {
             py::arg("copula"),
             py::arg("sum_z"),
             py::arg("sum_z2"),
-            py::arg("config"))
+            py::arg("config"),
+            py::arg("centered_squares") = py::none())
         .def(
             "negative_log_likelihood",
             [](const scar::GasEvaluator& evaluator,
@@ -356,11 +378,12 @@ void bind_gas(py::module_& m) {
                scar::CopulaSpec copula,
                py::object raw_sum_z,
                py::object raw_sum_z2,
-               const scar::GasConfig& config) {
+               const scar::GasConfig& config,
+               py::object centered_squares) {
                 auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
                 auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
-                    copula, sum_z, sum_z2);
+                    copula, sum_z, sum_z2, centered_squares);
                 scar::GasLogLikResult result;
                 {
                     py::gil_scoped_release release;
@@ -373,7 +396,8 @@ void bind_gas(py::module_& m) {
             py::arg("copula"),
             py::arg("sum_z"),
             py::arg("sum_z2"),
-            py::arg("config"))
+            py::arg("config"),
+            py::arg("centered_squares") = py::none())
         .def(
             "negative_log_likelihood_and_gradient",
             [](const scar::GasEvaluator& evaluator,
@@ -404,11 +428,12 @@ void bind_gas(py::module_& m) {
                scar::CopulaSpec copula,
                py::object raw_sum_z,
                py::object raw_sum_z2,
-               const scar::GasConfig& config) {
+               const scar::GasConfig& config,
+               py::object centered_squares) {
                 auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
                 auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
-                    copula, sum_z, sum_z2);
+                    copula, sum_z, sum_z2, centered_squares);
                 scar::GasObjectiveGradientResult result;
                 {
                     py::gil_scoped_release release;
@@ -421,7 +446,8 @@ void bind_gas(py::module_& m) {
             py::arg("copula"),
             py::arg("sum_z"),
             py::arg("sum_z2"),
-            py::arg("config"))
+            py::arg("config"),
+            py::arg("centered_squares") = py::none())
         .def(
             "negative_log_likelihood_and_gradient_shrinkage",
             [](const scar::GasEvaluator& evaluator,
@@ -543,11 +569,12 @@ void bind_gas(py::module_& m) {
                py::object raw_sum_z,
                py::object raw_sum_z2,
                const scar::GasConfig& config,
-               bool horizon_next) {
+               bool horizon_next,
+               py::object centered_squares) {
                 auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
                 auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
-                    copula, sum_z, sum_z2);
+                    copula, sum_z, sum_z2, centered_squares);
                 scar::GasPredictResult result;
                 {
                     py::gil_scoped_release release;
@@ -561,7 +588,8 @@ void bind_gas(py::module_& m) {
             py::arg("sum_z"),
             py::arg("sum_z2"),
             py::arg("config"),
-            py::arg("horizon_next"))
+            py::arg("horizon_next"),
+            py::arg("centered_squares") = py::none())
         .def(
             "sample_bivariate",
             [](const scar::GasEvaluator& evaluator,

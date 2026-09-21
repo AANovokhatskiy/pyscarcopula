@@ -24,7 +24,7 @@ cop.fit(u, method='gas')
 
 ### High-dimensional preparation
 
-For data that is already expressed as pseudo-observations, prepare the two
+For data that is already expressed as pseudo-observations, prepare the compact
 equicorrelation sufficient statistics without materializing a dense
 correlation matrix:
 
@@ -47,9 +47,11 @@ gas_result = cop.fit(prepared, method="GAS")
 scar_result = cop.fit(prepared, method="scar-tm-ou")
 ```
 
-`prepared` is an immutable `EquicorrPreparedData` object containing only
-`sum_z` and `sum_z2`, two `float64` vectors of length `T`. It does not retain
-the input matrix. The native reduction clips values with the library's
+`prepared` is an immutable `EquicorrPreparedData` object containing
+`sum_z`, `sum_z2`, and `centered_squares`, three `float64` vectors of length
+`T`. The centered sum of squares is accumulated directly so nearly equal
+normal scores remain accurate near the singular correlation boundary. The
+object does not retain the input matrix. The native reduction clips values with the library's
 pseudo-observation policy, evaluates each normal quantile once, and merges
 fixed dimension tiles in deterministic order. Results are therefore identical
 across supported thread counts for a fixed `dimension_tile`.
@@ -57,7 +59,10 @@ across supported thread counts for a fixed `dimension_tile`.
 The mmap directory format stores each vector as a read-only `.npy` mapping;
 the `.npz` format is the compact portable option. Diagnostics report clipping,
 block/tile counts, the selected parallel axes, and peak temporary scalar
-storage.
+storage. Older files and manually constructed objects without
+`centered_squares` remain readable; evaluations fail explicitly when the
+legacy two-statistic representation cannot resolve a boundary quadratic.
+Both persistence formats retain the optional third vector when present.
 
 This preparation API expects pseudo-observations and does not perform global
 ranking. MLE, GAS, and SCAR-TM-OU consume the prepared vectors directly;

@@ -182,7 +182,7 @@ void bind_validation(py::module_& m) {
         [](Float64Array sum_z,
            Float64Array sum_z2,
            int dimension,
-           double clipping_epsilon) {
+           double clipping_epsilon, py::object raw_centered_squares) {
             const py::buffer_info first = sum_z.request();
             const py::buffer_info second = sum_z2.request();
             if (first.ndim != 1 || second.ndim != 1
@@ -190,18 +190,30 @@ void bind_validation(py::module_& m) {
                 throw py::value_error(
                     "sum_z and sum_z2 must have equal one-dimensional shapes");
             }
+            Float64Array centered;
+            scar::DoubleView centered_view;
+            if (!raw_centered_squares.is_none()) {
+                centered = real_float64_array_from_object(
+                    raw_centered_squares, "centered_squares");
+                const auto info = centered.request();
+                if (info.ndim != 1 || info.shape != first.shape) {
+                    throw py::value_error("centered_squares must have the same shape as sum_z");
+                }
+                centered_view = raw_flat_view(centered);
+            }
             const scar::NumericalValidationResult outcome =
                 scar::validate_equicorr_prepared_statistics(
                     raw_flat_view(sum_z),
                     raw_flat_view(sum_z2),
                     dimension,
-                    clipping_epsilon);
+                    clipping_epsilon, centered_view);
             return numerical_validation_to_dict(outcome);
         },
         py::arg("sum_z"),
         py::arg("sum_z2"),
         py::arg("dimension"),
-        py::arg("clipping_epsilon"));
+        py::arg("clipping_epsilon"),
+        py::arg("centered_squares") = py::none());
 
     m.def(
         "validation_valid_ou_final_parameters",

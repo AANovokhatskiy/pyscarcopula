@@ -20,7 +20,37 @@ double clayton_parameter_to_tau(double parameter) {
         : std::numeric_limits<double>::quiet_NaN();
 }
 
+namespace {
+
+bool clayton_near_independence(double u, double v, double r) {
+    if (!(r >= 0.0 && r < 1e-5)) return false;
+    return r * std::max({1.0, -std::log(std::max(u, kPdfEps)),
+                        -std::log(std::max(v, kPdfEps))}) < 1e-5;
+}
+
+// Taylor coefficients of the same log density; factoring out r avoids
+// cancellation magnified by 1/r and 1/r^2 in the independence limit.
+void clayton_independence_value(double u, double v, double r,
+                                double& value, double& score) {
+    const double x = -std::log(std::max(u, kPdfEps));
+    const double y = -std::log(std::max(v, kPdfEps));
+    const double xy = x * y;
+    const double c1 = 1.0 - x - y + xy;
+    const double c2 = -0.5 + 2.0 * xy - 0.5 * xy * (x + y);
+    const double c3 = 1.0 / 3.0 - xy * (x + y)
+        + xy * (2.0 * x * x + 9.0 * xy + 2.0 * y * y) / 12.0;
+    value = r * (c1 + r * (c2 + r * c3));
+    score = c1 + r * (2.0 * c2 + 3.0 * r * c3);
+}
+
+}  // namespace
+
 double clayton_log_pdf_unrotated(double u1, double u2, double r) {
+    if (clayton_near_independence(u1, u2, r)) {
+        double value, score;
+        clayton_independence_value(u1, u2, r, value, score);
+        return value;
+    }
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
 
@@ -40,6 +70,11 @@ double clayton_log_pdf_unrotated(double u1, double u2, double r) {
 }
 
 double clayton_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
+    if (clayton_near_independence(u1, u2, r)) {
+        double value, score;
+        clayton_independence_value(u1, u2, r, value, score);
+        return score;
+    }
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
 
@@ -58,8 +93,10 @@ double clayton_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
     const double q = log_abs_logv2 + b;
     const double pq_max = std::max(p, q);
     const double pq_min = std::min(p, q);
-    const double log_ds = pq_max + std::log1p(std::exp(pq_min - pq_max));
-    const double ds_over_s = std::exp(log_ds - log_s);
+    const double log_ds = pq_max == -std::numeric_limits<double>::infinity()
+        ? pq_max : pq_max + std::log1p(std::exp(pq_min - pq_max));
+    const double ds_over_s = pq_max == -std::numeric_limits<double>::infinity()
+        ? 0.0 : std::exp(log_ds - log_s);
 
     return 1.0 / (1.0 + r)
         - log_v1
@@ -76,6 +113,13 @@ void clayton_pdf_and_grad_x_unrotated(
     double& pdf,
     double& d_pdf_dx) {
 
+    if (clayton_near_independence(u1, u2, r)) {
+        double value, score;
+        clayton_independence_value(u1, u2, r, value, score);
+        pdf = std::exp(value);
+        d_pdf_dx = pdf * score * d_r_dx;
+        return;
+    }
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
     const double log_v1 = std::log(v1);
@@ -100,8 +144,10 @@ void clayton_pdf_and_grad_x_unrotated(
     const double q = log_abs_logv2 + b;
     const double pq_max = std::max(p, q);
     const double pq_min = std::min(p, q);
-    const double log_ds = pq_max + std::log1p(std::exp(pq_min - pq_max));
-    const double ds_over_s = std::exp(log_ds - log_s);
+    const double log_ds = pq_max == -std::numeric_limits<double>::infinity()
+        ? pq_max : pq_max + std::log1p(std::exp(pq_min - pq_max));
+    const double ds_over_s = pq_max == -std::numeric_limits<double>::infinity()
+        ? 0.0 : std::exp(log_ds - log_s);
     const double dlog_dr =
         1.0 / (1.0 + r)
         - log_v1
@@ -146,6 +192,15 @@ void clayton_fill_grid_row(
 
     for (std::size_t j = 0; j < parameter_grid.size(); ++j) {
         const double parameter = parameter_grid[j];
+        if (clayton_near_independence(u1, u2, parameter)) {
+            double value, score;
+            clayton_independence_value(u1, u2, parameter, value, score);
+            pdf_row[j] = std::exp(value);
+            if (gradient_row != nullptr) {
+                gradient_row[j] = pdf_row[j] * score * derivative_grid[j];
+            }
+            continue;
+        }
         const double a = -parameter * log_v1;
         const double b = -parameter * log_v2;
         const double log_max = std::max(a, b);
@@ -165,9 +220,11 @@ void clayton_fill_grid_row(
             const double q = log_abs_logv2 + b;
             const double pq_max = std::max(p, q);
             const double pq_min = std::min(p, q);
-            const double log_ds =
-                pq_max + std::log1p(std::exp(pq_min - pq_max));
-            const double ds_over_s = std::exp(log_ds - log_s);
+            const double log_ds = pq_max == -std::numeric_limits<double>::infinity()
+                ? pq_max : pq_max + std::log1p(std::exp(pq_min - pq_max));
+            const double ds_over_s =
+                pq_max == -std::numeric_limits<double>::infinity()
+                    ? 0.0 : std::exp(log_ds - log_s);
             const double dlog_dparameter =
                 1.0 / (1.0 + parameter)
                 - log_v1

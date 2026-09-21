@@ -65,12 +65,13 @@ def validate_fit_data(values, model_name):
 
 
 def validate_equicorr_prepared(
-        sum_z, sum_z2, dimension, clipping_epsilon):
+        sum_z, sum_z2, dimension, clipping_epsilon, centered_squares=None):
     result = dict(_extension.load().validation_validate_equicorr_prepared(
         _array(sum_z),
         _array(sum_z2),
         int(dimension),
         float(clipping_epsilon),
+        None if centered_squares is None else _array(centered_squares),
     ))
     code = int(result["code"])
     if int(result["status"]) == 0:
@@ -85,6 +86,9 @@ def validate_equicorr_prepared(
     if code == 7:
         raise ValueError(
             "prepared statistics violate sum_z**2 <= dimension*sum_z2")
+    if code == 8:
+        raise ValueError("centered_squares must be finite, non-negative, and consistent "
+                         "with sum_z and sum_z2")
     raise ValueError("invalid prepared statistics")
 
 

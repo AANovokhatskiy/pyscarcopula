@@ -11,6 +11,7 @@ namespace scar::copula::multivariate::equicorrelation {
 struct ObservationCache {
     std::vector<double> sum_scores;
     std::vector<double> sum_squares;
+    std::vector<double> centered_squares;
 };
 
 struct ModelStorage {

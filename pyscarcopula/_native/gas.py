@@ -230,7 +230,8 @@ def filter_result(
     result = module.GasEvaluator().filter(
         params, spec, obs, config) if isinstance(obs, np.ndarray) else (
             module.GasEvaluator().filter_equicorr_prepared(
-                params, spec, obs.sum_z, obs.sum_z2, config))
+                params, spec, obs.sum_z, obs.sum_z2, config,
+                obs.centered_squares))
     _raise_status(result, "filter")
     output = GasFilterOutput(
         g_path=np.asarray(result["g_path"], dtype=np.float64),
@@ -320,7 +321,8 @@ def log_likelihood(
     result = module.GasEvaluator().log_likelihood(
         params, spec, obs, config) if isinstance(obs, np.ndarray) else (
             module.GasEvaluator().log_likelihood_equicorr_prepared(
-                params, spec, obs.sum_z, obs.sum_z2, config))
+                params, spec, obs.sum_z, obs.sum_z2, config,
+                obs.centered_squares))
     _raise_status(result, "log_likelihood")
     value = float(result["log_likelihood"])
     if not np.isfinite(value):
@@ -344,7 +346,8 @@ def negative_log_likelihood(
     result = module.GasEvaluator().negative_log_likelihood(
         params, spec, obs, config) if isinstance(obs, np.ndarray) else (
             module.GasEvaluator().negative_log_likelihood_equicorr_prepared(
-                params, spec, obs.sum_z, obs.sum_z2, config))
+                params, spec, obs.sum_z, obs.sum_z2, config,
+                obs.centered_squares))
     _raise_status(result, "negative_log_likelihood")
     value = float(result["log_likelihood"])
     if not np.isfinite(value):
@@ -385,7 +388,8 @@ def negative_log_likelihood_and_gradient(
             params, spec, obs, config)
         if isinstance(obs, np.ndarray)
         else evaluator.negative_log_likelihood_and_gradient_equicorr_prepared(
-            params, spec, obs.sum_z, obs.sum_z2, config)
+            params, spec, obs.sum_z, obs.sum_z2, config,
+            obs.centered_squares)
     )
     _raise_status(result, "negative_log_likelihood_and_gradient")
     objective = float(result["objective"])
@@ -543,6 +547,7 @@ def predict_parameter(
             obs.sum_z2,
             config,
             horizon == "next",
+            obs.centered_squares,
         ))
     _raise_status(result, "predict_parameter")
     value = float(result["parameter"])

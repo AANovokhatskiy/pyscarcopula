@@ -276,6 +276,25 @@ void FactorCorrelationOperator::solve_rows(
         });
 }
 
+double FactorCorrelationOperator::quadratic_form_from_core(
+    const double* values, const double* solved) const {
+    // With y=(I+B'D^-1B)^-1 B'D^-1x, the Woodbury quadratic equals
+    // ||D^-1/2(x-By)||^2 + ||y||^2, without subtracting large terms.
+    double result = 0.0;
+    for (std::size_t factor = 0; factor < rank_; ++factor) {
+        result += solved[factor] * solved[factor];
+    }
+    for (std::size_t column = 0; column < dimension_; ++column) {
+        double residual = values[column];
+        for (std::size_t factor = 0; factor < rank_; ++factor) {
+            residual = std::fma(-loadings_[column * rank_ + factor],
+                                solved[factor], residual);
+        }
+        result += residual * residual * inverse_uniqueness_[column];
+    }
+    return result;
+}
+
 void FactorCorrelationOperator::quadratic_forms(
     const double* values,
     std::size_t rows,
@@ -298,11 +317,8 @@ void FactorCorrelationOperator::quadratic_forms(
                     values + static_cast<std::size_t>(row) * dimension_;
                 require_finite_row(input, dimension_);
                 std::fill(small.begin(), small.end(), 0.0);
-                double diagonal_term = 0.0;
                 for (std::size_t column = 0; column < dimension_; ++column) {
                     const double value = input[column];
-                    diagonal_term +=
-                        inverse_uniqueness_[column] * value * value;
                     const double* weighted =
                         weighted_loadings_.data() + column * rank_;
                     for (std::size_t factor = 0;
@@ -313,12 +329,8 @@ void FactorCorrelationOperator::quadratic_forms(
                 }
                 solved = small;
                 solve_cholesky_inplace(cholesky_m_, rank_, solved);
-                double correction = 0.0;
-                for (std::size_t factor = 0; factor < rank_; ++factor) {
-                    correction += small[factor] * solved[factor];
-                }
                 output[static_cast<std::size_t>(row)] =
-                    diagonal_term - correction;
+                    quadratic_form_from_core(input, solved.data());
             }
         });
 }

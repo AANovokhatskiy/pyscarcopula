@@ -112,6 +112,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
 
         arrays = []
         arrays2 = []
+        centered_arrays = []
         clipping_events = 0
         nonfinite_values = 0
         preparation_blocks = 0
@@ -139,15 +140,17 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 batch = block[begin:begin + batch_rows]
                 if len(batch) == 0:
                     continue
-                sum_z, sum_z2, diagnostics = (
+                sum_z, sum_z2, centered, diagnostics = (
                     multivariate_native.prepare_equicorr_statistics(
                         batch,
                         dimension_tile=dimension_tile,
+                        include_centered=True,
                         n_threads=n_threads,
                     )
                 )
                 arrays.append(sum_z)
                 arrays2.append(sum_z2)
+                centered_arrays.append(centered)
                 preparation_blocks += 1
                 clipping_events += diagnostics["clipping_events"]
                 nonfinite_values += diagnostics["nonfinite_values"]
@@ -165,6 +168,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return EquicorrPreparedData(
             sum_z=sum_z,
             sum_z2=sum_z2,
+            centered_squares=np.concatenate(centered_arrays),
             n_obs=len(sum_z),
             dimension=expected_d,
             diagnostics={
@@ -320,6 +324,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 block = EquicorrPreparedData(
                     sum_z=u.sum_z[start:stop],
                     sum_z2=u.sum_z2[start:stop],
+                    centered_squares=(None if u.centered_squares is None
+                                      else u.centered_squares[start:stop]),
                     n_obs=stop - start,
                     dimension=u.dimension,
                     format_version=u.format_version,

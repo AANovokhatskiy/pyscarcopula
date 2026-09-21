@@ -19,6 +19,7 @@ enum class NumericalValidationCode : int {
     DuplicateColumn,
     NegativeValue,
     CauchyBound,
+    InvalidCenteredSquares,
 };
 
 struct NumericalValidationResult {
@@ -73,7 +74,8 @@ NumericalValidationResult validate_equicorr_prepared_statistics(
     DoubleView sum_z,
     DoubleView sum_z2,
     int dimension,
-    double clipping_epsilon) noexcept;
+    double clipping_epsilon,
+    DoubleView centered_squares = {}) noexcept;
 
 struct FinalFitValidation {
     std::vector<std::string> reasons;

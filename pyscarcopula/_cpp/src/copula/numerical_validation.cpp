@@ -275,10 +275,14 @@ NumericalValidationResult validate_equicorr_prepared_statistics(
     DoubleView sum_z,
     DoubleView sum_z2,
     int dimension,
-    double clipping_epsilon) noexcept {
+    double clipping_epsilon,
+    DoubleView centered_squares) noexcept {
 
     NumericalValidationResult result;
-    if (sum_z.size() != sum_z2.size() || dimension < 2) {
+    if (sum_z.size() != sum_z2.size() || dimension < 2
+        || (!centered_squares.empty()
+            && (centered_squares.size() != sum_z.size()
+                || centered_squares.data() == nullptr))) {
         result.status = Status::InvalidSize;
         result.code = NumericalValidationCode::InvalidEpsilon;
         return result;
@@ -306,6 +310,21 @@ NumericalValidationResult validate_equicorr_prepared_statistics(
             result.row = static_cast<std::int64_t>(row);
             result.failure.row = result.row;
             return result;
+        }
+        if (!centered_squares.empty()) {
+            const double mean_component = (sum_z[row] / dimension) * sum_z[row];
+            const double residual = std::max(
+                std::fma(-sum_z[row] / dimension, sum_z[row], sum_z2[row]), 0.0);
+            const double centered_tolerance = scale * static_cast<double>(dimension)
+                * std::max({1.0, sum_z2[row], mean_component});
+            if (!std::isfinite(centered_squares[row]) || centered_squares[row] < 0.0
+                || std::abs(centered_squares[row] - residual) > centered_tolerance) {
+                result.status = Status::InvalidParameter;
+                result.code = NumericalValidationCode::InvalidCenteredSquares;
+                result.row = static_cast<std::int64_t>(row);
+                result.failure.row = result.row;
+                return result;
+            }
         }
         const double absolute_sum = std::abs(sum_z[row]);
         const double bound = dimension_root * std::sqrt(sum_z2[row]);
