@@ -12,6 +12,47 @@ from pyscarcopula._native import gas
 from pyscarcopula.strategy.gas import GASStrategy, _fit_gas_starts
 
 
+def _fit_with_single_threaded_blas(family, observations):
+    """Keep numerical regressions reproducible without a runtime dependency.
+
+    BLAS reads these settings on import, so changing the parent environment
+    after NumPy has loaded is insufficient. Use a fresh interpreter and retain
+    sys.path so installed-wheel checks still exercise the same package.
+    """
+    import os
+    import pickle
+    import subprocess
+    import sys
+
+    env = os.environ.copy()
+    for name in ("OPENBLAS_NUM_THREADS", "OPENBLAS_DEFAULT_NUM_THREADS",
+                 "MKL_NUM_THREADS", "OMP_NUM_THREADS", "BLIS_NUM_THREADS",
+                 "VECLIB_MAXIMUM_THREADS"):
+        env[name] = "1"
+    script = """
+import pickle
+import sys
+
+paths, family, observations = pickle.load(sys.stdin.buffer)
+sys.path[:] = paths
+import pyscarcopula
+from pyscarcopula.strategy.gas import GASStrategy
+
+model = getattr(pyscarcopula, family)(d=observations.shape[1])
+result = GASStrategy().fit(model, observations)
+pickle.dump(dict(log_likelihood=result.log_likelihood, success=result.success,
+                 diagnostics=result.diagnostics, message=result.message),
+            sys.stdout.buffer)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        input=pickle.dumps((sys.path, family.__name__, observations)),
+        capture_output=True, env=env, timeout=180,
+    )
+    assert completed.returncode == 0, completed.stderr.decode(errors="replace")
+    return SimpleNamespace(**pickle.loads(completed.stdout))
+
+
 @pytest.mark.parametrize("explicit", [False, True])
 @pytest.mark.parametrize("family", [EquicorrGaussianCopula, StochasticStudentCopula])
 def test_inherited_start_preserves_budget_and_explicit_start_precedence(monkeypatch, explicit, family):
@@ -380,7 +421,7 @@ def test_high_frequency_equicorr_default_fit_avoids_saturated_line_search():
         pytest.skip("high-frequency regression data unavailable")
     prices = pd.read_csv(path, index_col=0)[["BTC_close", "ETH_close"]]
     observations = pobs(np.log(prices / prices.shift(1)).iloc[1:12001].dropna().values)
-    result = GASStrategy().fit(EquicorrGaussianCopula(d=2), observations)
+    result = _fit_with_single_threaded_blas(EquicorrGaussianCopula, observations)
     # The regression stopped at 8199.377 with a raw gradient above 3700.
     assert result.log_likelihood >= 8279.35
     assert result.success
@@ -391,7 +432,7 @@ def test_high_frequency_equicorr_default_fit_avoids_saturated_line_search():
 
 @pytest.mark.data
 def test_student_default_fit_recovers_and_reports_stationarity(crypto_data_6d):
-    result = GASStrategy().fit(StochasticStudentCopula(d=6), crypto_data_6d)
+    result = _fit_with_single_threaded_blas(StochasticStudentCopula, crypto_data_6d)
     # A retained trial at 824.972 used to terminate the entire fit.
     assert result.log_likelihood >= 827.3
     assert any(stage["stage"].startswith("recovery_")
@@ -423,7 +464,7 @@ def test_student_stationarity_is_robust_to_near_unit_persistence_and_noisy_score
     if dataset == "hf":
         returns = returns.iloc[:12000]
     observations = pobs(returns.dropna().values)
-    result = GASStrategy().fit(StochasticStudentCopula(d=len(columns)), observations)
+    result = _fit_with_single_threaded_blas(StochasticStudentCopula, observations)
     assert result.log_likelihood >= minimum_loglik
     assert result.success
     check = result.diagnostics["stationarity_validation"]
