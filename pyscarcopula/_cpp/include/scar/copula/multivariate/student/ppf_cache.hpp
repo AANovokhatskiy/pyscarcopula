@@ -52,9 +52,9 @@ const PpfCache& ppf_cache(const CopulaSpec& spec);
 namespace scar_internal {
 
 struct PpfInterpolation {
-    std::array<std::size_t, 4> node{};
-    std::array<double, 4> value_weight{};
-    std::array<double, 4> derivative_weight{};
+    std::array<std::size_t, 6> node{};
+    std::array<double, 6> value_weight{};
+    std::array<double, 6> derivative_weight{};
     int count = 0;
 };
 

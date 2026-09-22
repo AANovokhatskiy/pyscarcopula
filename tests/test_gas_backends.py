@@ -210,7 +210,7 @@ def test_gas_optimizer_gradient_step_routes_to_native(
     captured = {}
 
     def fake_objective(*args, **kwargs):
-        captured["native_kwargs"] = kwargs
+        captured.setdefault("native_kwargs", []).append(kwargs)
         return 2.0, np.zeros(3, dtype=np.float64)
 
     def fake_minimize(fun, x0, *, method, jac, bounds, options):
@@ -253,21 +253,28 @@ def test_gas_optimizer_gradient_step_routes_to_native(
     assert "eps" not in captured["scipy_options"]
     assert "finite_diff_rel_step" not in captured["scipy_options"]
     assert captured["scipy_options"]["maxfun"] == 23 // 4
-    native_kwargs = dict(captured["native_kwargs"])
+    native_kwargs = dict(captured["native_kwargs"][0])
     lower, upper = native_kwargs.pop("optimizer_bounds")
     np.testing.assert_array_equal(lower, [-np.inf, -20.0, -0.999])
     np.testing.assert_array_equal(upper, [np.inf, 20.0, 0.999])
     assert native_kwargs == {
         "optimizer_gradient_eps": expected_eps,
         "optimizer_gradient_relative": expected_relative,
+        "optimizer_gradient_central": False,
+        "optimizer_gradient_mean_coordinates": False,
     }
+    for call in captured["native_kwargs"]:
+        assert call["optimizer_gradient_eps"] == expected_eps
+        assert call["optimizer_gradient_relative"] is expected_relative
+    assert captured["native_kwargs"][-1]["optimizer_gradient_central"]
+    assert captured["native_kwargs"][-1]["optimizer_gradient_mean_coordinates"]
     assert result.diagnostics["optimizer_gradient_eps"] == pytest.approx(
         expected_eps)
     assert (
         result.diagnostics["optimizer_gradient_relative"]
         is expected_relative
     )
-    assert result.nfev == 17 * 4
+    assert result.nfev == 17 * 4 + result.diagnostics["verification_nfev"]
     assert "objective_evaluations" not in result.diagnostics
     assert "requested_maxfun" not in result.diagnostics
 

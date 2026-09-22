@@ -15,6 +15,8 @@ namespace scar_internal {
 struct EquicorrStats {
     double sum = 0.0;
     double sum_squares = 0.0;
+    // Negative means that only the legacy two sufficient statistics exist.
+    double centered_squares = -1.0;
 };
 
 bool equicorr_sufficient_statistics(

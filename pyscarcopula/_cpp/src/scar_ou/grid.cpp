@@ -8,6 +8,37 @@
 
 namespace scar_internal {
 
+int gaussian_transition_band(int K, double kernel_grid_ratio, double a,
+                             double radius, std::int64_t observations) {
+    if (K < 2 || !std::isfinite(kernel_grid_ratio) || kernel_grid_ratio <= 0.0
+        || !std::isfinite(a) || a <= 0.0 || !std::isfinite(radius)
+        || radius <= 0.0 || observations < 2) return -1;
+    const double variance = -std::expm1(-2.0 * a);
+    const double rho = std::exp(-a);
+    const double c = (a * rho) / variance;
+    const double log_budget = std::log(kOuTransitionTailBudget)
+        - std::log(static_cast<double>(observations - 1));
+    // For |y| >= s, |d log p / d log a| <=
+    // c [rho(1+y*y) + R sqrt(variance)|y|]. Integrating both tails and
+    // using Mills' inequality bounds mass plus absolute tangent by
+    // 2 phi(s) [1/s + c {rho(s+2/s) + R sqrt(variance)}].
+    // At s>=5 these envelopes decrease. One extra grid cell makes the
+    // rectangular lattice tail no larger than that continuous integral.
+    // Fixed, bounded search; no emission-dependent tuning or row renormalization.
+    for (int step = 0; step <= 140; ++step) {
+        const double s = 5.0 + 0.25 * step;
+        const double envelope = 1.0/s
+            + c * (rho*(s+2.0/s) + radius*std::sqrt(variance));
+        const double log_tail = std::log(2.0) - .5*std::log(2.0*kPi)
+            - .5*s*s + std::log(envelope);
+        if (log_tail <= log_budget) {
+            const double band = std::ceil(s * kernel_grid_ratio) + 1.0;
+            return band >= K-1 ? K-1 : static_cast<int>(band);
+        }
+    }
+    return K-1;
+}
+
 bool build_ou_grid(
     double kappa,
     double mu,
@@ -76,6 +107,8 @@ bool build_ou_grid(
 
     grid = OuGrid{};
     grid.K = K_eff;
+    grid.a = kappa * dt;
+    grid.observations = n_obs;
     grid.K_requested = K_requested;
     grid.rho = rho;
     grid.sigma = sigma;

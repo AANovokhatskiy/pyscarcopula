@@ -24,10 +24,21 @@ Result<TrajectoryParameters> prepare_parameters(const OuParams& params, std::siz
     }
     const double dt = count > 1 ? 1.0 / static_cast<double>(count - 1) : 1.0;
     auto& out = result.value;
-    out.rho = std::exp(-params.kappa * dt);
-    out.sigma_stationary = params.nu / std::sqrt(2.0 * params.kappa);
-    out.sigma_cond = std::sqrt(params.nu * params.nu / (2.0 * params.kappa)
-        * (1.0 - out.rho * out.rho));
+    const double a = params.kappa * dt;
+    out.rho = std::exp(-a);
+    out.sigma_stationary = params.nu
+        / (std::sqrt(params.kappa) * std::sqrt(2.0));
+    // For small steps, avoid both 1-rho^2 cancellation and multiplying a
+    // large stationary scale by a nearly underflowed variance fraction.
+    if (a <= 0.5) {
+        const double variance_ratio = a > 0.0
+            ? -std::expm1(-2.0 * a) / (2.0 * a) : 1.0;
+        out.sigma_cond = params.nu * std::sqrt(dt)
+            * std::sqrt(variance_ratio);
+    } else {
+        out.sigma_cond = out.sigma_stationary
+            * std::sqrt(-std::expm1(-2.0 * a));
+    }
     if (!std::isfinite(out.rho) || !std::isfinite(out.sigma_stationary)
         || !std::isfinite(out.sigma_cond)) {
         result.status = Status::InvalidParameter;

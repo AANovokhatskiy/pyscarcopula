@@ -21,6 +21,7 @@ double gumbel_parameter_to_tau(double parameter) {
 }
 
 double gumbel_log_pdf_unrotated(double u1, double u2, double r) {
+    if (r == 1.0) return 0.0;
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
     const double log_v1 = std::log(v1);

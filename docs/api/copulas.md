@@ -62,6 +62,9 @@ Conditional CDFs and inverse CDFs can reach the mathematical endpoints 0 and
 1. Unconditional sampling keeps its output in the open unit interval: if an
 interior result rounds to an endpoint, only that endpoint is moved to the
 nearest interior float64 value. There is no artificial `1e-10` sampling floor.
+Conditional sampling applies the same correction to the free coordinate for
+interior quantiles and preserves the given coordinate exactly. The native
+uniform-input API retains endpoint semantics for an explicit zero quantile.
 A failed inverse is reported as an error rather than accepted as a clipped
 finite sample. This does not guarantee an arbitrarily small CDF residual
 when the exact inverse lies between adjacent representable float64 values.

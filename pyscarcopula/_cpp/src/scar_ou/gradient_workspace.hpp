@@ -13,6 +13,7 @@ struct ScarOuGridGradientOperators {
     std::vector<double> dense_grad;
     std::vector<int> cols;
     std::vector<int> indptr;
+    std::vector<int> row_start;
     std::vector<double> vals;
     std::vector<double> grad_vals;
 };
@@ -37,6 +38,7 @@ struct ScarOuGridGradientWorkspace {
     std::vector<double> d_target;
     std::vector<double> contrib;
     std::vector<double> transition_grad;
+    std::vector<double> matrix_targets;
     std::vector<double> precision;
     std::vector<double> scores;
     std::vector<double> alpha;
@@ -54,7 +56,7 @@ struct ScarOuSpectralGradientWorkspace {
     std::vector<double> basis;
     std::vector<double> weighted_basis;
     std::vector<double> powers;
-    std::vector<double> dpowers_dkappa;
+    std::vector<double> dpowers_dlog_kappa;
     std::vector<double> x_grid;
     std::vector<double> dx_dalpha;
     std::vector<double> r_grid;
@@ -77,7 +79,7 @@ struct ScarOuSpectralGradientWorkspace {
     std::vector<double> corr_coeff;
     std::vector<double> corr_projected;
     std::vector<double> corr_raw;
-    std::vector<double> corr_value_projected;
+    std::vector<double> message_values;
     std::vector<double> corr_dlog_scale;
 };
 

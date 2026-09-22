@@ -109,11 +109,44 @@ double frank_log_pdf_unrotated(double u1, double u2, double r) {
     return log_num - 2.0 * logsumexp(log_t1, log_t2);
 }
 
+namespace {
+
+double frank_stable_score(double u, double v, double r) {
+    if (r < 1e-5) {
+        return 0.5 * (2.0 * u - 1.0) * (2.0 * v - 1.0)
+            + r * (2.0 * u * v * (1.0 - u) * (1.0 - v) - 1.0 / 12.0);
+    }
+    // Form the log-weight difference before multiplying the common large
+    // coordinate by r. Subtracting two rounded log weights loses the small
+    // diagonal score, even when neither exponential underflows.
+    const double delta = r * (v - u) + log1mexp(r * v)
+        - log1mexp(r * (1.0 - v));
+    const double ratio = std::exp(-std::abs(delta));
+    const double weight_a = delta >= 0.0 ? 1.0 / (1.0 + ratio)
+                                          : ratio / (1.0 + ratio);
+    const double weight_b = delta >= 0.0 ? ratio / (1.0 + ratio)
+                                          : 1.0 / (1.0 + ratio);
+    const double correction_a = v == 0.0 ? 1.0 / r : v / std::expm1(r * v);
+    const double correction_b = v == 1.0 ? 1.0 / r
+        : (1.0 - v) / std::expm1(r * (1.0 - v));
+    // Combine -u-v+2*(weight_a*u+weight_b*v) analytically so that
+    // a score of order 1/r is not cancelled by terms of order one.
+    return 1.0 / r + 1.0 / std::expm1(r)
+        + (u - v) * std::tanh(0.5 * delta)
+        - 2.0 * (weight_a * correction_a + weight_b * correction_b);
+}
+
+bool frank_score_needs_scaling(double u, double v, double r) {
+    return r < 1e-4 || r * std::min(u, v) > 600.0;
+}
+
+}  // namespace
+
 double frank_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
-    if (std::abs(r) < 1e-10) {
-        return 0.0;
+    if (frank_score_needs_scaling(v1, v2, r)) {
+        return frank_stable_score(v1, v2, r);
     }
 
     const double emr = std::exp(-r);
@@ -148,6 +181,11 @@ void frank_pdf_and_grad_x_unrotated(
     const double log_t1 = -a + log1mexp(b);
     const double log_t2 = -b + log1mexp(r - b);
     pdf = std::exp(log_num - 2.0 * logsumexp(log_t1, log_t2));
+
+    if (frank_score_needs_scaling(v1, v2, r)) {
+        d_pdf_dx = pdf * frank_stable_score(v1, v2, r) * d_r_dx;
+        return;
+    }
 
     const double emr = std::exp(-r);
     const double emrv1 = std::exp(-r * v1);
@@ -206,6 +244,11 @@ void frank_fill_grid_row(
             std::exp(log_num - 2.0 * logsumexp(log_t1, log_t2));
         pdf_row[j] = pdf;
         if (gradient_row != nullptr) {
+            if (frank_score_needs_scaling(v1, v2, parameter)) {
+                gradient_row[j] = pdf * frank_stable_score(v1, v2, parameter)
+                    * derivative_grid[j];
+                continue;
+            }
             const double emr = std::exp(-parameter);
             const double emrv1 = std::exp(-parameter * v1);
             const double emrv2 = std::exp(-parameter * v2);

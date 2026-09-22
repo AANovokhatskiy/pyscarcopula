@@ -1,8 +1,52 @@
 # Changelog
 
+## 0.22.1 - 2026-09-21
+
+Version: `0.22.0` -> `0.22.1`
+
+- Use C2 quantile interpolation for Student caches, preserving a smooth GAS
+  score across df knots and reducing interpolation bias. Validate the fitted
+  Student likelihood independently with exact quantiles in regression tests.
+- Complete automatic fixed-correlation GAS restarts independently of local
+  stationarity. Use scalar evaluations in derivative-free recovery while
+  retaining genuine final gradients and scalar-objective budget accounting.
+- Validate bivariate GAS stationarity, including vine edges. Unresolved
+  convergence follows the existing explicit vine failure policy instead of
+  being reported as successful.
+- Stabilize Clayton density and score across the near-independence formula
+  boundary, including extreme tail observations, with a cancellation-free
+  log correction shared by scalar and grid evaluations.
+- Improve pair density and score limits for Clayton, Frank, Joe and Gaussian
+  copulas, and avoid cancellation in multivariate factor quadratic forms.
+- Store centered sums of squares in prepared equicorrelation data to retain
+  accuracy near singular correlations. Read existing prepared archives, but
+  reject evaluations where legacy sums cannot resolve the required variance.
+- Stabilize OU matrix transitions and sampling at small time steps, bound
+  transition-tail truncation, and streamline banded and spectral gradients.
+  Scale Gaussian spectral emissions to avoid density-row underflow.
+- Preserve the origin of multivariate GAS bootstrap starts. Library-inherited
+  starts retain automatic multistart and bounded recovery; explicit `gamma0`
+  is preserved across retries. Keep unresolved stationarity as a failure and
+  test parallel bootstrap reproducibility on converged fits.
+- Recover GAS optimization from unresolved equicorrelation transform plateaus
+  without changing the public scalar likelihood. Add bounded recovery and
+  independent stationarity diagnostics instead of relying on relative-function
+  stopping alone; preserve explicit optimizer settings.
+- Reject severe loss of positivity during Hermite OU multiplication in the
+  existing scalar/gradient pass. Auto uses its existing matrix/local fallback;
+  explicit spectral reports numerical failure. Default mode and quadrature
+  orders are unchanged; the check is not an approximation-error certificate.
+- Retry Jacobi evaluation-budget failures once under the library defaults
+  before dynamic-vine fallback. Preserve attempt parameters, likelihoods and
+  diagnostics. Validate a near-independent Clayton boundary candidate before
+  selecting it, retaining the requested dynamic model.
+
 ## 0.22.0 - 2026-09-06
 
 Version: `0.21.0` -> `0.22.0`
+
+Commit: `4b4f9e1`
+Merge PR: #51 (`9f5237a`, 2026-09-06)
 
 - Use the stable central Student CDF in ordinary quantile inversion as well
   as emission caches, removing spurious likelihood jumps near the median.

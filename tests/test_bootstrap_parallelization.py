@@ -440,14 +440,19 @@ def test_equicorr_bootstrap_is_partition_invariant(
     from pyscarcopula import EquicorrGaussianCopula
 
     source = EquicorrGaussianCopula(3)
+    # The old 24-row GAS fixture has unresolved stationarity; its explicit
+    # failure contract is covered separately below. Parity needs valid refits.
+    count, seed = (250, 930) if method == 'gas' else (24, 924)
     u = source.sample_at_parameter(
-        24,
-        np.full(24, 0.25),
-        rng=np.random.default_rng(924),
+        count,
+        np.full(count, 0.25),
+        rng=np.random.default_rng(seed),
     )
     fitted = EquicorrGaussianCopula(3)
     fit_result = fitted.fit(
         u, method=method, **_dynamic_fit_kwargs(method))
+    if method == 'gas':
+        assert fit_result.success
     original_fit_result = fitted.fit_result
     original_history = fitted._last_u
 
@@ -456,6 +461,72 @@ def test_equicorr_bootstrap_is_partition_invariant(
 
     assert fitted.fit_result is original_fit_result
     assert fitted._last_u is original_history
+
+
+def test_equicorr_bootstrap_recovery_keeps_unresolved_stationarity_as_failure(monkeypatch):
+    from dataclasses import replace
+    from pyscarcopula import EquicorrGaussianCopula
+    from pyscarcopula import stattests
+
+    u = EquicorrGaussianCopula(3).sample_at_parameter(
+        24, np.full(24, .25), rng=np.random.default_rng(924))
+    model = EquicorrGaussianCopula(3)
+    result = model.fit(u, method='gas', **_dynamic_fit_kwargs('gas'))
+    adapter = stattests._BOOTSTRAP_ADAPTERS['equicorr']
+    attempts = []
+
+    def recorded(*args):
+        fitted, attempt = adapter.refit(*args)
+        attempts.append(attempt)
+        return fitted, attempt
+
+    monkeypatch.setitem(stattests._BOOTSTRAP_ADAPTERS, 'equicorr',
+                        replace(adapter, refit=recorded))
+    with pytest.raises(RuntimeError, match='stationarity was not established'):
+        stattests.gof_test(
+            model, u, fit_result=result, to_pobs=False, bootstrap=True,
+            n_bootstrap=2, bootstrap_refit=True, rng=930, n_jobs=1,
+            bootstrap_fit_kwargs=_dynamic_fit_kwargs('gas'))
+    assert len(attempts) == 2
+    assert all(not attempt.success for attempt in attempts)
+    for attempt in attempts:
+        assert attempt.diagnostics['automatic_multistart']
+        stages = attempt.diagnostics['optimizer_stages']
+        assert any(stage['stage'] == 'inherited' for stage in stages)
+        assert any(stage['stage'].startswith('recovery_') for stage in stages)
+
+
+def test_equicorr_bootstrap_retry_preserves_explicit_gamma0(monkeypatch):
+    from dataclasses import replace
+    from pyscarcopula import EquicorrGaussianCopula
+    from pyscarcopula import stattests
+    from pyscarcopula._types import gas_params
+
+    u = EquicorrGaussianCopula(3).sample_at_parameter(
+        250, np.full(250, .25), rng=np.random.default_rng(930))
+    model = EquicorrGaussianCopula(3)
+    result = model.fit(u, method='gas', **_dynamic_fit_kwargs('gas'))
+    failed = replace(result, success=False, message='forced refit failure',
+                     params=gas_params(omega=.2, gamma=.1, beta=.3))
+    starts = []
+
+    def failed_refit(cls, constructor, observations, previous, options, *args):
+        starts.append(options['gamma0'].copy())
+        return model, failed
+
+    adapter = stattests._BOOTSTRAP_ADAPTERS['equicorr']
+    monkeypatch.setitem(stattests._BOOTSTRAP_ADAPTERS, 'equicorr',
+                        replace(adapter, refit=failed_refit))
+    explicit = np.array([.01, .02, .8])
+    with pytest.raises(RuntimeError, match='forced refit failure'):
+        stattests.gof_test(
+            model, u, fit_result=result, to_pobs=False, bootstrap=True,
+            n_bootstrap=2, bootstrap_refit=True, rng=930, n_jobs=1,
+            bootstrap_fit_kwargs={'gamma0': explicit})
+    assert len(starts) == 2
+    for start in starts:
+        np.testing.assert_array_equal(start, explicit)
+    np.testing.assert_array_equal(explicit, [.01, .02, .8])
 
 
 @pytest.mark.parametrize("method", ["mle", "gas", "scar-tm-ou"])

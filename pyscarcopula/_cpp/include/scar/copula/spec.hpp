@@ -76,6 +76,8 @@ struct CopulaSpec {
     const std::vector<double>& equicorr_sum_scores() const;
     std::vector<double>& equicorr_sum_squares();
     const std::vector<double>& equicorr_sum_squares() const;
+    std::vector<double>& equicorr_centered_squares();
+    const std::vector<double>& equicorr_centered_squares() const;
 
     /// Rebuild the typed alternative after compatibility metadata changes.
     void reset_model_storage();

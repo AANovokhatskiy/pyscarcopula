@@ -73,6 +73,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     if (copula_.family == CopulaFamily::EquicorrGaussian) {
         copula_.equicorr_sum_scores().resize(n_obs_size, 0.0);
         copula_.equicorr_sum_squares().resize(n_obs_size, 0.0);
+        copula_.equicorr_centered_squares().resize(n_obs_size, 0.0);
         for (std::size_t row = 0; row < n_obs_size; ++row) {
             scar_internal::EquicorrStats stats;
             if (!scar_internal::equicorr_sufficient_statistics(
@@ -84,6 +85,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
             }
             copula_.equicorr_sum_scores()[row] = stats.sum;
             copula_.equicorr_sum_squares()[row] = stats.sum_squares;
+            copula_.equicorr_centered_squares()[row] = stats.centered_squares;
         }
     }
     if (copula_.family == CopulaFamily::Gaussian) {
@@ -133,6 +135,8 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     }
     if (equicorr_sums.empty()
         || equicorr_sum_squares.size() != equicorr_sums.size()
+        || (!copula_.equicorr_centered_squares().empty()
+            && copula_.equicorr_centered_squares().size() != equicorr_sums.size())
         || equicorr_sums.size()
             > static_cast<std::size_t>(
                 std::numeric_limits<std::int64_t>::max())) {
@@ -143,7 +147,10 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     for (std::size_t row = 0; row < equicorr_sums.size(); ++row) {
         if (!std::isfinite(equicorr_sums[row])
             || !std::isfinite(equicorr_sum_squares[row])
-            || equicorr_sum_squares[row] < 0.0) {
+            || equicorr_sum_squares[row] < 0.0
+            || (!copula_.equicorr_centered_squares().empty()
+                && (!std::isfinite(copula_.equicorr_centered_squares()[row])
+                    || copula_.equicorr_centered_squares()[row] < 0.0))) {
             throw std::invalid_argument(
                 "prepared statistics must contain finite valid values");
         }

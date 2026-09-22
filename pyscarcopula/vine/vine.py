@@ -1015,6 +1015,9 @@ class VineCopula:
                 'attempted_nfev': int(
                     provenance.get('attempted_nfev', 0) or 0),
                 'attempted_message': provenance.get('attempted_message'),
+                'attempted_params': deepcopy(provenance.get('attempted_params')),
+                'attempted_log_likelihood': provenance.get('attempted_log_likelihood'),
+                'attempted_diagnostics': deepcopy(provenance.get('attempted_diagnostics')),
                 'timings_ms': {
                     'selection': float(
                         provenance.get('selection_ms', 0.0) or 0.0),

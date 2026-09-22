@@ -260,7 +260,8 @@ Parallel threads do not change the asymptotic representation of a model.
 - `EquicorrGaussianCopula` row and emission calculations use the scalar
   equicorrelation structure and avoid a dense correlation matrix in their hot
   path. `prepare_sufficient_statistics` accepts ndarray, memmap, and streamed
-  blocks and stores only two `O(T)` vectors. Fixed dimension-tile reduction is
+  blocks and stores three `O(T)` vectors, including a centered sum of squares
+  that preserves accuracy near singular correlations. Fixed dimension-tile reduction is
   deterministic across thread counts, and its default `n_threads=1` does not
   initialize the native pool. `pdf_and_grad_on_grid_batches` bounds the
   `(T,K)` output, while `memory_budget_bytes` rejects an oversized monolithic

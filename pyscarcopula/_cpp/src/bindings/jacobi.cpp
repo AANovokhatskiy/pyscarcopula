@@ -584,6 +584,33 @@ void bind_jacobi(py::module_& m) {
                 return objective_result_to_dict(result);
             })
         .def(
+            "near_independence_candidate",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& current,
+               const scar::JacobiParameterBounds& bounds,
+               double current_objective, double gradient_tolerance) {
+                scar::JacobiBoundaryCandidateResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.near_independence_candidate(
+                      current, bounds, current_objective, gradient_tolerance); }
+                py::dict output = status_dict(result);
+                const auto& value = result.value;
+                output["attempted"] = value.attempted;
+                output["selected"] = value.selected;
+                output["stationarity_validated"] = value.stationarity_validated;
+                output["params"] = py::make_tuple(
+                    value.params.kappa, value.params.m, value.params.xi);
+                output["raw"] = value.raw;
+                output["objective"] = value.objective;
+                output["stationarity_tolerance"] = value.tolerance;
+                output["stationarity_steps"] = value.steps;
+                output["inward_steps"] = value.inward_steps;
+                output["inward_slopes"] = value.inward_slopes;
+                output["nfev"] = value.nfev;
+                output["candidate_status"] = static_cast<int>(value.candidate_status);
+                return output;
+            })
+        .def(
             "neg_loglik_with_grad",
             [](const scar::PreparedScarJacobiEvaluator& evaluator,
                const scar::JacobiParams& params) {

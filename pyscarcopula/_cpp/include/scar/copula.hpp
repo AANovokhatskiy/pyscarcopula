@@ -194,7 +194,8 @@ MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
     DoubleView sum_z,
     DoubleView sum_z2,
     const std::vector<double>& r,
-    int n_threads = 1);
+    int n_threads = 1,
+    DoubleView centered_squares = {});
 
 MultivariateGridResult multivariate_pdf_and_grad_grid(
     const CopulaSpec& spec,
@@ -208,7 +209,8 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
     DoubleView sum_z,
     DoubleView sum_z2,
     const std::vector<double>& x_grid,
-    int n_threads = 1);
+    int n_threads = 1,
+    DoubleView centered_squares = {});
 
 EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
     ObservationView u,

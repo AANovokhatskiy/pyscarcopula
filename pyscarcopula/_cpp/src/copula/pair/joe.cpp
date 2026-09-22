@@ -149,6 +149,36 @@ double joe_log_pdf_unrotated(double u1, double u2, double r) {
         - (2.0 - 1.0 / r) * log_B;
 }
 
+namespace {
+
+double joe_stable_score(double log_q1, double log_q2, double r) {
+    const double log_a = r * log_q1 + log1mexp(-r * log_q2);
+    const double log_b = r * log_q2;
+    const double log_both = logsumexp(log_a, log_b);
+    // Normalize by the log difference, avoiding subtraction of a rounded
+    // logsumexp from terms whose magnitude can be hundreds of thousands.
+    const double delta = log_a - log_b;
+    const double ratio = std::exp(-std::abs(delta));
+    const double weight_a = delta >= 0.0 ? 1.0 / (1.0 + ratio)
+                                          : ratio / (1.0 + ratio);
+    const double weight_b = delta >= 0.0 ? ratio / (1.0 + ratio)
+                                          : 1.0 / (1.0 + ratio);
+    const double score_b = weight_a
+        * (log_q1 - log_q2 / std::expm1(-r * log_q2))
+        + weight_b * log_q2;
+    const double b = std::exp(log_both);
+    const double denominator = r - 1.0 + b;
+    return (log_q1 - score_b) + (log_q2 - score_b)
+        + (score_b - log_both / r) / r
+        + 1.0 / denominator + (b / denominator) * score_b;
+}
+
+bool joe_score_needs_scaling(double log_q1, double log_q2, double r) {
+    return r * std::max(log_q1, log_q2) < -600.0;
+}
+
+}  // namespace
+
 double joe_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
@@ -156,6 +186,9 @@ double joe_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
     const double q2 = std::max(1.0 - v2, kPdfEps);
     const double log_q1 = std::log(q1);
     const double log_q2 = std::log(q2);
+    if (joe_score_needs_scaling(log_q1, log_q2, r)) {
+        return joe_stable_score(log_q1, log_q2, r);
+    }
     const double q1r = std::pow(q1, r);
     const double q2r = std::pow(q2, r);
     const double B = std::max(q1r + q2r - q1r * q2r, kPdfEps);
@@ -201,6 +234,10 @@ void joe_pdf_and_grad_x_unrotated(
         - (2.0 - 1.0 / r) * log_B;
     pdf = std::exp(log_pdf);
 
+    if (joe_score_needs_scaling(log_q1, log_q2, r)) {
+        d_pdf_dx = pdf * joe_stable_score(log_q1, log_q2, r) * d_r_dx;
+        return;
+    }
     const double q1r = std::exp(r * log_q1);
     const double q2r = std::exp(r * log_q2);
     const double B = std::max(q1r + q2r - q1r * q2r, kPdfEps);
@@ -272,6 +309,11 @@ void joe_fill_grid_row(
         const double pdf = std::exp(log_pdf);
         pdf_row[j] = pdf;
         if (gradient_row != nullptr) {
+            if (joe_score_needs_scaling(log_q1, log_q2, parameter)) {
+                gradient_row[j] = pdf * joe_stable_score(log_q1, log_q2, parameter)
+                    * derivative_grid[j];
+                continue;
+            }
             // Preserve the legacy grid derivative's arithmetic. pow(q, r)
             // rounds differently and can change latent optimizer trajectories.
             const double q1r = std::exp(parameter * log_q1);

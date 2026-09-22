@@ -910,6 +910,94 @@ JacobiObjectiveResult PreparedScarJacobiEvaluator::loglik(
     return result;
 }
 
+JacobiBoundaryCandidateResult
+PreparedScarJacobiEvaluator::near_independence_candidate(
+    const JacobiParams& current,
+    const JacobiParameterBounds& bounds,
+    double current_objective,
+    double gradient_tolerance) const {
+
+    const auto raw_bounds = jacobi_raw_bounds(bounds);
+    if (!raw_bounds.is_ok() || !std::isfinite(gradient_tolerance)
+        || gradient_tolerance < 0.0) {
+        return failed<JacobiBoundaryCandidateResult>(
+            Status::InvalidParameter);
+    }
+    JacobiBoundaryCandidateResult result;
+    auto& out = result.value;
+    out.tolerance = gradient_tolerance;
+    if (impl_->pair.family() != CopulaFamily::Clayton
+        || !std::isfinite(current.m)
+        || current.m > std::max(1e-4, 10.0 * bounds.tau_eps)
+        || !std::isfinite(current_objective)) {
+        return result;
+    }
+    out.attempted = true;
+    out.raw = {raw_bounds.value.lower[0], raw_bounds.value.lower[1],
+               raw_bounds.value.upper[2]};
+    const auto candidate = jacobi_raw_to_physical(out.raw);
+    if (!candidate.is_ok()) {
+        out.candidate_status = candidate.status;
+        return result;
+    }
+    out.params = candidate.value;
+    out.candidate_status = validate_jacobi_params(
+        out.params, impl_->config.transition.numerical.stationary_shape_max);
+    if (!ok(out.candidate_status)) return result;
+    const auto value = loglik(out.params);
+    ++out.nfev;
+    out.candidate_status = value.status;
+    out.objective = value.value.objective;
+    if (!value.is_ok() || !std::isfinite(out.objective)
+        || !(out.objective < current_objective)) {
+        return result;
+    }
+    out.stationarity_validated = true;
+    for (std::size_t scale = 0; scale < out.steps.size(); ++scale) {
+        for (std::size_t axis = 0; axis < out.raw.size(); ++axis) {
+            const double room = raw_bounds.value.upper[axis]
+                - raw_bounds.value.lower[axis];
+            // Shrink both scales by the same factor for narrow bounds;
+            // clipping each independently to room/2 collapses them to one.
+            const double requested = std::min(
+                out.steps[scale], room * (out.steps[scale] / (2.0 * out.steps.back())));
+            auto trial = out.raw;
+            trial[axis] += (axis == 2 ? -requested : requested);
+            const double distance = std::abs(trial[axis] - out.raw[axis]);
+            out.inward_steps[scale][axis] = distance;
+            // Extremely narrow floating-point intervals may not contain two
+            // representable inward probes. Do not claim validated stationarity.
+            if (!(distance > 0.0) || (scale > 0
+                    && !(distance > out.inward_steps[scale - 1][axis]))) {
+                out.inward_slopes[scale][axis] =
+                    std::numeric_limits<double>::quiet_NaN();
+                out.stationarity_validated = false;
+                continue;
+            }
+            const auto physical = jacobi_raw_to_physical(trial);
+            if (!physical.is_ok()) {
+                out.inward_slopes[scale][axis] =
+                    std::numeric_limits<double>::quiet_NaN();
+                out.stationarity_validated = false;
+                continue;
+            }
+            const auto probe = loglik(physical.value);
+            ++out.nfev;
+            const bool valid = probe.is_ok()
+                && std::isfinite(probe.value.objective);
+            const double slope = valid
+                ? (probe.value.objective - out.objective) / distance
+                : std::numeric_limits<double>::quiet_NaN();
+            out.inward_slopes[scale][axis] = slope;
+            if (!std::isfinite(slope) || slope < -gradient_tolerance) {
+                out.stationarity_validated = false;
+            }
+        }
+    }
+    out.selected = out.stationarity_validated;
+    return result;
+}
+
 JacobiGradientResult PreparedScarJacobiEvaluator::neg_loglik_with_grad(
     const JacobiParams& params) const {
     const std::lock_guard<std::mutex> lock(impl_->mutex);

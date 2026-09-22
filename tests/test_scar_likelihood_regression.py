@@ -71,7 +71,7 @@ def _assert_close(actual, expected):
         ),
     ],
 )
-def test_bivariate_scar_sparse_and_dense_match_their_references(
+def test_bivariate_scar_sparse_matches_dense_after_tail_fix(
         copula, expected, legacy_negative, legacy_gradient):
     observations = np.random.default_rng(20260831).uniform(
         0.01, 0.99, size=(64, 2))
@@ -87,15 +87,16 @@ def test_bivariate_scar_sparse_and_dense_match_their_references(
     negative, gradient = _cpp_scar_ou.neg_loglik_with_grad(
         100.0, -3.25, 0.14, observations, copula, config)
 
-    # Dense and five-sigma sparse are distinct numerical contracts. Keep
-    # the dense references and the released 0.20.1 sparse references separate.
+    # Preserve the dense reference; the historical five-sigma values below
+    # document the truncation defect instead of requiring it in production.
     np.testing.assert_allclose(gradient, expected, rtol=2e-11, atol=1e-14)
     sparse_config = replace(config, grid_method="sparse")
     sparse_negative, sparse_gradient = _cpp_scar_ou.neg_loglik_with_grad(
         100.0, -3.25, 0.14, observations, copula, sparse_config)
-    assert sparse_negative == pytest.approx(legacy_negative, rel=0, abs=2e-13)
+    assert sparse_negative == pytest.approx(negative, rel=0, abs=2e-13)
     np.testing.assert_allclose(
-        sparse_gradient, legacy_gradient, rtol=2e-11, atol=1e-14)
+        sparse_gradient, gradient, rtol=2e-11, atol=1e-14)
+    assert abs(legacy_gradient[0] - gradient[0]) > 1e-8
     assert _cpp_scar_ou.neg_loglik(
         100.0, -3.25, 0.14, observations, copula,
         sparse_config) == pytest.approx(sparse_negative, rel=0, abs=2e-13)
@@ -226,7 +227,7 @@ def test_bivariate_scar_matrix_matches_regression_values():
     )
 
 
-def test_multivariate_student_scar_matrix_matches_regression_values():
+def test_multivariate_student_scar_matrix_matches_regression_values(monkeypatch):
     observations = np.array(
         [
             [0.12, 0.83, 0.41],
@@ -270,8 +271,34 @@ def test_multivariate_student_scar_matrix_matches_regression_values():
     )
     _assert_close(
         gradient,
-        [-4.64709660e-05, 2.42546895e-03, -2.43472988e-05],
+        [-4.679996276571427e-05, 2.4265879455802903e-03,
+         -2.3401763310902934e-05],
     )
+    # The old C1 PPF interpolant biased this gradient by up to 1.1e-6.
+    # Keep the original regression tolerance and use cache-free quantiles as
+    # the reference. Independently check the gradient against scalar values.
+    differences = []
+    parameters = np.asarray(PARAMS)
+    step = 1e-3
+    for coordinate in range(3):
+        direction = np.eye(3)[coordinate] * step
+        values = [_cpp_scar_ou.neg_loglik(
+            *(parameters + offset * direction), observations, copula, CONFIG)
+            for offset in (-2, -1, 1, 2)]
+        differences.append((values[0] - 8 * values[1]
+                            + 8 * values[2] - values[3]) / (12 * step))
+    np.testing.assert_allclose(gradient, differences, rtol=2e-7, atol=2e-10)
+
+    from functools import partial
+    from pyscarcopula.copula.multivariate import stochastic_student
+
+    monkeypatch.setattr(stochastic_student, "_PPFTable", partial(
+        stochastic_student._PPFTable, max_table_bytes=0))
+    exact_copula = StochasticStudentCopula(d=3, R=correlation)
+    exact_negative, exact_gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        *PARAMS, observations, exact_copula, CONFIG)
+    _assert_close(negative, exact_negative)
+    _assert_close(gradient, exact_gradient)
     _assert_close(
         predictive,
         [

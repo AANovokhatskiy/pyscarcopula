@@ -500,10 +500,15 @@ void bind_copula(py::module_& m) {
             py::arg("n_threads") = 1)
         .def(
             py::init([](
-                const scar::CopulaSpec& copula,
+                scar::CopulaSpec copula,
                 py::object sum_z,
                 py::object sum_z2,
-                int n_threads) {
+                int n_threads, py::object centered_squares) {
+                copula.equicorr_centered_squares().clear();
+                if (!centered_squares.is_none()) {
+                    copula.equicorr_centered_squares() = vector_from_array(
+                        real_float64_array_from_object(centered_squares, "centered_squares"));
+                }
                 return scar::StaticCopulaEvaluator(
                     copula,
                     vector_from_array(real_float64_array_from_object(sum_z, "sum_z")),
@@ -513,7 +518,8 @@ void bind_copula(py::module_& m) {
             py::arg("copula"),
             py::arg("sum_z"),
             py::arg("sum_z2"),
-            py::arg("n_threads") = 1)
+            py::arg("n_threads") = 1,
+            py::arg("centered_squares") = py::none())
         .def(
             "objective",
             [](const scar::StaticCopulaEvaluator& evaluator,

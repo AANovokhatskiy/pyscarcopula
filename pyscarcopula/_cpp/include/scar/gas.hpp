@@ -34,11 +34,22 @@ struct GasConfig {
     double stationary_beta_tol = 1e-8;
     double optimizer_gradient_eps = 1e-5;
     bool optimizer_gradient_relative = false;
+    bool optimizer_gradient_central = false;
+    bool optimizer_gradient_mean_coordinates = false;
     // Empty bounds mean unbounded finite differences; fits supply their
     // actual optimizer bounds, including a joint correlation coordinate.
     std::vector<double> optimizer_lower_bounds;
     std::vector<double> optimizer_upper_bounds;
 };
+
+GasOptimizerCoordinatesResult gas_optimizer_coordinates(
+    const std::vector<double>& parameters,
+    const std::vector<double>& gradient,
+    double objective,
+    double objective_scale,
+    bool to_optimizer);
+
+std::vector<double> gas_optimizer_validation_steps();
 
 /// Native evaluator for bivariate score-driven copula dynamics.
 class GasEvaluator {

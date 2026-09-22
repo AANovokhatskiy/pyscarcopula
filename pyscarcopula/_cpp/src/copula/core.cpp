@@ -509,7 +509,7 @@ Observations copula_conditional_sample_from_uniforms(
             throw std::invalid_argument(
                 "conditional pair sampling uniforms must be in [0, 1)");
         }
-        const double sampled = kernel.inverse_h(
+        double sampled = kernel.inverse_h(
             quantile,
             given_value,
             r_value(r, static_cast<std::int64_t>(row)),
@@ -518,6 +518,11 @@ Observations copula_conditional_sample_from_uniforms(
             || !(sampled >= 0.0 && sampled <= 1.0)) {
             throw std::invalid_argument(
                 "conditional pair sampling produced a value outside [0, 1]");
+        }
+        // Preserve explicit zero quantiles; only interior draws can round
+        // to an endpoint that needs moving to the nearest interior float.
+        if (quantile > 0.0) {
+            sampled = open_sample(sampled);
         }
         out.push_back(given_coordinate == 0
             ? std::vector<double>{given_value, sampled}

@@ -486,6 +486,7 @@ class PreparedScarOuObjective:
                 self.obs.sum_z2,
                 self.config,
                 self.method,
+                self.obs.centered_squares,
             )
         else:
             self._native = self.module.PreparedScarOuEvaluator(

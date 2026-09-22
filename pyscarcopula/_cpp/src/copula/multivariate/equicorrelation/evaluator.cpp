@@ -328,7 +328,7 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
     }
     std::size_t temporary_values = 0;
     if (!scar_internal::checked_size_mul(
-            partial_values, std::size_t{2}, temporary_values)) {
+            partial_values, std::size_t{4}, temporary_values)) {
         out.status = scar::Status::InvalidSize;
         return out;
     }
@@ -337,8 +337,11 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
     out.temporary_values = temporary_values;
     out.sum_z.assign(observations.n_obs, 0.0);
     out.sum_z2.assign(observations.n_obs, 0.0);
+    out.centered_squares.assign(observations.n_obs, 0.0);
     std::vector<double> partial_sum(partial_values, 0.0);
     std::vector<double> partial_sum2(partial_values, 0.0);
+    std::vector<double> partial_mean(partial_values, 0.0);
+    std::vector<double> partial_centered(partial_values, 0.0);
     std::atomic<std::uint64_t> clipping_events{0};
     std::atomic<std::uint64_t> nonfinite_values{0};
     std::atomic<std::int64_t> first_failure{
@@ -375,6 +378,8 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
             double carry = 0.0;
             double sum2 = 0.0;
             double carry2 = 0.0;
+            double mean = 0.0;
+            double centered = 0.0;
             std::uint64_t local_clipping = 0;
             std::uint64_t local_nonfinite = 0;
             for (std::size_t column = begin; column < end; ++column) {
@@ -391,11 +396,16 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
                 const double z = math::normal_quantile_refined(clipped);
                 neumaier_add(z, sum, carry);
                 neumaier_add(z * z, sum2, carry2);
+                const double delta = z - mean;
+                mean += delta / static_cast<double>(column - begin + 1);
+                centered += delta * (z - mean);
             }
             const std::size_t partial_index =
                 row * dimension_tiles + tile;
             partial_sum[partial_index] = sum + carry;
             partial_sum2[partial_index] = sum2 + carry2;
+            partial_mean[partial_index] = mean;
+            partial_centered[partial_index] = centered;
             block_clipping += local_clipping;
             block_nonfinite += local_nonfinite;
         };
@@ -501,13 +511,26 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
         double carry = 0.0;
         double sum2 = 0.0;
         double carry2 = 0.0;
+        double mean = 0.0;
+        double centered = 0.0;
+        std::size_t count = 0;
         for (std::size_t tile = 0; tile < dimension_tiles; ++tile) {
             const std::size_t index = row * dimension_tiles + tile;
             neumaier_add(partial_sum[index], sum, carry);
             neumaier_add(partial_sum2[index], sum2, carry2);
+            const std::size_t tile_count = std::min(
+                dimension_tile, dimension - tile * dimension_tile);
+            const double delta = partial_mean[index] - mean;
+            const double ratio = static_cast<double>(tile_count)
+                / static_cast<double>(count + tile_count);
+            centered += partial_centered[index]
+                + delta * delta * static_cast<double>(count) * ratio;
+            mean += delta * ratio;
+            count += tile_count;
         }
         out.sum_z[row] = sum + carry;
         out.sum_z2[row] = sum2 + carry2;
+        out.centered_squares[row] = std::max(centered, 0.0);
     }
     out.status = scar::Status::Ok;
     return out;
@@ -518,7 +541,8 @@ MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
     DoubleView sum_z,
     DoubleView sum_z2,
     const std::vector<double>& correlations,
-    int n_threads) {
+    int n_threads,
+    DoubleView centered_squares) {
 
     MultivariateRowsResult out;
     out.n_threads_requested = n_threads;
@@ -535,6 +559,9 @@ MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
     }
     if (sum_z.size() == 0 || sum_z.data() == nullptr
         || sum_z2.data() == nullptr || sum_z2.size() != sum_z.size()
+        || (!centered_squares.empty()
+            && (centered_squares.data() == nullptr
+                || centered_squares.size() != sum_z.size()))
         || (correlations.size() != 1
             && correlations.size() != sum_z.size())) {
         out.status = scar::Status::InvalidSize;
@@ -546,7 +573,10 @@ MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
     }
     for (std::size_t row = 0; row < sum_z.size(); ++row) {
         if (!std::isfinite(sum_z[row]) || !std::isfinite(sum_z2[row])
-            || sum_z2[row] < 0.0) {
+            || sum_z2[row] < 0.0
+            || (!centered_squares.empty()
+                && (!std::isfinite(centered_squares[row])
+                    || centered_squares[row] < 0.0))) {
             out.status = scar::Status::InvalidParameter;
             out.failure.index = static_cast<std::int64_t>(row);
             return out;
@@ -580,7 +610,8 @@ MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
                     scar_internal::parameter_at(correlations, row);
                 double derivative = 0.0;
                 const scar_internal::EquicorrStats stats{
-                    sum_z[row], sum_z2[row]};
+                    sum_z[row], sum_z2[row],
+                    centered_squares.empty() ? -1.0 : centered_squares[row]};
                 const double value =
                     scar_internal::equicorr_log_pdf_from_stats(
                         spec, stats, correlation, &derivative);
@@ -614,7 +645,8 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
     DoubleView sum_z,
     DoubleView sum_z2,
     const std::vector<double>& state_grid,
-    int n_threads) {
+    int n_threads,
+    DoubleView centered_squares) {
 
     MultivariateGridResult out;
     out.n_threads_requested = n_threads;
@@ -632,6 +664,9 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
     }
     if (sum_z.size() == 0 || sum_z.data() == nullptr
         || sum_z2.data() == nullptr || sum_z2.size() != sum_z.size()
+        || (!centered_squares.empty()
+            && (centered_squares.data() == nullptr
+                || centered_squares.size() != sum_z.size()))
         || state_grid.empty()) {
         out.status = scar::Status::InvalidSize;
         return out;
@@ -642,7 +677,10 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
     }
     for (std::size_t row = 0; row < sum_z.size(); ++row) {
         if (!std::isfinite(sum_z[row]) || !std::isfinite(sum_z2[row])
-            || sum_z2[row] < 0.0) {
+            || sum_z2[row] < 0.0
+            || (!centered_squares.empty()
+                && (!std::isfinite(centered_squares[row])
+                    || centered_squares[row] < 0.0))) {
             out.status = scar::Status::InvalidParameter;
             out.failure.index = static_cast<std::int64_t>(row);
             return out;
@@ -689,7 +727,8 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
                     static_cast<std::size_t>(row_index);
                 const std::size_t base = row * state_grid.size();
                 const scar_internal::EquicorrStats stats{
-                    sum_z[row], sum_z2[row]};
+                    sum_z[row], sum_z2[row],
+                    centered_squares.empty() ? -1.0 : centered_squares[row]};
                 for (std::size_t column = 0;
                      column < state_grid.size();
                      ++column) {

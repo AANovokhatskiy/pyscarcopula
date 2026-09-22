@@ -20,17 +20,12 @@ double log_pdf(
     double marginal_quad = 0.0;
     const std::size_t dimension = correlation.dimension();
     const std::size_t rank = correlation.rank();
-    const std::vector<double>& inverse_uniqueness =
-        correlation.inverse_uniqueness();
     const std::vector<double>& weighted_loadings =
         correlation.weighted_loadings();
     factor_projection.assign(rank, 0.0);
-    double diagonal_quad = 0.0;
     for (std::size_t column = 0; column < dimension; ++column) {
         const double value = scores[column];
         marginal_quad += value * value;
-        diagonal_quad +=
-            inverse_uniqueness[column] * value * value;
         const double* weighted =
             weighted_loadings.data() + column * rank;
         for (std::size_t factor = 0; factor < rank; ++factor) {
@@ -40,12 +35,8 @@ double log_pdf(
     factor_solved.assign(
         factor_projection.begin(), factor_projection.end());
     correlation.solve_core_inplace(factor_solved.data());
-    double correction = 0.0;
-    for (std::size_t factor = 0; factor < rank; ++factor) {
-        correction +=
-            factor_projection[factor] * factor_solved[factor];
-    }
-    const double joint_quad = diagonal_quad - correction;
+    const double joint_quad = correlation.quadratic_form_from_core(
+        scores, factor_solved.data());
     if (!std::isfinite(joint_quad) || joint_quad < -1e-10) {
         return std::numeric_limits<double>::quiet_NaN();
     }

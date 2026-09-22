@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import numpy as np
 import pytest
 from pathlib import Path
@@ -29,7 +30,7 @@ from pyscarcopula.numerical.tm_functions import (
     tm_forward_predictive_mean,
 )
 from pyscarcopula.numerical.predictive_tm import tm_state_distribution
-from pyscarcopula._native import scar_ou as _cpp_scar_ou
+from pyscarcopula._native import NativeError, scar_ou as _cpp_scar_ou
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._rvine_edges import _edge_h, _edge_h_inverse
@@ -909,49 +910,54 @@ def test_cpp_loglik_matches_python_auto_spectral():
     np.testing.assert_allclose(got, ref, rtol=2e-11, atol=2e-11)
 
 
-def test_cpp_auto_loglik_falls_back_from_failed_spectral_to_matrix():
-    u = np.random.default_rng(1).uniform(0.001, 0.999, size=(50, 2))
+@pytest.fixture
+def failed_spectral_case():
+    # Alternating tails expose negative mass in the truncated three-mode
+    # Hermite operator even after emission scaling. The matrix stays positive.
+    u = np.tile([[0.001, 0.001], [0.001, 0.999]], (25, 1))
     copula = BivariateGaussianCopula()
     cfg = AutoTMConfig(
         transition_method="auto",
         small_kdt=1e-9,
-        basis_order=2,
-        quad_order=2,
-        K=30,
+        basis_order=3,
+        quad_order=3,
+        K=300,
         adaptive=False,
         max_K=None,
     )
-    alpha = (0.1, 0.0, 10.0)
+    alpha = (0.98, 0.0, 4.0 * np.sqrt(1.96))
+    return u, copula, cfg, alpha
+
+
+def test_cpp_auto_loglik_falls_back_from_failed_spectral_to_matrix(
+        failed_spectral_case):
+    u, copula, cfg, alpha = failed_spectral_case
+    with pytest.raises(NativeError, match="numerical_failure"):
+        _cpp_scar_ou.loglik(
+            *alpha, u, copula, replace(cfg, transition_method="spectral"))
 
     got, info = _cpp_scar_ou.loglik(*alpha, u, copula, cfg)
-    ref, ref_info = auto_loglik_with_info(*alpha, u, copula, cfg)
+    ref, ref_info = _cpp_scar_ou.loglik(
+        *alpha, u, copula, replace(cfg, transition_method="matrix"))
 
     assert info["backend"] == "matrix"
     assert info["fallback_from"] == "spectral"
     assert info["fallback_chain"] == ["spectral"]
     assert ref_info["backend"] == "matrix"
-    assert ref_info["fallback_from"] == "spectral"
-    assert ref_info["fallback_chain"] == ["spectral"]
     np.testing.assert_allclose(got, ref, rtol=2e-11, atol=2e-11)
 
 
-def test_cpp_auto_gradient_falls_back_from_failed_spectral_to_matrix():
-    u = np.random.default_rng(1).uniform(0.001, 0.999, size=(50, 2))
-    copula = BivariateGaussianCopula()
-    cfg = AutoTMConfig(
-        transition_method="auto",
-        small_kdt=1e-9,
-        basis_order=2,
-        quad_order=2,
-        K=30,
-        adaptive=False,
-        max_K=None,
-    )
-    alpha = (0.1, 0.0, 10.0)
+def test_cpp_auto_gradient_falls_back_from_failed_spectral_to_matrix(
+        failed_spectral_case):
+    u, copula, cfg, alpha = failed_spectral_case
+    with pytest.raises(NativeError, match="numerical_failure"):
+        _cpp_scar_ou.neg_loglik_with_grad(
+            *alpha, u, copula, replace(cfg, transition_method="spectral"))
 
     got_val, got_grad, info = _cpp_scar_ou.neg_loglik_with_grad_info(
         *alpha, u, copula, cfg)
-    ref_val, ref_grad = auto_neg_loglik_with_grad(*alpha, u, copula, cfg)
+    ref_val, ref_grad = _cpp_scar_ou.neg_loglik_with_grad(
+        *alpha, u, copula, replace(cfg, transition_method="matrix"))
 
     assert info["backend"] == "matrix"
     assert info["fallback_from"] == "spectral"

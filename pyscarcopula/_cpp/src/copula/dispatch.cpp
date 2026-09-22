@@ -78,6 +78,10 @@ void equicorr_fill_row(
         const std::size_t index = static_cast<std::size_t>(row_index);
         stats.sum = spec.equicorr_sum_scores()[index];
         stats.sum_squares = spec.equicorr_sum_squares()[index];
+        if (spec.equicorr_centered_squares().size()
+                == spec.equicorr_sum_scores().size()) {
+            stats.centered_squares = spec.equicorr_centered_squares()[index];
+        }
     } else if (!equicorr_sufficient_statistics(spec, row, stats)) {
         std::fill(
             fi_row,

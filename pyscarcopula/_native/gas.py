@@ -104,6 +104,21 @@ def _params(module, omega, gamma, beta):
     return out
 
 
+def optimizer_coordinates(parameters, *, gradient=(), objective=0.0,
+                          objective_scale=1.0, to_optimizer=True):
+    """Map physical and stationary-mean optimizer coordinates natively."""
+    result = _extension.load().gas_optimizer_coordinates(
+        as_float64_array(parameters), as_float64_array(gradient),
+        float(objective), float(objective_scale), bool(to_optimizer))
+    _raise_status(result, "optimizer_coordinates")
+    return result
+
+
+def optimizer_validation_steps():
+    """Return native three-point roundoff/truncation balancing steps."""
+    return _extension.load().gas_optimizer_validation_steps()
+
+
 def _config(
     module,
     scaling,
@@ -115,6 +130,8 @@ def _config(
     stationary_beta_tol=1e-8,
     optimizer_gradient_eps=1e-5,
     optimizer_gradient_relative=False,
+    optimizer_gradient_central=False,
+    optimizer_gradient_mean_coordinates=False,
     optimizer_bounds=None,
 ):
     scaling = _scaling_name(scaling)
@@ -133,6 +150,8 @@ def _config(
     out.optimizer_gradient_eps = _finite_float(
         optimizer_gradient_eps, "optimizer_gradient_eps")
     out.optimizer_gradient_relative = bool(optimizer_gradient_relative)
+    out.optimizer_gradient_central = bool(optimizer_gradient_central)
+    out.optimizer_gradient_mean_coordinates = bool(optimizer_gradient_mean_coordinates)
     if optimizer_bounds is not None:
         if len(optimizer_bounds) != 2:
             raise ValueError("optimizer_bounds must contain lower and upper bounds")
@@ -170,6 +189,8 @@ def _inputs(
     *,
     optimizer_gradient_eps=1e-5,
     optimizer_gradient_relative=False,
+    optimizer_gradient_central=False,
+    optimizer_gradient_mean_coordinates=False,
     optimizer_bounds=None,
 ):
     module = _extension.load()
@@ -201,6 +222,8 @@ def _inputs(
             score_eps,
             optimizer_gradient_eps=optimizer_gradient_eps,
             optimizer_gradient_relative=optimizer_gradient_relative,
+            optimizer_gradient_central=optimizer_gradient_central,
+            optimizer_gradient_mean_coordinates=optimizer_gradient_mean_coordinates,
             optimizer_bounds=optimizer_bounds,
         ),
     )
@@ -230,7 +253,8 @@ def filter_result(
     result = module.GasEvaluator().filter(
         params, spec, obs, config) if isinstance(obs, np.ndarray) else (
             module.GasEvaluator().filter_equicorr_prepared(
-                params, spec, obs.sum_z, obs.sum_z2, config))
+                params, spec, obs.sum_z, obs.sum_z2, config,
+                obs.centered_squares))
     _raise_status(result, "filter")
     output = GasFilterOutput(
         g_path=np.asarray(result["g_path"], dtype=np.float64),
@@ -320,7 +344,8 @@ def log_likelihood(
     result = module.GasEvaluator().log_likelihood(
         params, spec, obs, config) if isinstance(obs, np.ndarray) else (
             module.GasEvaluator().log_likelihood_equicorr_prepared(
-                params, spec, obs.sum_z, obs.sum_z2, config))
+                params, spec, obs.sum_z, obs.sum_z2, config,
+                obs.centered_squares))
     _raise_status(result, "log_likelihood")
     value = float(result["log_likelihood"])
     if not np.isfinite(value):
@@ -344,7 +369,8 @@ def negative_log_likelihood(
     result = module.GasEvaluator().negative_log_likelihood(
         params, spec, obs, config) if isinstance(obs, np.ndarray) else (
             module.GasEvaluator().negative_log_likelihood_equicorr_prepared(
-                params, spec, obs.sum_z, obs.sum_z2, config))
+                params, spec, obs.sum_z, obs.sum_z2, config,
+                obs.centered_squares))
     _raise_status(result, "negative_log_likelihood")
     value = float(result["log_likelihood"])
     if not np.isfinite(value):
@@ -364,6 +390,8 @@ def negative_log_likelihood_and_gradient(
     *,
     optimizer_gradient_eps=1e-5,
     optimizer_gradient_relative=False,
+    optimizer_gradient_central=False,
+    optimizer_gradient_mean_coordinates=False,
     optimizer_bounds=None,
 ) -> tuple[float, np.ndarray]:
     """Evaluate native ``-logL`` and its three GAS optimizer derivatives."""
@@ -377,6 +405,8 @@ def negative_log_likelihood_and_gradient(
         score_eps,
         optimizer_gradient_eps=optimizer_gradient_eps,
         optimizer_gradient_relative=optimizer_gradient_relative,
+        optimizer_gradient_central=optimizer_gradient_central,
+        optimizer_gradient_mean_coordinates=optimizer_gradient_mean_coordinates,
         optimizer_bounds=optimizer_bounds,
     )
     evaluator = module.GasEvaluator()
@@ -385,7 +415,8 @@ def negative_log_likelihood_and_gradient(
             params, spec, obs, config)
         if isinstance(obs, np.ndarray)
         else evaluator.negative_log_likelihood_and_gradient_equicorr_prepared(
-            params, spec, obs.sum_z, obs.sum_z2, config)
+            params, spec, obs.sum_z, obs.sum_z2, config,
+            obs.centered_squares)
     )
     _raise_status(result, "negative_log_likelihood_and_gradient")
     objective = float(result["objective"])
@@ -414,6 +445,7 @@ def negative_log_likelihood_and_gradient_shrinkage(
     *,
     optimizer_gradient_eps=1e-5,
     optimizer_gradient_relative=False,
+    optimizer_gradient_central=False,
     optimizer_bounds=None,
 ) -> tuple[float, np.ndarray]:
     """Evaluate joint GAS/shrinkage objective and four native derivatives."""
@@ -427,6 +459,7 @@ def negative_log_likelihood_and_gradient_shrinkage(
         score_eps,
         optimizer_gradient_eps=optimizer_gradient_eps,
         optimizer_gradient_relative=optimizer_gradient_relative,
+        optimizer_gradient_central=optimizer_gradient_central,
         optimizer_bounds=optimizer_bounds,
     )
     if not isinstance(obs, np.ndarray):
@@ -543,6 +576,7 @@ def predict_parameter(
             obs.sum_z2,
             config,
             horizon == "next",
+            obs.centered_squares,
         ))
     _raise_status(result, "predict_parameter")
     value = float(result["parameter"])

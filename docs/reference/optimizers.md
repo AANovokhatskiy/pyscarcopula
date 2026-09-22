@@ -98,11 +98,61 @@ nested static start with `gamma=0`. The latter shares the standard start's
 intercept and persistence and exactly reproduces the static MLE path. An explicit `gamma0`
 retains single-start semantics, including joint shrinkage fits. When `ftol`
 is omitted, the best candidate is refined with `ftol=1e-12`. Each start and
-refinement has its own `maxfun` and `maxiter` budget; `nfev` sums the runs.
+refinement has its own `maxfun` and `maxiter` budget; `nfev` sums the runs and
+the final stationarity checks.
 The best finite terminal candidate is retained even if a worse candidate
 reported convergence. A trial point that improves log likelihood by more
 than `0.001` is retained with `success=False` if convergence there was not
 established.
+
+For bivariate, EquicorrGaussian and fixed-correlation StochasticStudent fits, a separate
+native three-point check validates the
+gradient of the **mean** negative log likelihood in stationary-mean coordinates
+`(omega/(1-beta), gamma, beta)`. Both the projected gradient and its discrepancy
+between two difference steps must be at most `gtol`. Default validation uses
+`cbrt(machine epsilon)` and half that step to balance truncation and roundoff.
+The stencil is formed directly in stationary-mean coordinates; differentiating
+in physical intercept coordinates first amplifies perturbations near `beta=1`.
+When step uncertainty straddles the acceptance threshold, validation can refine
+to quarter and eighth steps. Acceptance always requires two neighboring
+estimates below tolerance and agreement within tolerance; a resolved large
+gradient stops refinement and requests recovery. All evaluated steps and norms
+are saved. Explicit per-call difference steps are preserved. This validation scale is separate
+from the original optimizer's summed-objective tolerance and is recorded in
+`diagnostics['stationarity_validation']` together with the coordinate system,
+steps, raw gradient, and discrepancy.
+
+Automatic multivariate fits without per-call optimizer overrides complete the
+same two starts at a second native difference step even when the first point
+passes stationarity. A stationary point does not establish multistart coverage.
+Bivariate fits use these additional starts when validation fails. If needed, they polish the
+best point in stationary-mean coordinates. A final bounded Powell stage can
+recover when noisy gradients prevent line-search progress. Its iterations evaluate
+only the scalar objective, reserving one final gradient evaluation within the
+scalar-objective budget. A verified stationary
+candidate can be preferred over a nonstationary candidate only within the existing
+`0.001` material log-likelihood tolerance; `stationary_selection_loglik_loss`
+records the exact loss. Explicit per-call starts, difference steps, function/iteration
+budgets, line-search limits, and `ftol` suppress these additional recovery stages.
+These bounded recovery stages have their own optimizer budgets, including
+budgets supplied through `NumericalConfig`, and are recorded in `optimizer_stages`. A fit
+whose final point fails validation has `success=False`. Saturated Equicorr
+transforms remain valid for scalar likelihood evaluation, but the optimizer
+gradient provider rejects their unresolvable sensitivity so line search can
+recover instead of accepting a large finite plateau with zero gradient.
+Bivariate vine-edge fits use the same independent check. If recovery does not
+establish stationarity, the existing vine `dynamic_failure_policy` determines
+whether to fall back to MLE, keep the unsuccessful result, or raise.
+
+Multivariate GAS bootstrap refits distinguish a library-inherited start from an
+explicit `bootstrap_fit_kwargs['gamma0']`. An inherited result adds a warm start
+alongside starts computed from the bootstrap sample's static MLE; it does not
+disable automatic recovery. Each recovery stage uses the supplied `maxfun`,
+`maxiter`, and `maxls`; the total work can span several stage budgets. Explicit
+`gamma0`, difference steps, and `ftol` retain their existing control over recovery.
+An explicit `gamma0` is also preserved on the bootstrap retry. Both attempts use
+the same simulated sample. Unresolved stationarity still raises a bootstrap
+failure rather than accepting the fit or drawing a replacement sample.
 
 `success` additionally requires the optimizer's objective to agree with the
 reported likelihood within `1e-6`, and the likelihood to be no more than
@@ -115,8 +165,11 @@ and reporting evaluate the same function.
 objectives, raw convergence messages and evaluation counts),
 `optimizer_success`, `optimizer_message`, `projected_gradient_inf_norm`,
 `static_baseline_log_likelihood`, `objective_discrepancy`, and
-`likelihood_validation_passed`. The projected gradient is informational; a
-small relative function decrease can still occur with a large gradient.
+`likelihood_validation_passed`, and `stationarity_validation`. The original
+`projected_gradient_inf_norm` is informational; a small relative function
+decrease can still occur with a large gradient. The fits above use
+the separately scaled, independently checked stationarity diagnostic for
+acceptance.
 Neither these checks nor multistart establish global optimality or guarantee
 agreement with another version to `0.001`. Inspect alternative starts and
 finite-difference steps for sensitive fits. The smaller default `eps` limits
@@ -139,7 +192,9 @@ the sign and magnitude of the optimizer coordinate.
 `gradient_kind='native_finite_difference'`. `maxfun` and `nfev` use scalar
 objective budget units, preserving the previous counts for completed
 finite-difference calls. Each native objective/gradient call is charged four
-units, or five for joint GAS/shrinkage fitting. An early numerical failure
+units, or five for joint GAS/shrinkage fitting. Three-point validation and
+recovery use seven units for three parameters, including one base evaluation
+and two perturbations per parameter. An early numerical failure
 may execute fewer likelihood evaluations but still incurs that full charge;
 `nfev` therefore does not count physical likelihood calls. As with SciPy
 numerical gradients, an iteration or line search can exceed `maxfun`.

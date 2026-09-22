@@ -228,4 +228,14 @@ const std::vector<double>& CopulaSpec::equicorr_sum_squares() const {
         .sum_squares;
 }
 
+std::vector<double>& CopulaSpec::equicorr_centered_squares() {
+    return copula::multivariate::equicorrelation::observation_cache(*this)
+        .centered_squares;
+}
+
+const std::vector<double>& CopulaSpec::equicorr_centered_squares() const {
+    return copula::multivariate::equicorrelation::observation_cache(*this)
+        .centered_squares;
+}
+
 }  // namespace scar

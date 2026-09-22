@@ -80,6 +80,7 @@ py::dict equicorr_preparation_result_to_dict(
     py::dict output;
     output["sum_z"] = vector_to_array(result.sum_z);
     output["sum_z2"] = vector_to_array(result.sum_z2);
+    output["centered_squares"] = vector_to_array(result.centered_squares);
     output["status"] = static_cast<int>(result.status);
     output["failure_index"] = result.failure.index;
     output["n_threads_requested"] = result.n_threads_requested;
@@ -653,15 +654,19 @@ void bind_multivariate(py::module_& m) {
             py::array_t<double, py::array::c_style | py::array::forcecast>
                 sum_z2,
             py::array_t<double, py::array::c_style | py::array::forcecast> r,
-            int n_threads) {
+            int n_threads, py::object centered_squares) {
             scar::MultivariateRowsResult result;
+            const std::vector<double> centered = centered_squares.is_none()
+                ? std::vector<double>{}
+                : vector_from_array(real_float64_array_from_object(
+                    centered_squares, "centered_squares"));
             const auto sums = flat_view_from_array(sum_z, "sum_z");
             const auto sums2 = flat_view_from_array(sum_z2, "sum_z2");
             const auto parameters = vector_from_array(r);
             {
                 py::gil_scoped_release release;
                 result = scar::equicorr_log_pdf_and_grad_from_stats(
-                    copula, sums, sums2, parameters, n_threads);
+                    copula, sums, sums2, parameters, n_threads, {centered.data(), centered.size()});
             }
             return multivariate_rows_result_to_dict(result);
         },
@@ -669,7 +674,8 @@ void bind_multivariate(py::module_& m) {
         py::arg("sum_z"),
         py::arg("sum_z2"),
         py::arg("r"),
-        py::arg("n_threads") = 1);
+        py::arg("n_threads") = 1,
+        py::arg("centered_squares") = py::none());
 
     m.def(
         "multivariate_pdf_and_grad_grid",
@@ -706,15 +712,19 @@ void bind_multivariate(py::module_& m) {
                 sum_z2,
             py::array_t<double, py::array::c_style | py::array::forcecast>
                 x_grid,
-            int n_threads) {
+            int n_threads, py::object centered_squares) {
             scar::MultivariateGridResult result;
+            const std::vector<double> centered = centered_squares.is_none()
+                ? std::vector<double>{}
+                : vector_from_array(real_float64_array_from_object(
+                    centered_squares, "centered_squares"));
             const auto sums = flat_view_from_array(sum_z, "sum_z");
             const auto sums2 = flat_view_from_array(sum_z2, "sum_z2");
             const auto grid = vector_from_array(x_grid);
             {
                 py::gil_scoped_release release;
                 result = scar::equicorr_pdf_and_grad_grid_from_stats(
-                    copula, sums, sums2, grid, n_threads);
+                    copula, sums, sums2, grid, n_threads, {centered.data(), centered.size()});
             }
             return multivariate_grid_result_to_dict(result);
         },
@@ -722,7 +732,8 @@ void bind_multivariate(py::module_& m) {
         py::arg("sum_z"),
         py::arg("sum_z2"),
         py::arg("x_grid"),
-        py::arg("n_threads") = 1);
+        py::arg("n_threads") = 1,
+        py::arg("centered_squares") = py::none());
 
     m.def(
         "multivariate_gaussian_conditional",

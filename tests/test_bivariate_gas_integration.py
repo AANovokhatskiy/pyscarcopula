@@ -112,7 +112,7 @@ def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
     original_gradient = _cpp_gas.negative_log_likelihood_and_gradient
 
     def counted_gradient(*args, **kwargs):
-        gradient_calls.append(1)
+        gradient_calls.append(7 if kwargs.get("optimizer_gradient_central") else 4)
         return original_gradient(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -134,9 +134,11 @@ def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
     assert np.isfinite(result.log_likelihood)
     # The two refinement runs each have their own maxfun budget. As with
     # SciPy numerical derivatives, the final iteration may exceed that limit.
-    assert result.nfev == 4 * len(gradient_calls) > 0
+    assert result.nfev == sum(gradient_calls) > 0
     refinement = result.diagnostics['optimizer_refinement']
-    assert result.nfev == refinement['first_nfev'] + refinement['refined_nfev']
+    assert result.nfev == (
+        refinement['first_nfev'] + refinement['refined_nfev']
+        + result.diagnostics['verification_nfev'])
     assert result.log_likelihood == pytest.approx(
         _cpp_gas.log_likelihood(
             p.omega,

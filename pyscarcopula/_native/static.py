@@ -55,6 +55,7 @@ class StaticLikelihoodEvaluator:
             prepared.sum_z,
             prepared.sum_z2,
             _validated_n_threads(n_threads),
+            prepared.centered_squares,
         )
         raise_for_status(
             int(self._native.status),

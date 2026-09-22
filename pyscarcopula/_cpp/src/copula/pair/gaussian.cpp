@@ -32,6 +32,13 @@ double gaussian_log_pdf_unrotated(double u1, double u2, double rho) {
     const double v2 = clip_pseudo_observation(u2);
     const double x1 = normal_quantile(v1);
     const double x2 = normal_quantile(v2);
+    if (std::abs(rho) > 0.99) {
+        const double plus = x1 + x2;
+        const double minus = x1 - x2;
+        return -0.5 * (std::log1p(-rho) + std::log1p(rho))
+            + 0.25 * rho * (plus * plus / (1.0 + rho)
+                           - minus * minus / (1.0 - rho));
+    }
     const double r2 = rho * rho;
     const double omr2 = 1.0 - r2;
     return -0.5 * std::log(omr2)
@@ -43,6 +50,12 @@ double gaussian_dlog_pdf_dr_unrotated(double u1, double u2, double rho) {
     const double v2 = clip_pseudo_observation(u2);
     const double x1 = normal_quantile(v1);
     const double x2 = normal_quantile(v2);
+    if (std::abs(rho) > 0.99) {
+        const double plus = (x1 + x2) / (1.0 + rho);
+        const double minus = (x1 - x2) / (1.0 - rho);
+        return rho / ((1.0 - rho) * (1.0 + rho))
+            + 0.25 * (plus * plus - minus * minus);
+    }
     const double r2 = rho * rho;
     const double omr2 = 1.0 - r2;
     const double s1 = x1 * x1 + x2 * x2;

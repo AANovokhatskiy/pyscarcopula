@@ -459,7 +459,7 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
     return clip_rosenblatt_output(e)
 
 
-def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
+def _bootstrap_fit_kwargs(fit_result, fit_kwargs, *, inherit_gas_start=True):
     """Restore fitted defaults while retaining explicit refit settings."""
     out = dict(fit_kwargs)
     method = fit_result.method.upper()
@@ -471,6 +471,8 @@ def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
             config.gas_score_eps if config is not None else
             getattr(fit_result, 'score_eps', DEFAULT_CONFIG.gas_score_eps))
     if 'alpha0' in out or 'gamma0' in out:
+        return out
+    if method == 'GAS' and not inherit_gas_start:
         return out
 
     if method == 'MLE' and hasattr(fit_result, 'copula_param'):
@@ -757,10 +759,14 @@ def _bootstrap_refit_dynamic(
         config=config,
         **strategy_kwargs,
     )
+    if method == 'GAS' and 'gamma0' not in fit_kwargs:
+        # A library warm start must not acquire the single-start semantics
+        # reserved for a caller's explicit gamma0.
+        fit_kwargs = dict(fit_kwargs, initial_gas_result=fit_result)
     result = strategy.fit(
         copula,
         u_boot,
-        **_bootstrap_fit_kwargs(fit_result, fit_kwargs),
+        **_bootstrap_fit_kwargs(fit_result, fit_kwargs, inherit_gas_start=False),
     )
     copula.fit_result = result
     copula._last_u = u_boot
@@ -951,12 +957,23 @@ def _bootstrap_gof_worker(task):
                 # data would condition the bootstrap on fit success.
                 retry_kwargs = dict(refit_kwargs)
                 candidate_start = _bootstrap_fit_kwargs(boot_result, {})
+                automatic_gas = (
+                    adapter_name in {'equicorr', 'stochastic_student'}
+                    and fit_result.method.upper() == 'GAS'
+                    and 'gamma0' not in refit_kwargs)
                 for key in ('alpha0', 'gamma0'):
+                    if (key == 'gamma0'
+                            and adapter_name in {'equicorr', 'stochastic_student'}
+                            and fit_result.method.upper() == 'GAS'):
+                        # Preserve explicit starts, and keep inherited ones
+                        # eligible for GAS recovery on the same sample.
+                        continue
                     if key in candidate_start and np.all(
                             np.isfinite(candidate_start[key])):
                         retry_kwargs[key] = candidate_start[key]
                 copula, boot_result = adapter.refit(
-                    copula_class, constructor_kwargs, u_boot, fit_result,
+                    copula_class, constructor_kwargs, u_boot,
+                    boot_result if automatic_gas else fit_result,
                     retry_kwargs, K, grid_range, n_threads, config)
                 refit_attempts.append(_fit_result_diagnostics(boot_result))
                 if (not refit_attempts[-1]['bootstrap_fit_success'] or
@@ -1016,7 +1033,9 @@ def _bootstrap_gof(
     if fit_result.method.upper() == 'GAS':
         # Resolve fitted defaults before with_n_threads adds a default config;
         # only a config supplied by the caller overrides the fitted score step.
-        fit_kwargs = _bootstrap_fit_kwargs(fit_result, fit_kwargs)
+        fit_kwargs = _bootstrap_fit_kwargs(
+            fit_result, fit_kwargs,
+            inherit_gas_start=adapter_name not in {'equicorr', 'stochastic_student'})
     n_threads, parallel_diagnostics = resolve_parallelism(
         n_jobs, n_bootstrap, None, (fit_kwargs,))
     fit_kwargs = with_n_threads(fit_kwargs, n_threads)

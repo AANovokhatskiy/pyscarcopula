@@ -13,14 +13,17 @@ from pyscarcopula.strategy.gas import GASStrategy
 
 @pytest.mark.parametrize("scaling", ["unit", "fisher"])
 @pytest.mark.parametrize("prepared", [False, True])
-def test_natural_equicorr_failure_honors_config(scaling, prepared):
+def test_equicorr_boundary_success_is_not_replaced_by_failure_penalty(scaling, prepared):
     model = EquicorrGaussianCopula(4)
     observations = np.random.default_rng(91).uniform(0.1, 0.9, (8, 4))
     data = model.prepare_sufficient_statistics(observations) if prepared else observations
     parameters = [100.0, 0.1, 0.5]
-    with pytest.raises(FloatingPointError) as error:
-        native_gas.negative_log_likelihood(*parameters, data, model, scaling, 1e-4)
-    assert error.value.status == 7
+    # The bounded transform now keeps this formerly singular trial inside
+    # the SPD domain. A large finite objective must not become fail_value.
+    expected = native_gas.negative_log_likelihood(
+        *parameters, data, model, scaling, 1e-4)
+    assert np.isfinite(expected)
+    assert expected > 1e10
     # The model helper accepts dense observations; the strategy additionally
     # accepts the prepared representation used by Equicorr fitting.
     def objective(config):
@@ -29,8 +32,8 @@ def test_natural_equicorr_failure_honors_config(scaling, prepared):
         return model.mlog_likelihood(
             parameters, data, method="GAS", scaling=scaling, config=config)
 
-    assert objective(NumericalConfig(fail_value=4321.0)) == 4321.0
-    assert objective(NumericalConfig()) == 1e10
+    assert objective(NumericalConfig(fail_value=4321.0)) == expected
+    assert objective(NumericalConfig()) == expected
 
 
 @pytest.mark.parametrize("family", ["bivariate", "equicorr", "student", "factor"])

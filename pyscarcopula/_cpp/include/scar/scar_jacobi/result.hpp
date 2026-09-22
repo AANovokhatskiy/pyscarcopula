@@ -208,6 +208,22 @@ struct JacobiObjectiveValue {
     JacobiFilterDiagnostics diagnostics{};
 };
 
+/// Evaluated dynamic boundary candidate and two-scale inward stationarity check.
+struct JacobiBoundaryCandidate {
+    bool attempted = false;
+    bool selected = false;
+    bool stationarity_validated = false;
+    JacobiParams params{};
+    std::array<double, 3> raw{};
+    double objective = 0.0;
+    double tolerance = 0.0;
+    std::array<double, 2> steps{1e-3, 1e-2};
+    std::array<std::array<double, 3>, 2> inward_steps{};
+    std::array<std::array<double, 3>, 2> inward_slopes{};
+    int nfev = 0;
+    Status candidate_status = Status::Ok;
+};
+
 struct JacobiObjectiveGradient {
     double objective = 0.0;
     std::array<double, 3> gradient{};
@@ -279,6 +295,7 @@ using JacobiHorizonResult = Result<JacobiHorizonDiagnostics>;
 using JacobiAdaptiveSelectionResult = Result<JacobiAdaptiveSelection>;
 using JacobiFilterResult = Result<JacobiFilterState>;
 using JacobiObjectiveResult = Result<JacobiObjectiveValue>;
+using JacobiBoundaryCandidateResult = Result<JacobiBoundaryCandidate>;
 using JacobiGradientResult = Result<JacobiObjectiveGradient>;
 using JacobiEvaluatorVectorResult = Result<JacobiEvaluatorVector>;
 using JacobiEvaluatorPairResult = Result<JacobiEvaluatorPair>;

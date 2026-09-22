@@ -248,7 +248,9 @@ bool PreparedDynamicEmission::has_cached_observations(
     std::size_t rows) const noexcept {
     if (impl_->kind == DynamicEmissionKind::Equicorrelation) {
         return impl_->spec->equicorr_sum_scores().size() == rows
-            && impl_->spec->equicorr_sum_squares().size() == rows;
+            && impl_->spec->equicorr_sum_squares().size() == rows
+            && (impl_->spec->equicorr_centered_squares().empty()
+                || impl_->spec->equicorr_centered_squares().size() == rows);
     }
     if (family() == CopulaFamily::Gaussian) {
         return impl_->spec->pair_gaussian_first_scores().size() == rows
@@ -274,8 +276,10 @@ bool PreparedDynamicEmission::observation_cache_compatible(
     if (impl_->kind == DynamicEmissionKind::Equicorrelation) {
         const auto& sums = impl_->spec->equicorr_sum_scores();
         const auto& squares = impl_->spec->equicorr_sum_squares();
-        return (sums.empty() && squares.empty())
-            || (sums.size() == rows && squares.size() == rows);
+        const auto& centered = impl_->spec->equicorr_centered_squares();
+        return (sums.empty() && squares.empty() && centered.empty())
+            || (sums.size() == rows && squares.size() == rows
+                && (centered.empty() || centered.size() == rows));
     }
     if (is_unrotated_gaussian_pair()) {
         const auto& first = impl_->spec->pair_gaussian_first_scores();
@@ -331,7 +335,10 @@ Status PreparedDynamicEmission::validate_observations(
         for (std::size_t row = 0; row < observations.size(); ++row) {
             if (!std::isfinite(sums[row])
                 || !std::isfinite(squares[row])
-                || squares[row] < 0.0) {
+                || squares[row] < 0.0
+                || (!impl_->spec->equicorr_centered_squares().empty()
+                    && (!std::isfinite(impl_->spec->equicorr_centered_squares()[row])
+                        || impl_->spec->equicorr_centered_squares()[row] < 0.0))) {
                 return Status::InvalidParameter;
             }
         }
@@ -466,6 +473,11 @@ DynamicEmissionRowResult PreparedDynamicEmission::evaluate_parameter(
             stats.sum = impl_->spec->equicorr_sum_scores()[index];
             stats.sum_squares =
                 impl_->spec->equicorr_sum_squares()[index];
+            if (impl_->spec->equicorr_centered_squares().size()
+                    == impl_->spec->equicorr_sum_scores().size()) {
+                stats.centered_squares =
+                    impl_->spec->equicorr_centered_squares()[index];
+            }
         } else if (!scar_internal::equicorr_sufficient_statistics(
                        *impl_->spec, row, stats)) {
             out.status = Status::NumericalFailure;
