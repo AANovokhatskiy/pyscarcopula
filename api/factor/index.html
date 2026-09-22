@@ -1,0 +1,4564 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Python library for bivariate, multivariate, vine, and stochastic copula models">
+      
+      
+      
+        <link rel="canonical" href="https://AANovokhatskiy.github.io/pyscarcopula/api/factor/">
+      
+      
+        <link rel="prev" href="../static-models/">
+      
+      
+        <link rel="next" href="../equicorrelation/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Factor Operators - pyscarcopula</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#factor-operators-api" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="pyscarcopula" class="md-header__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            pyscarcopula
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Factor Operators
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="pyscarcopula" class="md-nav__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    pyscarcopula
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/choosing-a-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing a Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/bivariate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bivariate Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/multivariate_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/factor-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Factor Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fitting and Prediction
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Fitting and Prediction
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/estimation-methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/prediction-semantics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prediction Semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/rvine-conditioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    R-vine Conditioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Mathematical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/mathematical-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and Scaling
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Performance and Scaling
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPU Parallelism
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Numerical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Numerical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/numerical-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Numerical Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/optimizers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimizer Controls
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/scar-ou/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SCAR OU Numerics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/scar-jacobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SCAR Jacobi Numerics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/student-quantiles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Student Quantiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/multivariate-numerics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate Numerics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/vine-numerics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine Numerics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Validation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/conditional-sampling-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conditional Sampling CI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../copulas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Copulas and Fitting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multivariate_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate and Factor Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../static-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Gaussian and Student
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Factor Operators
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Factor Operators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#factor-correlation-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Factor correlation operator
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Factor correlation operator">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorCorrelation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FactorCorrelation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.dimension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dimension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.storage_bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        storage_bytes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.uniqueness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uniqueness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.from_unconstrained" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        from_unconstrained
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.load_mmap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load_mmap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.load_npz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load_npz
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.prepare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        prepare
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.save_mmap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        save_mmap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.save_npz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        save_npz
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.to_dense" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_dense
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PreparedFactorCorrelation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PreparedFactorCorrelation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.dimension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dimension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.loadings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        loadings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.logdet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        logdet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.uniqueness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uniqueness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.matvec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        matvec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.quadratic_form" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quadratic_form
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.quadratic_forms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quadratic_forms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.sample_normal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample_normal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.sample_normal_batches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample_normal_batches
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.solve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        solve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.to_dense" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_dense
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.transform_normal_draws" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        transform_normal_draws
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorStudentEvaluator
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FactorStudentEvaluator">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.correlation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        correlation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.dimension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dimension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.n_observations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_observations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.observations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        observations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.dlog_pdf_ddf_rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dlog_pdf_ddf_rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        evaluate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate_grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        evaluate_grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate_grid_batches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        evaluate_grid_batches
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.joint_likelihood_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        joint_likelihood_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_likelihood_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_likelihood_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_and_dlog_ddf_grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_pdf_and_dlog_ddf_grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_and_dlog_ddf_rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_pdf_and_dlog_ddf_rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_pdf_rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.objective_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        objective_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.pdf_and_grad_on_grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pdf_and_grad_on_grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.pdf_and_grad_on_grid_batches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pdf_and_grad_on_grid_batches
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.penalized_parameterized_objective_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        penalized_parameterized_objective_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.stochastic_pdf_and_gradient_grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stochastic_pdf_and_gradient_grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorStudentEvaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FactorStudentEvaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.dlog_likelihood_ddf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dlog_likelihood_ddf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.dnegative_log_likelihood_ddf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dnegative_log_likelihood_ddf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.log_likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.negative_log_likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        negative_log_likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorStudentGridEvaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FactorStudentGridEvaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation.pdf_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pdf_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentJointEvaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorStudentJointEvaluation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../equicorrelation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Equicorrelation Gaussian
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stochastic-student/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastic Student
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration and Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vines and Prediction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contrib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contrib Extensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#factor-correlation-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Factor correlation operator
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Factor correlation operator">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorCorrelation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FactorCorrelation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.dimension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dimension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.storage_bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        storage_bytes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.uniqueness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uniqueness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.from_unconstrained" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        from_unconstrained
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.load_mmap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load_mmap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.load_npz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load_npz
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.prepare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        prepare
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.save_mmap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        save_mmap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.save_npz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        save_npz
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.to_dense" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_dense
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PreparedFactorCorrelation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PreparedFactorCorrelation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.dimension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dimension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.loadings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        loadings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.logdet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        logdet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.uniqueness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        uniqueness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.matvec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        matvec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.quadratic_form" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quadratic_form
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.quadratic_forms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quadratic_forms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.sample_normal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample_normal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.sample_normal_batches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample_normal_batches
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.solve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        solve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.to_dense" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_dense
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.transform_normal_draws" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        transform_normal_draws
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorStudentEvaluator
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FactorStudentEvaluator">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.correlation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        correlation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.dimension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dimension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.n_observations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_observations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.observations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        observations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.rank" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rank
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.dlog_pdf_ddf_rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dlog_pdf_ddf_rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        evaluate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate_grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        evaluate_grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate_grid_batches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        evaluate_grid_batches
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.joint_likelihood_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        joint_likelihood_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_likelihood_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_likelihood_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_and_dlog_ddf_grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_pdf_and_dlog_ddf_grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_and_dlog_ddf_rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_pdf_and_dlog_ddf_rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_pdf_rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.objective_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        objective_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.pdf_and_grad_on_grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pdf_and_grad_on_grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.pdf_and_grad_on_grid_batches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pdf_and_grad_on_grid_batches
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.penalized_parameterized_objective_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        penalized_parameterized_objective_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.stochastic_pdf_and_gradient_grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stochastic_pdf_and_gradient_grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorStudentEvaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FactorStudentEvaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.dlog_likelihood_ddf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dlog_likelihood_ddf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.dnegative_log_likelihood_ddf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dnegative_log_likelihood_ddf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.log_likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.negative_log_likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        negative_log_likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorStudentGridEvaluation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FactorStudentGridEvaluation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation.pdf_and_gradient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pdf_and_gradient
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentJointEvaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FactorStudentJointEvaluation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="factor-operators-api">Factor Operators API<a class="headerlink" href="#factor-operators-api" title="Permanent link">&para;</a></h1>
+<h2 id="factor-correlation-operator">Factor correlation operator<a class="headerlink" href="#factor-correlation-operator" title="Permanent link">&para;</a></h2>
+<p><code>FactorCorrelation</code> stores a correlation matrix as
+<span class="arithmatex">\(R=D+BB^\top\)</span> and prepares a matrix-free Woodbury operator.
+<code>FactorStudentEvaluator</code> combines that operator with Student copula
+likelihoods. <code>StochasticStudentCopula(corr_mode="factor")</code> exposes the same
+representation through the model API.</p>
+<p>Prepared operators and evaluators require real-valued observations, loadings,
+parameters, and draws; complex arrays are rejected before conversion.
+Dimensions, ranks, row indices, and factor-initialization integer options
+require Python or NumPy integers, excluding booleans. Conditional samplers
+validate the supplied correlation, Student degrees of freedom, and thread
+count even when every coordinate is fixed by <code>given</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">FactorCorrelation</span><span class="p">,</span> <span class="n">FactorStudentEvaluator</span>
+
+<span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">2026</span><span class="p">)</span>
+<span class="n">B</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">scale</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.99</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="mi">50</span><span class="p">,</span> <span class="mi">20</span><span class="p">))</span>
+<span class="n">factor</span> <span class="o">=</span> <span class="n">FactorCorrelation</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">uniqueness_min</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">)</span>
+<span class="n">operator</span> <span class="o">=</span> <span class="n">factor</span><span class="o">.</span><span class="n">prepare</span><span class="p">()</span>
+<span class="n">evaluation</span> <span class="o">=</span> <span class="n">FactorStudentEvaluator</span><span class="p">(</span><span class="n">operator</span><span class="p">,</span> <span class="n">u</span><span class="p">)</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span>
+    <span class="n">df</span><span class="o">=</span><span class="mf">7.0</span><span class="p">,</span>
+    <span class="n">n_threads</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>For construction, fitting, batching, conditional sampling, persistence,
+complexity, and memory limits, see
+<a href="../../guide/factor-models/">Factor Models</a>. The generated reference below is
+the canonical source for method signatures and defaults.</p>
+<h3 id="api">API<a class="headerlink" href="#api" title="Permanent link">&para;</a></h3>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation" class="doc doc-heading">
+            <code>pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Immutable factor correlation <code>R = D + B B.T</code>.</p>
+<p><code>D</code> is derived from the row norms of <code>loadings</code> so every diagonal
+entry of <code>R</code> equals one. This value object does not depend on a copula
+family. Call :meth:<code>prepare</code> to construct the reusable native Woodbury
+operator.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.dimension" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">dimension</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.dimension" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of correlated variables.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.rank" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">rank</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.rank" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of latent factors.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.storage_bytes" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">storage_bytes</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.storage_bytes" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Bytes occupied by the compact loading and uniqueness arrays.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.uniqueness" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">uniqueness</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.uniqueness" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Read-only diagonal uniqueness vector <code>diag(D)</code>.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.from_unconstrained" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">from_unconstrained</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">uniqueness_min</span><span class="o">=</span><span class="mf">1e-08</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.from_unconstrained" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Map arbitrary finite rows into the valid factor-correlation set.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.load_mmap" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">load_mmap</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.load_mmap" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Open an mmap-backed factor representation without copying it.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.load_npz" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">load_npz</span><span class="p">(</span><span class="n">path</span><span class="p">)</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.load_npz" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Load a compact factor representation created by :meth:<code>save_npz</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.prepare" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">prepare</span><span class="p">()</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.prepare" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Build the immutable native Woodbury workspace.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.save_mmap" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">save_mmap</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.save_mmap" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Write an mmap-friendly directory without overwriting it.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.save_npz" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">save_npz</span><span class="p">(</span><span class="n">path</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.save_npz" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Write the compact factor representation.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.to_dense" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">to_dense</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">max_dimension</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.FactorCorrelation.to_dense" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Explicitly materialize <code>R</code> for small diagnostic problems.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation" class="doc doc-heading">
+            <code>pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Thread-safe native Woodbury workspace for a factor correlation.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.dimension" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">dimension</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.dimension" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of correlated variables.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.loadings" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">loadings</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.loadings" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Read-only factor loading matrix.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.logdet" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">logdet</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.logdet" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Log determinant of the represented correlation matrix.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.rank" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">rank</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.rank" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of latent factors.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.uniqueness" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">uniqueness</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.uniqueness" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Read-only diagonal uniqueness vector.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.matvec" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">matvec</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.matvec" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Multiply one or more row vectors by the correlation matrix.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.quadratic_form" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">quadratic_form</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.quadratic_form" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Evaluate <code>x.T @ R**-1 @ x</code> for one vector.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.quadratic_forms" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">quadratic_forms</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.quadratic_forms" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Evaluate <code>x.T @ R**-1 @ x</code> for one or more row vectors.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.sample_normal" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">sample_normal</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">rng</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.sample_normal" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Draw factor-normal rows using bounded, deterministic native work.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.sample_normal_batches" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">sample_normal_batches</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">batch_rows</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">rng</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.sample_normal_batches" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Yield bounded batches of factor-normal rows.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.solve" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">solve</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.solve" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Solve against the correlation matrix for one or more row vectors.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.to_dense" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">to_dense</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">max_dimension</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.to_dense" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Explicitly materialize the correlation matrix.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.transform_normal_draws" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">transform_normal_draws</span><span class="p">(</span><span class="n">factor_draws</span><span class="p">,</span> <span class="n">residual_draws</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_correlation.PreparedFactorCorrelation.transform_normal_draws" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Transform fixed independent draws into factor-normal rows.</p>
+<p>The returned array is a copy of <code>residual_draws</code>. Keeping random
+number generation outside the native operator makes results exactly
+reproducible across thread counts and also supports conditional
+factor distributions whose factor draws have a non-identity small
+covariance.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator" class="doc doc-heading">
+            <code>pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator</code>
+
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Static Student likelihood composed with a factor correlation.</p>
+<p>The evaluator owns an immutable observation copy and shares the immutable
+:class:<code>PreparedFactorCorrelation</code>. It contains no optimizer or copula
+model state and is safe for concurrent read-only evaluations.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.correlation" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">correlation</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.correlation" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Prepared factor-correlation operator shared by this evaluator.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.dimension" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">dimension</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.dimension" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of variables per observation.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.n_observations" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">n_observations</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.n_observations" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Number of observation rows.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.observations" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">observations</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.observations" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Immutable pseudo-observations owned by this evaluator.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.rank" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">rank</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.rank" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Rank of the factor correlation.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.dlog_pdf_ddf_rows" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">dlog_pdf_ddf_rows</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.dlog_pdf_ddf_rows" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return analytical row derivatives with respect to df.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">evaluate</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Evaluate row log densities and analytical df derivatives.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate_grid" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">evaluate_grid</span><span class="p">(</span><span class="n">df_grid</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dimension_tile</span><span class="o">=</span><span class="mi">16384</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate_grid" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Evaluate a tiled <code>(observations, df_grid)</code> log-density grid.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate_grid_batches" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">evaluate_grid_batches</span><span class="p">(</span><span class="n">df_grid</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">batch_rows</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">dimension_tile</span><span class="o">=</span><span class="mi">16384</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.evaluate_grid_batches" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Yield bounded row batches of the tiled Student grid.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.joint_likelihood_and_gradient" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">joint_likelihood_and_gradient</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.joint_likelihood_and_gradient" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return aggregate analytical gradients for scalar <code>df</code> and B.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_likelihood_and_gradient" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">log_likelihood_and_gradient</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_likelihood_and_gradient" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return likelihood and derivative for one common scalar <code>df</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_and_dlog_ddf_grid" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">log_pdf_and_dlog_ddf_grid</span><span class="p">(</span><span class="n">df_grid</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dimension_tile</span><span class="o">=</span><span class="mi">16384</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_and_dlog_ddf_grid" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return tiled row/grid log densities and df derivatives.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_and_dlog_ddf_rows" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">log_pdf_and_dlog_ddf_rows</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_and_dlog_ddf_rows" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return row log densities and their analytical df derivatives.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_rows" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">log_pdf_rows</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.log_pdf_rows" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return row log densities.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.objective_and_gradient" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">objective_and_gradient</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.objective_and_gradient" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return negative likelihood and a one-element optimizer gradient.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.pdf_and_grad_on_grid" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pdf_and_grad_on_grid</span><span class="p">(</span><span class="n">df_grid</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dimension_tile</span><span class="o">=</span><span class="mi">16384</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.pdf_and_grad_on_grid" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return tiled row/grid densities and df derivatives.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.pdf_and_grad_on_grid_batches" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pdf_and_grad_on_grid_batches</span><span class="p">(</span><span class="n">df_grid</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">batch_rows</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">dimension_tile</span><span class="o">=</span><span class="mi">16384</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.pdf_and_grad_on_grid_batches" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Yield bounded density/gradient grid batches.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.penalized_parameterized_objective_and_gradient" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">penalized_parameterized_objective_and_gradient</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">parameterization</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">penalty</span><span class="p">,</span> <span class="n">condition_max</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.penalized_parameterized_objective_and_gradient" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Evaluate the joint factor objective entirely in native code.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.stochastic_pdf_and_gradient_grid" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">stochastic_pdf_and_gradient_grid</span><span class="p">(</span><span class="n">raw_grid</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">offset</span><span class="p">,</span> <span class="n">dimension_tile</span><span class="o">=</span><span class="mi">16384</span><span class="p">,</span> <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluator.stochastic_pdf_and_gradient_grid" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return density and d/dx for df=offset+softplus(x) natively.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation" class="doc doc-heading">
+            <code>pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Immutable row likelihood and degrees-of-freedom derivative result.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.dlog_likelihood_ddf" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">dlog_likelihood_ddf</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.dlog_likelihood_ddf" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Sum df derivatives when the evaluation used one common df.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.dnegative_log_likelihood_ddf" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">dnegative_log_likelihood_ddf</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.dnegative_log_likelihood_ddf" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return its native derivative for one common <code>df</code>.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.log_likelihood" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">log_likelihood</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.log_likelihood" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Sum the row log densities.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.negative_log_likelihood" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">negative_log_likelihood</span></code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentEvaluation.negative_log_likelihood" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return the native negative aggregate likelihood.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation" class="doc doc-heading">
+            <code>pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Immutable tiled Student log-density grid result.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation.pdf_and_gradient" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pdf_and_gradient</span><span class="p">()</span></code>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentGridEvaluation.pdf_and_gradient" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Convert stable log values into density and <code>d pdf / d df</code>.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.copula.multivariate.factor_student.FactorStudentJointEvaluation" class="doc doc-heading">
+            <code>pyscarcopula.copula.multivariate.factor_student.FactorStudentJointEvaluation</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.copula.multivariate.factor_student.FactorStudentJointEvaluation" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Aggregate likelihood and analytical df/loading gradients.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

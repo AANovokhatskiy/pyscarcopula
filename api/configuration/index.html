@@ -1,0 +1,4362 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Python library for bivariate, multivariate, vine, and stochastic copula models">
+      
+      
+      
+        <link rel="canonical" href="https://AANovokhatskiy.github.io/pyscarcopula/api/configuration/">
+      
+      
+        <link rel="prev" href="../stochastic-student/">
+      
+      
+        <link rel="next" href="../vine/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Configuration and Results - pyscarcopula</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#configuration-and-fit-results" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="pyscarcopula" class="md-header__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            pyscarcopula
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration and Results
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="pyscarcopula" class="md-nav__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    pyscarcopula
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/choosing-a-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing a Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/bivariate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bivariate Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/multivariate_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/factor-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Factor Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fitting and Prediction
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Fitting and Prediction
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/estimation-methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/prediction-semantics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prediction Semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/rvine-conditioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    R-vine Conditioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Mathematical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/mathematical-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and Scaling
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Performance and Scaling
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPU Parallelism
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Numerical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Numerical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/numerical-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Numerical Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/optimizers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimizer Controls
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/scar-ou/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SCAR OU Numerics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/scar-jacobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SCAR Jacobi Numerics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/student-quantiles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Student Quantiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/multivariate-numerics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate Numerics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/vine-numerics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine Numerics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Validation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/conditional-sampling-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conditional Sampling CI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../copulas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Copulas and Fitting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multivariate_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate and Factor Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../static-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Static Gaussian and Student
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Factor Operators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../equicorrelation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Equicorrelation Gaussian
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stochastic-student/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastic Student
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration and Results
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration and Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fitting-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fitting configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fitting configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.NumericalConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NumericalConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optimizer-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optimizer options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Optimizer options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.LBFGSBConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LBFGSBConfig
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LBFGSBConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.LBFGSBConfig.merged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        merged
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.LBFGSBConfig.options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prediction-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prediction configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Prediction configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.PredictConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PredictConfig
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PredictConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.PredictConfig.validated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        validated
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.PredictConfig.replace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        replace
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fit-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fit results
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common fields
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Common fields">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.FitResultBase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FitResultBase
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scalar-mle-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scalar MLE result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scalar MLE result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.MLEResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MLEResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MLEResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.MLEResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multivariate-mle-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multivariate MLE result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multivariate MLE result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.MultivariateMLEResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MultivariateMLEResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MultivariateMLEResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.MultivariateMLEResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.MultivariateMLEResult.aic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        aic
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.MultivariateMLEResult.bic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gas-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GAS result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GAS result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GASResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GASResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult.omega" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        omega
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult.gamma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gamma
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult.beta" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        beta
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scar-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SCAR result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LatentResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LatentResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#independence-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independence result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Independence result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.IndependentResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IndependentResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="IndependentResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.IndependentResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#named-process-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Named process parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Named process parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentProcessParams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LatentProcessParams
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LatentProcessParams">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentProcessParams.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentProcessParams.to_dict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_dict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentProcessParams.replace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        replace
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vines and Prediction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contrib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contrib Extensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fitting-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fitting configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fitting configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.NumericalConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NumericalConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optimizer-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optimizer options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Optimizer options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.LBFGSBConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LBFGSBConfig
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LBFGSBConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.LBFGSBConfig.merged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        merged
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.LBFGSBConfig.options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prediction-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prediction configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Prediction configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.PredictConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PredictConfig
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PredictConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.PredictConfig.validated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        validated
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.PredictConfig.replace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        replace
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fit-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fit results
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common fields
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Common fields">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.FitResultBase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FitResultBase
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scalar-mle-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scalar MLE result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scalar MLE result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.MLEResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MLEResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MLEResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.MLEResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multivariate-mle-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multivariate MLE result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Multivariate MLE result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.MultivariateMLEResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MultivariateMLEResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MultivariateMLEResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.MultivariateMLEResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.MultivariateMLEResult.aic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        aic
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.MultivariateMLEResult.bic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gas-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GAS result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GAS result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GASResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="GASResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult.omega" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        omega
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult.gamma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gamma
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult.beta" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        beta
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.GASResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scar-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SCAR result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LatentResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LatentResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#independence-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independence result
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Independence result">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.IndependentResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IndependentResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="IndependentResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.IndependentResult.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#named-process-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Named process parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Named process parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentProcessParams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LatentProcessParams
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LatentProcessParams">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentProcessParams.n_params" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_params
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentProcessParams.to_dict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_dict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.LatentProcessParams.replace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        replace
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="configuration-and-fit-results">Configuration and Fit Results<a class="headerlink" href="#configuration-and-fit-results" title="Permanent link">&para;</a></h1>
+<p>Use <code>NumericalConfig</code> for fitting and <code>PredictConfig</code> for prediction defaults.
+<code>LBFGSBConfig</code> supplies optimizer overrides; <code>None</code> fields inherit the library
+defaults. Per-call fit keywords override the corresponding configured values.
+See <a href="../../reference/optimizers/">Optimizer Controls</a> for examples and
+<a href="../../guide/estimation-methods/">Estimation Methods</a> for model compatibility.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">LBFGSBConfig</span><span class="p">,</span> <span class="n">NumericalConfig</span><span class="p">,</span> <span class="n">PredictConfig</span>
+
+<span class="n">config</span> <span class="o">=</span> <span class="n">NumericalConfig</span><span class="p">(</span><span class="n">mle_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">gtol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">))</span>
+<span class="n">prediction</span> <span class="o">=</span> <span class="n">PredictConfig</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="fitting-configuration">Fitting configuration<a class="headerlink" href="#fitting-configuration" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.NumericalConfig" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">NumericalConfig</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.NumericalConfig" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">NumericalConfig</span><span class="p">(</span>
+    <span class="n">fail_value</span><span class="o">=</span><span class="mf">10000000000.0</span><span class="p">,</span>
+    <span class="n">n_threads</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">default_K</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>
+    <span class="n">default_grid_range</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+    <span class="n">default_pts_per_sigma</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">default_grid_method</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span>
+    <span class="n">default_adaptive</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">mle_optimizer</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_MLE_OPTIMIZER</span><span class="p">)(),</span>
+    <span class="n">gas_optimizer</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_GAS_OPTIMIZER</span><span class="p">)(),</span>
+    <span class="n">scar_optimizer</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_SCAR_OPTIMIZER</span><span class="p">)(),</span>
+    <span class="n">bivariate_scar_optimizer</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">bivariate_log_scar_optimizer</span><span class="o">=</span><span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_BIVARIATE_LOG_SCAR_OPTIMIZER</span>
+    <span class="p">)(),</span>
+    <span class="n">equicorr_optimizer</span><span class="o">=</span><span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_EQUICORR_OPTIMIZER</span>
+    <span class="p">)(),</span>
+    <span class="n">stochastic_student_optimizer</span><span class="o">=</span><span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER</span>
+    <span class="p">)(),</span>
+    <span class="n">static_student_optimizer</span><span class="o">=</span><span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_STATIC_STUDENT_OPTIMIZER</span>
+    <span class="p">)(),</span>
+    <span class="n">stochastic_student_gas_optimizer</span><span class="o">=</span><span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER</span>
+    <span class="p">)(),</span>
+    <span class="n">stochastic_student_scar_optimizer</span><span class="o">=</span><span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">DEFAULT_STOCHASTIC_STUDENT_SCAR_OPTIMIZER</span>
+    <span class="p">)(),</span>
+    <span class="n">bisection_tol</span><span class="o">=</span><span class="mf">1e-10</span><span class="p">,</span>
+    <span class="n">bisection_maxiter</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>
+    <span class="n">gas_score_eps</span><span class="o">=</span><span class="mf">0.0001</span><span class="p">,</span>
+    <span class="n">gas_gamma_bound</span><span class="o">=</span><span class="mf">20.0</span><span class="p">,</span>
+    <span class="n">gas_beta_bound</span><span class="o">=</span><span class="mf">0.999</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Shared optimizer and algorithm configuration.</p>
+<p>This immutable object centralizes numerical tolerances, grid sizes, Monte
+Carlo defaults, and optimizer options. Unspecified optimizer fields are
+filled from the method-specific defaults during initialization.</p>
+
+
+<p><span class="doc-section-title">Examples:</span></p>
+    <div class="highlight"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">config</span> <span class="o">=</span> <span class="n">NumericalConfig</span><span class="p">(</span><span class="n">default_K</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">bisection_tol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">)</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="optimizer-options">Optimizer options<a class="headerlink" href="#optimizer-options" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.LBFGSBConfig" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">LBFGSBConfig</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.LBFGSBConfig" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">LBFGSBConfig</span><span class="p">(</span>
+    <span class="n">gtol</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">ftol</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">maxfun</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">maxiter</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">maxls</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">eps</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">maxcor</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">finite_diff_rel_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Options for SciPy's L-BFGS-B optimizer.</p>
+<p><code>None</code> means "inherit the library default" when the configuration is
+merged into <code>NumericalConfig</code>. All supplied values must be
+finite, real, and strictly positive.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.LBFGSBConfig.merged" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">merged</span>
+
+
+<a href="#pyscarcopula.LBFGSBConfig.merged" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">merged</span><span class="p">(</span><span class="n">override</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return a copy with non-<code>None</code> values from <code>override</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.LBFGSBConfig.options" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">options</span>
+
+
+<a href="#pyscarcopula.LBFGSBConfig.options" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">options</span><span class="p">(</span><span class="o">**</span><span class="n">overrides</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return validated options suitable for <code>scipy.optimize.minimize</code>.</p>
+<p>Keyword arguments override fields on this object. Unknown option
+names raise <code>TypeError</code> instead of being silently ignored.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="prediction-configuration">Prediction configuration<a class="headerlink" href="#prediction-configuration" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.PredictConfig" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">PredictConfig</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.PredictConfig" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">PredictConfig</span><span class="p">(</span>
+    <span class="n">given</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">horizon</span><span class="o">=</span><span class="s2">"next"</span><span class="p">,</span>
+    <span class="n">predictive_r_mode</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">dynamic_conditioning</span><span class="o">=</span><span class="s2">"ignore"</span><span class="p">,</span>
+    <span class="n">return_diagnostics</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">mcmc_steps</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">mcmc_burnin</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Prediction-time options shared by copulas, vines, and strategies.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>given</code>
+            </td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="int">int</span>, <span title="float">float</span>] or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Coordinates fixed during conditional sampling, expressed in
+pseudo-observation space.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>horizon</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Use "current" for the filtered state or "next" to advance one step.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#34;next&#34;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>predictive_r_mode</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Sampling representation for a predictive scalar parameter: "grid" or
+"histogram". None selects the strategy-specific default.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>dynamic_conditioning</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Policy for updating dynamic vine edges from conditioned values:
+"ignore" or "given_only".</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#34;ignore&#34;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>return_diagnostics</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Request prediction diagnostics from models that support them.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>mcmc_steps</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional non-negative counts of single-coordinate updates for
+conditional MCMC sampling. A full sweep updates every free variable.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>mcmc_burnin</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional non-negative counts of single-coordinate updates for
+conditional MCMC sampling. A full sweep updates every free variable.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<details class="note" open>
+  <summary>Notes</summary>
+  <p>Call <code>validated</code> after direct construction, or use <code>replace</code>,
+to normalize string values and validate integer controls.</p>
+</details>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.PredictConfig.validated" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">validated</span>
+
+
+<a href="#pyscarcopula.PredictConfig.validated" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">validated</span><span class="p">()</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return a normalized, validated copy of this configuration.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.PredictConfig.replace" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">replace</span>
+
+
+<a href="#pyscarcopula.PredictConfig.replace" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">replace</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return a validated copy with selected fields replaced.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="fit-results">Fit results<a class="headerlink" href="#fit-results" title="Permanent link">&para;</a></h2>
+<p>Scalar model <code>fit</code> calls return a typed result. Inspect <code>success</code>, <code>message</code>,
+and <code>log_likelihood</code> before using an optimizer candidate. <code>n_params</code> includes
+estimated static parameters where applicable; it need not equal the length of
+the dynamic process vector. Configuration and <code>MultivariateMLEResult</code> are
+exported at package level. The other result classes below are defined in
+<code>pyscarcopula._types</code>; their fields are described here because fitted models
+return them.</p>
+<table>
+<thead>
+<tr>
+<th>Fit</th>
+<th>Result type</th>
+<th>Parameter fields</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Scalar MLE</td>
+<td><code>MLEResult</code></td>
+<td><code>copula_param</code>, <code>n_params</code>, <code>diagnostics</code></td>
+</tr>
+<tr>
+<td>Multivariate static MLE</td>
+<td><code>MultivariateMLEResult</code></td>
+<td><code>model_parameters</code>, <code>correlation_matrix</code>, <code>aic</code>, <code>bic</code>; <code>copula_param</code> is <code>None</code> for Gaussian</td>
+</tr>
+<tr>
+<td>GAS</td>
+<td><code>GASResult</code></td>
+<td><code>params.omega</code>, <code>params.gamma</code>, <code>params.beta</code>, <code>scaling</code>, <code>score_eps</code>, <code>r_last</code></td>
+</tr>
+<tr>
+<td>SCAR-TM-OU</td>
+<td><code>LatentResult</code></td>
+<td><code>params.kappa</code>, <code>params.mu</code>, <code>params.nu</code>, solver metadata</td>
+</tr>
+<tr>
+<td>SCAR-TM-JACOBI</td>
+<td><code>LatentResult</code></td>
+<td><code>params.kappa</code>, <code>params.m</code>, <code>params.xi</code>, solver and sampling metadata</td>
+</tr>
+<tr>
+<td>Independence</td>
+<td><code>IndependentResult</code></td>
+<td><code>copula_param == 0</code>, <code>n_params == 0</code>, zero log likelihood</td>
+</tr>
+</tbody>
+</table>
+<p>GAS is observation-driven and has its own result type. It is not a
+<code>LatentResult</code>. <code>LatentProcessParams.names</code>, <code>.values</code>, and <code>.to_dict()</code> allow
+generic inspection without assuming OU parameter names. <code>GASResult.r_last</code>
+contains the one-step-ahead copula parameter.</p>
+<p><code>VineCopula.fit</code> returns the fitted vine itself. Its <code>fit_result</code> is a
+<code>scipy.optimize.OptimizeResult</code> summary; individual edges carry the typed
+results above. See <a href="../vine/">Vine API</a>.</p>
+<h2 id="common-fields">Common fields<a class="headerlink" href="#common-fields" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>log_likelihood</code></td>
+<td>Fitted log likelihood</td>
+</tr>
+<tr>
+<td><code>method</code></td>
+<td>Estimation method label</td>
+</tr>
+<tr>
+<td><code>copula_name</code></td>
+<td>Model name</td>
+</tr>
+<tr>
+<td><code>success</code></td>
+<td>Optimizer/candidate acceptance status</td>
+</tr>
+<tr>
+<td><code>nfev</code></td>
+<td>Reported objective evaluation count</td>
+</tr>
+<tr>
+<td><code>message</code></td>
+<td>Fit status or termination explanation</td>
+</tr>
+</tbody>
+</table>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula._types.FitResultBase" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">FitResultBase</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.FitResultBase" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">FitResultBase</span><span class="p">(</span>
+    <span class="n">log_likelihood</span><span class="p">,</span>
+    <span class="n">method</span><span class="p">,</span>
+    <span class="n">copula_name</span><span class="p">,</span>
+    <span class="n">success</span><span class="p">,</span>
+    <span class="n">nfev</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">message</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Common fields for all fit results.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="scalar-mle-result">Scalar MLE result<a class="headerlink" href="#scalar-mle-result" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula._types.MLEResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">MLEResult</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.MLEResult" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">MLEResult</span><span class="p">(</span>
+    <span class="n">log_likelihood</span><span class="p">,</span>
+    <span class="n">method</span><span class="p">,</span>
+    <span class="n">copula_name</span><span class="p">,</span>
+    <span class="n">success</span><span class="p">,</span>
+    <span class="n">nfev</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">message</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span>
+    <span class="n">copula_param</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">parameter_count</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">diagnostics</span><span class="o">=</span><span class="nb">dict</span><span class="p">(),</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="FitResultBase
+
+
+  
+      dataclass
+   (pyscarcopula._types.FitResultBase)" href="#pyscarcopula._types.FitResultBase">FitResultBase</a></code></p>
+
+
+
+        <p>Result of an MLE fit with optional additional static parameters.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula._types.MLEResult.n_params" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">n_params</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.MLEResult.n_params" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">n_params</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="multivariate-mle-result">Multivariate MLE result<a class="headerlink" href="#multivariate-mle-result" title="Permanent link">&para;</a></h2>
+<p>Factor results store compact loadings in <code>model_parameters</code>; their
+<code>correlation_matrix</code> is <code>None</code>. A supplied fixed Gaussian correlation has
+zero fitted parameters. Other correlation counts follow
+<a href="../../guide/mathematical-contracts/#static-elliptical-correlation-estimation">Mathematical Contracts</a>.</p>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.MultivariateMLEResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">MultivariateMLEResult</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.MultivariateMLEResult" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">MultivariateMLEResult</span><span class="p">(</span>
+    <span class="n">log_likelihood</span><span class="p">,</span>
+    <span class="n">method</span><span class="p">,</span>
+    <span class="n">copula_name</span><span class="p">,</span>
+    <span class="n">success</span><span class="p">,</span>
+    <span class="n">nfev</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">message</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span>
+    <span class="n">copula_param</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">parameter_count</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">diagnostics</span><span class="o">=</span><span class="nb">dict</span><span class="p">(),</span>
+    <span class="n">n_observations</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">model_parameters</span><span class="o">=</span><span class="nb">dict</span><span class="p">(),</span>
+    <span class="n">correlation_matrix</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="MLEResult
+
+
+  
+      dataclass
+   (pyscarcopula._types.MLEResult)" href="#pyscarcopula._types.MLEResult">MLEResult</a></code></p>
+
+
+
+        <p>MLE result with explicit multivariate parameters and correlation.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.MultivariateMLEResult.n_params" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">n_params</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.MultivariateMLEResult.n_params" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">n_params</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.MultivariateMLEResult.aic" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">aic</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.MultivariateMLEResult.aic" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">aic</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Akaike information criterion.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula.MultivariateMLEResult.bic" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">bic</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula.MultivariateMLEResult.bic" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">bic</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Bayesian information criterion.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="gas-result">GAS result<a class="headerlink" href="#gas-result" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula._types.GASResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">GASResult</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.GASResult" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">GASResult</span><span class="p">(</span>
+    <span class="n">log_likelihood</span><span class="p">,</span>
+    <span class="n">method</span><span class="p">,</span>
+    <span class="n">copula_name</span><span class="p">,</span>
+    <span class="n">success</span><span class="p">,</span>
+    <span class="n">nfev</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">message</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span>
+    <span class="n">params</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">gas_params</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))(),</span>
+    <span class="n">scaling</span><span class="o">=</span><span class="s2">"unit"</span><span class="p">,</span>
+    <span class="n">score_eps</span><span class="o">=</span><span class="n">DEFAULT_CONFIG</span><span class="o">.</span><span class="n">gas_score_eps</span><span class="p">,</span>
+    <span class="n">r_last</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">diagnostics</span><span class="o">=</span><span class="nb">dict</span><span class="p">(),</span>
+    <span class="n">parameter_count</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="FitResultBase
+
+
+  
+      dataclass
+   (pyscarcopula._types.FitResultBase)" href="#pyscarcopula._types.FitResultBase">FitResultBase</a></code></p>
+
+
+
+        <p>Result of GAS fit.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula._types.GASResult.omega" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">omega</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.GASResult.omega" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">omega</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula._types.GASResult.gamma" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">gamma</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.GASResult.gamma" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">gamma</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula._types.GASResult.beta" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">beta</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.GASResult.beta" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">beta</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula._types.GASResult.n_params" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">n_params</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.GASResult.n_params" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">n_params</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="scar-result">SCAR result<a class="headerlink" href="#scar-result" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula._types.LatentResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">LatentResult</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.LatentResult" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">LatentResult</span><span class="p">(</span>
+    <span class="n">log_likelihood</span><span class="p">,</span>
+    <span class="n">method</span><span class="p">,</span>
+    <span class="n">copula_name</span><span class="p">,</span>
+    <span class="n">success</span><span class="p">,</span>
+    <span class="n">nfev</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">message</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span>
+    <span class="n">params</span><span class="o">=</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">ou_params</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">))(),</span>
+    <span class="n">K</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">grid_range</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">pts_per_sigma</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">transition_method</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_K</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">r_gh</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">gh_order</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">auto_small_kdt</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">spectral_basis_order</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">spectral_quad_order</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">diagnostics</span><span class="o">=</span><span class="nb">dict</span><span class="p">(),</span>
+    <span class="n">parameter_count</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">tau_eps</span><span class="o">=</span><span class="mf">1e-06</span><span class="p">,</span>
+    <span class="n">theta_cap</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">clip_negative</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">negative_mass_tol</span><span class="o">=</span><span class="mf">1e-05</span><span class="p">,</span>
+    <span class="n">stationary_shape_max</span><span class="o">=</span><span class="mf">500.0</span><span class="p">,</span>
+    <span class="n">sampling_method</span><span class="o">=</span><span class="s2">"tm_grid"</span><span class="p">,</span>
+    <span class="n">lamperti_substeps</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+    <span class="n">lamperti_boundary</span><span class="o">=</span><span class="s2">"reflect"</span><span class="p">,</span>
+    <span class="n">lamperti_eps</span><span class="o">=</span><span class="mf">1e-10</span><span class="p">,</span>
+    <span class="n">lamperti_engine</span><span class="o">=</span><span class="s2">"native"</span><span class="p">,</span>
+    <span class="n">lamperti_chunk_observations</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span>
+    <span class="n">memory_budget_bytes</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">transition_storage</span><span class="o">=</span><span class="s2">"dense"</span><span class="p">,</span>
+    <span class="n">stationarity_correction</span><span class="o">=</span><span class="s2">"none"</span><span class="p">,</span>
+    <span class="n">grid_method</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">adaptive</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="FitResultBase
+
+
+  
+      dataclass
+   (pyscarcopula._types.FitResultBase)" href="#pyscarcopula._types.FitResultBase">FitResultBase</a></code></p>
+
+
+
+        <p>Result of any latent-process fit.</p>
+<p>The process parameters live in <code>params</code> (LatentProcessParams),
+which is generic over the number and names of parameters.
+This keeps the result type independent of the parameter count.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula._types.LatentResult.n_params" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">n_params</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.LatentResult.n_params" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">n_params</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="independence-result">Independence result<a class="headerlink" href="#independence-result" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula._types.IndependentResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">IndependentResult</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.IndependentResult" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">IndependentResult</span><span class="p">(</span>
+    <span class="n">log_likelihood</span><span class="p">,</span>
+    <span class="n">method</span><span class="p">,</span>
+    <span class="n">copula_name</span><span class="p">,</span>
+    <span class="n">success</span><span class="p">,</span>
+    <span class="n">nfev</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">message</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span>
+    <span class="n">copula_param</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="FitResultBase
+
+
+  
+      dataclass
+   (pyscarcopula._types.FitResultBase)" href="#pyscarcopula._types.FitResultBase">FitResultBase</a></code></p>
+
+
+
+        <p>Result for IndependentCopula: 0 params, logL=0.</p>
+<p>copula_param is always 0.0; present for interface uniformity.
+so that code like edge.fit_result.copula_param works without
+isinstance checks.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula._types.IndependentResult.n_params" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">n_params</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.IndependentResult.n_params" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">n_params</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="named-process-parameters">Named process parameters<a class="headerlink" href="#named-process-parameters" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula._types.LatentProcessParams" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">LatentProcessParams</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.LatentProcessParams" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">LatentProcessParams</span><span class="p">(</span>
+    <span class="n">process_type</span><span class="p">,</span>
+    <span class="n">names</span><span class="p">,</span>
+    <span class="n">values</span><span class="p">,</span>
+    <span class="n">bounds_lower</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">bounds_upper</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Parameters of a latent stochastic process.</p>
+<p>This is intentionally generic: different processes have different
+parameter sets and different numbers of parameters.</p>
+<p>For OU process: names=('kappa', 'mu', 'nu'), values=(49.97, 2.42, 10.65)
+For fBm-style models: names=('H', 'mu', 'sigma'), values=(0.7, 0, 1)</p>
+<p>The named access (params.kappa) goes through <strong>getattr</strong>,
+the positional access (params.values[0]) is always available.
+Values and optional bounds must be real; infinite bounds are allowed.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="pyscarcopula._types.LatentProcessParams.n_params" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">n_params</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.LatentProcessParams.n_params" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">n_params</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Number of named process parameters.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula._types.LatentProcessParams.to_dict" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">to_dict</span>
+
+
+<a href="#pyscarcopula._types.LatentProcessParams.to_dict" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">to_dict</span><span class="p">()</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return process parameters keyed by their names.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula._types.LatentProcessParams.replace" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">replace</span>
+
+
+<a href="#pyscarcopula._types.LatentProcessParams.replace" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">replace</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return a new LatentProcessParams with some values changed.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
