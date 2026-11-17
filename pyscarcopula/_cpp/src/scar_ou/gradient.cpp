@@ -780,7 +780,11 @@ GradLogLikResult grid_neg_loglik_with_grad(
                 return false;
             }
             if (op.local) local_grid_matvec(op, op.grad_vals, target, transition_grad);
-            const double inv_scale = 1.0 / scale;
+            // A subnormal scale can have an infinite reciprocal even when
+            // each quotient is representable. Preserve ordinary rounding.
+            const bool subnormal_scale =
+                scale < std::numeric_limits<double>::min();
+            const double inv_scale = subnormal_scale ? 0.0 : 1.0 / scale;
             for (int p = 0; p < 3; ++p) {
                 const std::size_t p_offset =
                     static_cast<std::size_t>(p) * K_size;
@@ -799,7 +803,8 @@ GradLogLikResult grid_neg_loglik_with_grad(
                     }
                 }
                 for (std::size_t j = 0; j < K_size; ++j) {
-                    new_d_beta[p_offset + j] = contrib[j] * inv_scale;
+                    new_d_beta[p_offset + j] = subnormal_scale
+                        ? contrib[j] / scale : contrib[j] * inv_scale;
                 }
             }
             for (std::size_t j = 0; j < K_size; ++j) {

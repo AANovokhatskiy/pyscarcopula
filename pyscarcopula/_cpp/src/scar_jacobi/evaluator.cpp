@@ -69,9 +69,11 @@ bool normalize_probability(
     if (!std::isfinite(total) || !(total > 0.0)) {
         return false;
     }
-    const double inverse = 1.0 / total;
-    for (double& value : values) {
-        value *= inverse;
+    if (total < std::numeric_limits<double>::min()) {
+        for (double& value : values) value /= total;
+    } else {
+        const double inverse = 1.0 / total;
+        for (double& value : values) value *= inverse;
     }
     return true;
 }
@@ -392,9 +394,11 @@ bool compute_filter(
             if (!std::isfinite(scale) || !(scale > 0.0)) {
                 return false;
             }
-            const double inverse_scale = 1.0 / scale;
-            for (double& value : posterior) {
-                value *= inverse_scale;
+            if (scale < std::numeric_limits<double>::min()) {
+                for (double& value : posterior) value /= scale;
+            } else {
+                const double inverse_scale = 1.0 / scale;
+                for (double& value : posterior) value *= inverse_scale;
             }
             if (!normalize_probability(posterior)) {
                 return false;
