@@ -152,7 +152,24 @@ def _resolved_stationary_scale_bounds(copula, override, explicit_bounds):
     return None, None
 
 
-def _log_stationary_optimizer_bounds(copula, override, explicit_bounds):
+def _ou_kappa_upper(n_obs):
+    """Limit the one-step OU autocorrelation to at least 0.001."""
+    return model_policy.ou_kappa_optimizer_upper_bounds(n_obs, 1)[0]
+
+
+def _ou_scaled_optimizer_bounds(scale, n_obs):
+    lower, upper = model_policy.ou_scaled_optimizer_bounds(scale)
+    upper[0] = model_policy.ou_kappa_optimizer_upper_bounds(n_obs, scale[0])[2]
+    return lower, upper
+
+
+def _ou_physical_upper(n_obs):
+    upper = _OU_PHYSICAL_UPPER.copy()
+    upper[0] = _ou_kappa_upper(n_obs)
+    return upper
+
+
+def _log_stationary_optimizer_bounds(copula, override, explicit_bounds, n_obs):
     scale_lower, scale_upper = _resolved_stationary_scale_bounds(
         copula, override, explicit_bounds)
     (lower_values, upper_values), _ = (
@@ -160,6 +177,7 @@ def _log_stationary_optimizer_bounds(copula, override, explicit_bounds):
             (scale_lower, scale_upper)))
     lower = np.asarray(lower_values, dtype=np.float64)
     upper = np.asarray(upper_values, dtype=np.float64)
+    upper[0] = model_policy.ou_kappa_optimizer_upper_bounds(n_obs, 1)[1]
     return lower, upper, (scale_lower, scale_upper)
 
 
@@ -595,9 +613,9 @@ class SCARTMStrategy:
         StochasticStudentCopula opts in.
     stationary_scale_bounds : (float or None, float or None) or None
         Optional lower and upper bounds for ``sigma_x`` in log-stationary
-        coordinates. ``None`` uses the model policy. StochasticStudentCopula
-        and the independent bivariate log-coordinate policy each default to
-        ``(0.001, 10000.0)``.
+        coordinates. ``None`` uses the model policy: ``(0.022, 10000.0)``
+        for StochasticStudentCopula and ``(0.001, 10000.0)`` for bivariate
+        models.
     final_validation_abs_per_obs : float
         Absolute cross-backend objective tolerance per observation.
     final_validation_rel_tol : float
@@ -612,6 +630,10 @@ class SCARTMStrategy:
         treated as numerically degenerate.
     strict_gradient_policy : bool
         Enforce the final projected-gradient tolerance (default False).
+        In log-stationary optimization, the projection uses the optimizer's
+        coordinates and bounds; physical-mode validation remains unchanged.
+        The existing ``final_boundary_flags`` still describe physical
+        parameters, rather than stationary-scale bounds.
     corr_gradient_block_bytes : int
         Budget for the three active correlation-gradient blocks (default
         64 MiB). Excludes PPF caches, transition storage and checkpoints.
@@ -849,7 +871,7 @@ class SCARTMStrategy:
             self, result, final_params, initial_params, lower, upper,
             selected_evaluator, validation_evaluator, selected_engine,
             validation_engine, n_obs, optimizer_options,
-            correlation_validator=None):
+            correlation_validator=None, optimizer_bounds=None):
         """Re-evaluate and validate a candidate optimizer solution."""
         final_params = np.asarray(final_params, dtype=np.float64).reshape(-1)
         initial_params = np.asarray(initial_params, dtype=np.float64).reshape(-1)
@@ -870,13 +892,29 @@ class SCARTMStrategy:
         selected_grad = np.asarray((), dtype=np.float64)
         selected_evaluation_succeeded = True
         selected_error = ""
-        if native_validation.valid_ou_final_parameters(final_params):
+        valid_parameters = native_validation.valid_ou_final_parameters(final_params)
+        if valid_parameters:
             try:
                 selected_value, selected_grad = selected_evaluator(final_params)
                 selected_value = float(selected_value)
                 selected_grad = np.asarray(
                     selected_grad, dtype=np.float64).reshape(-1)
             except Exception as exc:
+                selected_evaluation_succeeded = False
+                selected_error = str(exc)
+
+        projection = None
+        if (self.strict_gradient_policy and optimizer_bounds is not None
+                and valid_parameters and selected_evaluation_succeeded
+                and selected_grad.shape == final_params.shape):
+            try:
+                projection = (
+                    _ou_to_log_stationary(final_params),
+                    _ou_grad_to_log_stationary(final_params, selected_grad),
+                    optimizer_bounds.lb,
+                    optimizer_bounds.ub,
+                )
+            except (FloatingPointError, NativeError, ValueError) as exc:
                 selected_evaluation_succeeded = False
                 selected_error = str(exc)
 
@@ -897,6 +935,7 @@ class SCARTMStrategy:
             optimizer_gtol=optimizer_options.get("gtol", 1e-3),
             rho_tolerance=self.final_rho_tolerance,
             growth_limit=self.final_growth_limit,
+            projection=projection,
         )
         reasons = list(validation["reasons"])
 
@@ -1031,6 +1070,7 @@ class SCARTMStrategy:
                     copula,
                     self.log_stationary_scale_optimization,
                     self.stationary_scale_bounds,
+                    len(u),
                 ))
             x0_scaled = _ou_to_log_stationary(joint0)
             x0_scaled[:3] = _project_log_stationary_initial_point(
@@ -1046,7 +1086,7 @@ class SCARTMStrategy:
             upper[:3] = log_upper
         else:
             scaled_lower, scaled_upper = (
-                model_policy.ou_scaled_optimizer_bounds(scale[:3]))
+                _ou_scaled_optimizer_bounds(scale[:3], len(u)))
             lower[:3] = scaled_lower
             upper[:3] = scaled_upper
         optimizer_box = Bounds(lower, upper)
@@ -1316,7 +1356,8 @@ class SCARTMStrategy:
                  if bounded_log_stationary else _OU_PHYSICAL_LOWER),
                 np.full(n_corr, -np.inf),
             )),
-            upper=np.full(3 + n_corr, np.inf),
+            upper=np.concatenate((_ou_physical_upper(len(u)),
+                                  np.full(n_corr, np.inf))),
             selected_evaluator=selected_final_evaluator,
             validation_evaluator=None,
             selected_engine=selected_engine,
@@ -1324,6 +1365,7 @@ class SCARTMStrategy:
             n_obs=len(u),
             optimizer_options=optimizer_options,
             correlation_validator=validate_correlation,
+            optimizer_bounds=optimizer_box if log_stationary else None,
         )
         diagnostics.update(validation_diagnostics)
         try:
@@ -1408,6 +1450,10 @@ class SCARTMStrategy:
         ``final_integration_status`` remains ``'not_checked'`` until an
         explicit resolution study is performed outside this fit.
 
+        For T observations, the optimizer constrains
+        ``kappa <= -log(0.001) * (T - 1)``, corresponding to an OU
+        one-step autocorrelation of at least 0.001.
+
         Returns
         -------
         LatentResult
@@ -1462,6 +1508,7 @@ class SCARTMStrategy:
                     copula,
                     self.log_stationary_scale_optimization,
                     self.stationary_scale_bounds,
+                    len(u),
                 ))
         else:
             log_lower = log_upper = None
@@ -1515,7 +1562,7 @@ class SCARTMStrategy:
                 scale = model_policy.optimizer_unit_scale(alpha0)
                 x0_scaled = _cpp_scar_ou.physical_to_scaled(alpha0, scale)
                 optimizer_box = Bounds(
-                    *model_policy.ou_scaled_optimizer_bounds(scale))
+                    *_ou_scaled_optimizer_bounds(scale, len(u)))
 
             def objective_and_grad(x_scaled):
                 alpha = _trial_parameters(
@@ -1578,7 +1625,7 @@ class SCARTMStrategy:
                     physical_grad,
                     (_OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER
                      if bounded_log_stationary else _OU_PHYSICAL_LOWER),
-                    _OU_PHYSICAL_UPPER,
+                    _ou_physical_upper(len(u)),
                 )
                 acceptable_boundary = (
                     np.isfinite(final_val)
@@ -1612,7 +1659,7 @@ class SCARTMStrategy:
                 scale = model_policy.optimizer_unit_scale(alpha0)
                 x0_scaled = _cpp_scar_ou.physical_to_scaled(alpha0, scale)
                 optimizer_box = Bounds(
-                    *model_policy.ou_scaled_optimizer_bounds(scale))
+                    *_ou_scaled_optimizer_bounds(scale, len(u)))
 
             def objective_scaled(x_scaled):
                 alpha = _trial_parameters(
@@ -1684,7 +1731,7 @@ class SCARTMStrategy:
             lower=(
                 _OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER
                 if bounded_log_stationary else _OU_PHYSICAL_LOWER),
-            upper=_OU_PHYSICAL_UPPER,
+            upper=_ou_physical_upper(len(u)),
             selected_evaluator=lambda values: evaluate_final(
                 values, True, record=True),
             validation_evaluator=None,
@@ -1692,6 +1739,7 @@ class SCARTMStrategy:
             validation_engine=None,
             n_obs=len(u),
             optimizer_options=optimizer_options,
+            optimizer_bounds=optimizer_box if log_stationary else None,
         )
         diagnostics.update(validation_diagnostics)
 

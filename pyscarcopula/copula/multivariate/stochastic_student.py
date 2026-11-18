@@ -188,7 +188,8 @@ class StochasticStudentCopula(MultivariateCopula):
     but this model is optimized internally in
     ``(log(kappa), mu, log(sigma_x))``, where
     ``sigma_x = nu / sqrt(2 * kappa)``. The internal representation is
-    reported in the fit diagnostics.
+    reported in the fit diagnostics. The default stationary-scale bounds
+    are ``(0.022, 10000.0)``.
 
     Factor emission methods evaluate only the supplied observation block.
     They do not accept a dense PPF ``cache``; ``t_index`` must be None or 0.
@@ -199,7 +200,8 @@ class StochasticStudentCopula(MultivariateCopula):
     _df_offset = _DF_OFFSET
     _scar_static_df_mle_initialization = True
     _scar_log_stationary_scale_optimization = True
-    _scar_stationary_scale_bounds = model_policy.stationary_scale_bounds()
+    _scar_stationary_scale_bounds = (
+        model_policy.stochastic_student_stationary_scale_bounds())
     _supports_scar_mixture_h = False
     def __init__(
             self,

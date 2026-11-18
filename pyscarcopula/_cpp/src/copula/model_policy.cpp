@@ -58,6 +58,16 @@ ParameterBoundsResult ou_parameter_bounds() {
                   {infinity(), infinity(), infinity()});
 }
 
+ParameterBoundsResult ou_kappa_optimizer_upper_bounds(
+    std::int64_t n_obs, double scale) {
+    if (n_obs < 2 || !std::isfinite(scale) || !(scale > 0.0)) {
+        return {{}, Status::InvalidParameter, {}};
+    }
+    const double kappa = -std::log(0.001) * static_cast<double>(n_obs - 1);
+    return bounds({-infinity(), -infinity(), -infinity()},
+                  {kappa, std::log(kappa), kappa / scale});
+}
+
 ParameterBoundsResult ou_scaled_optimizer_bounds(
     const std::vector<double>& scale) {
     if (scale.size() != 3
@@ -138,6 +148,12 @@ Result<ParameterBounds> normalize_positive_bounds(
 
 Result<ParameterBounds> stationary_scale_bounds() {
     return bounds({0.001}, {10000.0});
+}
+
+Result<ParameterBounds> stochastic_student_stationary_scale_bounds() {
+    auto result = stationary_scale_bounds();
+    result.value.lower[0] = 0.022;
+    return result;
 }
 
 FitParameterPolicyResult student_fit_parameter_policy(

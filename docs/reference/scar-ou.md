@@ -28,7 +28,13 @@ does not introduce simulation noise.
 | `corr_gradient_block_bytes` | strategy kwarg | `67108864` (64 MiB) | Budget for active grid correlation-gradient blocks or the spectral correlation workspace. Larger grid blocks reduce repeated forward passes. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
 | `log_stationary_scale_optimization` | strategy kwarg | `None` | For bivariate models, `True` enables `[log(kappa), mu, log(sigma_x)]` with `kappa, sigma_x >= 0.001`; `False` forces scaled physical coordinates; `None` keeps the model default. |
-| `stationary_scale_bounds` | strategy kwarg | `None` | Overrides model bounds for `sigma_x` in log-stationary coordinates. `StochasticStudentCopula` and bivariate models use separate policies, both defaulting to `(0.001, 10000.0)`. |
+| `stationary_scale_bounds` | strategy kwarg | `None` | Overrides model bounds for `sigma_x` in log-stationary coordinates. The default is `(0.022, 10000.0)` for `StochasticStudentCopula` and `(0.001, 10000.0)` for bivariate models. |
+
+SCAR-TM-OU fits constrain `kappa <= -log(0.001) * (T - 1)`, where
+`T` is the number of observations. With `dt = 1 / (T - 1)`, this imposes
+`rho = exp(-kappa * dt) >= 0.001`. The bound applies in both optimizer
+coordinate systems and to joint correlation fits; direct likelihood
+evaluation continues to accept the physical parameter domain.
 
 For `StochasticStudentCopula`, `alpha0` is still supplied as
 `[kappa, mu, nu]`, but the optimizer internally uses
@@ -38,8 +44,10 @@ For `StochasticStudentCopula`, `alpha0` is still supplied as
 is opt-in via `log_stationary_scale_optimization=True`. The log-coordinate
 fit guarantees positive `nu` after conversion but does not apply the legacy
 `nu >= 0.001` bound. `StochasticStudentCopula` uses
-`0.001 <= sigma_x <= 10000`, while retaining final validation against the
-physical `nu >= 0.001` bound and the other OU acceptance checks. Its
+`0.022 <= sigma_x <= 10000` and `kappa >= 0.001` by default. Together,
+these imply `nu >= 0.022 * sqrt(2 * 0.001)`, approximately `0.000984`,
+not a strict `nu >= 0.001` bound. The final validation still requires
+positive physical `nu` and performs the other OU acceptance checks. Its
 model-specific SCAR optimizer defaults are `maxiter=1000` and `maxls=200`;
 they come from `stochastic_student_scar_optimizer`. Ordinary bivariate
 SCAR-TM-OU fits use `bivariate_scar_optimizer`; when it is omitted, that field

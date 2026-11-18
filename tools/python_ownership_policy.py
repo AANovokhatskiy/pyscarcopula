@@ -567,11 +567,11 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.scar_jacobi:SCARJacobiStrategy.fit',
      '34acc23e731777e32450b781ddb2e82b10c9ac5551df5b5a6b8825b913ccbdbd', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static',
-     '42273c2e70fc611d4e3e52bdccf6e925473364f6e816e3b8675b4af7482a90f8', 'fit_orchestration', ('arithmetic',)),
+     '1b601b5a20e3af8d7d564d74d43f4ee3ae30eabb0712b94a34b22e5db4322b5f', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.objective_and_grad_scaled',
      '0a7df649fc7a0847eee0a344e5bd707f05d6b2951dd72fde93d83a9a1464f72b', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.fit',
-     '455b96f3124edcd9b602d2bbf2ece7e85af9fc6e9a811a6ceadb558cab73a44c', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '305b104ff13d8482b3032ae131fdabc6f69b0459afaff599ed951226fb906473', 'fit_orchestration', ('arithmetic', 'numerical-call')),
 )
 
 EXCEPTIONS = {

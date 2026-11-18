@@ -103,7 +103,7 @@ def validate_final_fit(
         optimizer_value, selected_value, selected_gradient,
         selected_evaluation_succeeded, selected_engine, selected_error,
         n_obs, strict_gradient_policy, explicit_gradient_tolerance,
-        optimizer_gtol, rho_tolerance, growth_limit):
+        optimizer_gtol, rho_tolerance, growth_limit, projection=None):
     return dict(_extension.load().validation_validate_ou_final_fit(
         _array(final_parameters),
         _array(initial_parameters),
@@ -122,6 +122,7 @@ def validate_final_fit(
         float(optimizer_gtol),
         float(rho_tolerance),
         float(growth_limit),
+        (None if projection is None else tuple(_array(x) for x in projection)),
     ))
 
 

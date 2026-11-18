@@ -364,7 +364,8 @@ FinalFitValidation validate_ou_final_fit(
     double explicit_gradient_tolerance,
     double optimizer_gtol,
     double rho_tolerance,
-    double growth_limit) {
+    double growth_limit,
+    GradientProjection projection) {
 
     FinalFitValidation out;
     if (final_parameters.size() < 3 || !finite_view(final_parameters)) {
@@ -407,20 +408,31 @@ FinalFitValidation validate_ou_final_fit(
         out.projected_gradient_tolerance = has_explicit_gradient_tolerance
             ? explicit_gradient_tolerance
             : std::max(1e-2, 10.0 * optimizer_gtol);
-        if (selected_gradient.size() == final_parameters.size()
-            && lower.size() == final_parameters.size()
-            && upper.size() == final_parameters.size()
-            && finite_view(selected_gradient)) {
+        const bool has_projection = projection.enabled;
+        const DoubleView projected_parameters = has_projection
+            ? projection.parameters : final_parameters;
+        const DoubleView projected_gradient = has_projection
+            ? projection.gradient : selected_gradient;
+        const DoubleView projected_lower = has_projection
+            ? projection.lower : lower;
+        const DoubleView projected_upper = has_projection
+            ? projection.upper : upper;
+        if (projected_parameters.size() == final_parameters.size()
+            && projected_gradient.size() == final_parameters.size()
+            && projected_lower.size() == final_parameters.size()
+            && projected_upper.size() == final_parameters.size()
+            && finite_view(projected_parameters)
+            && finite_view(projected_gradient)) {
             double maximum = 0.0;
             for (std::size_t index = 0;
                  index < final_parameters.size();
                  ++index) {
-                double gradient = selected_gradient[index];
-                const bool at_lower = std::isfinite(lower[index])
-                    && std::abs(final_parameters[index] - lower[index])
+                double gradient = projected_gradient[index];
+                const bool at_lower = std::isfinite(projected_lower[index])
+                    && std::abs(projected_parameters[index] - projected_lower[index])
                         <= kBoundaryTolerance;
-                const bool at_upper = std::isfinite(upper[index])
-                    && std::abs(final_parameters[index] - upper[index])
+                const bool at_upper = std::isfinite(projected_upper[index])
+                    && std::abs(projected_parameters[index] - projected_upper[index])
                         <= kBoundaryTolerance;
                 if ((at_lower && gradient > 0.0)
                     || (at_upper && gradient < 0.0)) {

@@ -6,6 +6,7 @@
 #include <pybind11/stl.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <stdexcept>
@@ -239,7 +240,29 @@ void bind_validation(py::module_& m) {
            const std::optional<double>& explicit_gradient_tolerance,
            double optimizer_gtol,
            double rho_tolerance,
-           double growth_limit) {
+           double growth_limit,
+           py::object raw_projection) {
+            std::optional<std::array<Float64Array, 4>> projection_arrays;
+            scar::GradientProjection projection;
+            if (!raw_projection.is_none()) {
+                const py::tuple values = py::cast<py::tuple>(raw_projection);
+                if (values.size() != 4) {
+                    throw py::value_error("projection must contain four arrays");
+                }
+                projection_arrays.emplace();
+                auto& arrays = *projection_arrays;
+                for (std::size_t index = 0; index < arrays.size(); ++index) {
+                    arrays[index] = real_float64_array_from_object(
+                        values[index], "projection");
+                }
+                projection = {
+                    true,
+                    raw_flat_view(arrays[0]),
+                    raw_flat_view(arrays[1]),
+                    raw_flat_view(arrays[2]),
+                    raw_flat_view(arrays[3]),
+                };
+            }
             return final_fit_to_dict(scar::validate_ou_final_fit(
                 raw_flat_view(final_parameters),
                 raw_flat_view(initial_parameters),
@@ -257,7 +280,8 @@ void bind_validation(py::module_& m) {
                 explicit_gradient_tolerance.value_or(0.0),
                 optimizer_gtol,
                 rho_tolerance,
-                growth_limit));
+                growth_limit,
+                projection));
         },
         py::arg("final_parameters"),
         py::arg("initial_parameters"),
@@ -274,7 +298,8 @@ void bind_validation(py::module_& m) {
         py::arg("explicit_gradient_tolerance"),
         py::arg("optimizer_gtol"),
         py::arg("rho_tolerance"),
-        py::arg("growth_limit"));
+        py::arg("growth_limit"),
+        py::arg("projection") = py::none());
 
     m.def(
         "validation_validate_backend_agreement",
