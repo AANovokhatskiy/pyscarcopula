@@ -24,6 +24,8 @@ does not introduce simulation noise.
 | `auto_small_kdt` | strategy kwarg | `1e-2` | In `transition_method='auto'`, use the local transition when $\kappa\,dt$ is below this value. |
 | `spectral_basis_order` | strategy kwarg | `'auto'` | Hermite basis size for the spectral likelihood. The auto policy uses 128, 96, 64, or 32 from the current $\kappa\,dt$; pass an integer to fix the basis size. |
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
+| `spectral_check_tolerances` | strategy kwarg | `None` | Optional pair of positive absolute tolerances for the total log-likelihood and each score component at the final point. |
+| `spectral_check_mode` | strategy kwarg | `"screen"` | Light sensitivity check or `"full"` five-resolution comparison when tolerances are supplied. |
 | `analytical_grad` | strategy kwarg | `True` | Uses the analytical gradient and avoids optimizer finite differences. |
 | `corr_gradient_block_bytes` | strategy kwarg | `67108864` (64 MiB) | Budget for active grid correlation-gradient blocks or the spectral correlation workspace. Larger grid blocks reduce repeated forward passes. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
@@ -301,6 +303,41 @@ quadrature but does not fix a poor latent grid; `K`, `grid_range`, and
 `pts_per_sigma` still determine where the posterior can live.
 
 ### Spectral Hermite likelihood
+
+For an optional final check, pass `spectral_check_tolerances=(1e-5, 1e-4)`
+to `fit`. These example spreads are absolute, for the entire series. The
+score is the gradient of the positive-sign log-likelihood in
+`(log(kappa), mu, log(stationary_sigma))` coordinates, followed by any
+jointly estimated raw correlation coordinates.
+
+The check reuses the successful fit's final spectral value and gradient.
+The default screen increases Q and M separately by one quarter (rounded up).
+The M probe uses the original Q when it can integrate the larger basis,
+otherwise it uses the already tested larger Q. A completed screen reports
+`screen_passed`. With `spectral_check_mode="full"` the four additional
+orders are (M, 2Q), (M, 4Q), (M₁, 4Q), (M₂, 4Q), with
+M₁ = M + ceil(M/2) and M₂ = max(2M, M₁+1). Agreement of all five reports
+`numerical_agreement`. Both modes stop as soon as any observed spread
+exceeds its tolerance. A failed probe or an order above 1024 also gives
+`unresolved`. These comparisons provide empirical evidence of sensitivity.
+
+`result.diagnostics["spectral_resolution_check"]` records each completed
+probe, the observed spreads and the reason for an early stop or skipped
+check. `final_integration_status` stays `not_checked` for an unsuccessful
+fit or a non-spectral final backend. `final_integration_converged` is true
+for full agreement, false for an excessive spread, and null otherwise.
+The check is diagnostic only. It makes zero optimizer calls and reports
+the original fit parameters and success flag. An unresolved result can be
+investigated using a separately refined matrix grid at the same parameters.
+
+For `a = kappa / (T - 1)`, the one-step OU operator has rank-M truncation
+error exp(−aM) in the stationary Gaussian L² operator norm. Thus
+M ≥ ceil(log(1/ε)/a) controls that operator at tolerance ε. To translate
+this into log-likelihood and score accuracy one also needs the observed
+emissions and the normalization of the whole series. If an emission is
+polynomial of degree d in standardized state, its Hermite moment matrix
+is integrated exactly when 2Q−1 ≥ 2M−2+d. General copula emissions require
+their own quadrature error estimates or numerical resolution checks.
 
 The spectral method uses stationarity of the OU process. Write
 

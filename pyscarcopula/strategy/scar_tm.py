@@ -23,6 +23,10 @@ from pyscarcopula.strategy._base import (
     reject_unknown_operation_kwargs,
     reject_unknown_strategy_kwargs,
 )
+from pyscarcopula.strategy._scar_ou_resolution import (
+    check_final_resolution,
+    resolution_tolerances,
+)
 from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
     validate_cpp_config,
@@ -620,6 +624,12 @@ class SCARTMStrategy:
         Absolute cross-backend objective tolerance per observation.
     final_validation_rel_tol : float
         Relative cross-backend objective tolerance.
+    spectral_check_tolerances : (float, float) or None
+        Optional absolute tolerances for the full log-likelihood and each
+        score component across Hermite resolutions at the final fit point.
+        The default skips the check. Results are recorded in diagnostics.
+    spectral_check_mode : {"screen", "full"}
+        Use two light refinements or four refinements from the five-probe study.
     final_gradient_tolerance : float or None
         Maximum projected-gradient norm for a successful final fit. When
         omitted, the tolerance is derived from the optimizer ``gtol``.
@@ -682,6 +692,8 @@ class SCARTMStrategy:
                  final_rho_tolerance: float = 1e-15,
                  strict_gradient_policy: bool = False,
                  corr_gradient_block_bytes: int = 67_108_864,
+                 spectral_check_tolerances: tuple[float, float] | None = None,
+                 spectral_check_mode: str = "screen",
                  **kwargs):
         if "backend" in kwargs:
             raise TypeError(
@@ -703,6 +715,11 @@ class SCARTMStrategy:
         self.spectral_basis_order = _normalize_spectral_basis_order(
             spectral_basis_order)
         self.spectral_quad_order = spectral_quad_order
+        self.spectral_check_tolerances = resolution_tolerances(
+            spectral_check_tolerances)
+        if spectral_check_mode not in ("screen", "full"):
+            raise ValueError("spectral_check_mode must be 'screen' or 'full'")
+        self.spectral_check_mode = spectral_check_mode
         self.analytical_grad = analytical_grad
         self.corr_gradient_block_bytes = corr_gradient_block_bytes
         self.smart_init = smart_init
@@ -1368,6 +1385,11 @@ class SCARTMStrategy:
             optimizer_bounds=optimizer_box if log_stationary else None,
         )
         diagnostics.update(validation_diagnostics)
+        if self.spectral_check_tolerances is not None:
+            check_final_resolution(
+                u, copula, joint, self._auto_config,
+                result, diagnostics, self.spectral_check_tolerances,
+                self.spectral_check_mode)
         try:
             copula._set_corr_from_params(joint[3:])
         except Exception:
@@ -1446,9 +1468,8 @@ class SCARTMStrategy:
         Notes
         -----
         ``diagnostics['final_validation_passed']`` reports candidate checks;
-        it does not certify integration accuracy. The separate
-        ``final_integration_status`` remains ``'not_checked'`` until an
-        explicit resolution study is performed outside this fit.
+        the optional ``spectral_check_tolerances`` study separately reports
+        Hermite resolution agreement in ``final_integration_status``.
 
         For T observations, the optimizer constrains
         ``kappa <= -log(0.001) * (T - 1)``, corresponding to an OU
@@ -1742,6 +1763,12 @@ class SCARTMStrategy:
             optimizer_bounds=optimizer_box if log_stationary else None,
         )
         diagnostics.update(validation_diagnostics)
+
+        if self.spectral_check_tolerances is not None:
+            check_final_resolution(
+                u, copula, alpha, self._auto_config,
+                result, diagnostics, self.spectral_check_tolerances,
+                self.spectral_check_mode)
 
         if verbose:
             print(f"  => alpha={alpha}, logL={-result.fun:.4f}")
