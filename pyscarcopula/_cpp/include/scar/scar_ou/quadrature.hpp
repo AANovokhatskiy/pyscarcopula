@@ -15,6 +15,7 @@ struct OuHermiteRule {
 };
 
 Result<OuHermiteRule> ou_hermite_rule(int quad_order, int basis_order);
+bool ou_panel_orders_compatible(int basis_order, int quad_order, int degree);
 Result<int> ou_default_quad_order(int basis_order);
 
 }  // namespace scar

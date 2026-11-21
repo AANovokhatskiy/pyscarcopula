@@ -38,6 +38,9 @@ def test_latent_and_fit_policy_contracts():
         (0.001, 1e-6, 0.001),
         (np.inf, 1.0 - 1e-6, np.inf),
     )
+    assert model_policy.stationary_scale_bounds() == (0.001, 10_000.0)
+    assert model_policy.stochastic_student_stationary_scale_bounds() == (
+        0.022, 10_000.0)
     assert model_policy.latent_bounds(
         "gas",
         gamma_bound=config.gas_gamma_bound,
@@ -70,6 +73,14 @@ def test_native_default_initial_point_contracts():
         jacobi.initial_point(1.0, 1e-6),
         [1.0, 1.0 - 1e-6, 0.2],
     )
+
+
+def test_ou_kappa_optimizer_bounds_are_native_owned():
+    physical, logged, scaled = model_policy.ou_kappa_optimizer_upper_bounds(
+        20, 3.0)
+    assert physical == pytest.approx(-np.log(0.001) * 19)
+    assert logged == pytest.approx(np.log(physical))
+    assert scaled == pytest.approx(physical / 3.0)
 
 
 @pytest.mark.parametrize("tau", [-1.0, 1.0])

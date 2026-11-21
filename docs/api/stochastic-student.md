@@ -23,6 +23,9 @@ in `(log(kappa), mu, log(sigma_x))`, where
 `sigma_x = nu / sqrt(2 * kappa)`. The representation used by the optimizer is
 reported in `result.diagnostics['optimizer_parameterization']`; it does not
 change `alpha0` or the fitted parameter values exposed by the API.
+The default log-stationary optimization bounds `sigma_x` between `0.022`
+and `10000`, with `kappa >= 0.001`. These bounds imply a minimum `nu` of
+approximately `0.000984`; they do not enforce a strict `nu >= 0.001`.
 
 ### Stochastic Student copula with estimated static correlation
 

@@ -929,6 +929,42 @@ def failed_spectral_case():
     return u, copula, cfg, alpha
 
 
+def test_auto_matrix_fallback_uses_only_refined_matrix_grid(failed_spectral_case):
+    u, copula, cfg, alpha = failed_spectral_case
+    refined = replace(cfg, matrix_grid=(491, 8., 10000, cfg.pts_per_sigma))
+    explicit = replace(cfg, transition_method="matrix", K=491, grid_range=8., max_K=10000)
+    value, info = _cpp_scar_ou.loglik(*alpha, u, copula, refined)
+    assert info["backend"] == "matrix"
+    assert info["K_effective"] == 491
+    assert value == pytest.approx(auto_loglik(*alpha, u, copula, explicit))
+    obj = _cpp_scar_ou.prepare_objective(u, copula, refined)
+    val, grad, info = obj.neg_loglik_with_grad_info(*alpha)
+    ref, expected = auto_neg_loglik_with_grad(*alpha, u, copula, explicit)
+    assert info["K_effective"] == 491
+    assert val == pytest.approx(ref)
+    np.testing.assert_allclose(grad, expected)
+
+
+@pytest.mark.parametrize("cap", [10_000, None])
+def test_auto_skips_refined_dense_matrix_above_native_limit(failed_spectral_case, cap):
+    u, copula, cfg, alpha = failed_spectral_case
+    capped = replace(cfg, grid_method="dense", matrix_grid=(10_001, 8., cap, 4))
+    local = replace(cfg, transition_method="local")
+    value, info = _cpp_scar_ou.loglik(*alpha, u, copula, capped)
+    expected, _ = _cpp_scar_ou.loglik(*alpha, u, copula, local)
+    assert value == pytest.approx(expected)
+    obj = _cpp_scar_ou.prepare_objective(u, copula, capped)
+    nll, grad, grad_info = obj.neg_loglik_with_grad_info(*alpha)
+    nll_ref, grad_ref, _ = _cpp_scar_ou.neg_loglik_with_grad_info(*alpha, u, copula, local)
+    assert nll == pytest.approx(nll_ref)
+    np.testing.assert_allclose(grad, grad_ref)
+    for details in (info, grad_info):
+        assert details["backend"] == "local"
+        assert details["matrix_fallback_reason"] == "capped"
+        assert details["fallback_chain"] == ["spectral", "matrix"]
+        assert details["K_effective"] == cfg.K
+
+
 def test_cpp_auto_loglik_falls_back_from_failed_spectral_to_matrix(
         failed_spectral_case):
     u, copula, cfg, alpha = failed_spectral_case
@@ -964,6 +1000,33 @@ def test_cpp_auto_gradient_falls_back_from_failed_spectral_to_matrix(
     assert info["fallback_chain"] == ["spectral"]
     np.testing.assert_allclose(got_val, ref_val, rtol=2e-11, atol=2e-11)
     np.testing.assert_allclose(got_grad, ref_grad, rtol=2e-8, atol=2e-8)
+
+
+@pytest.mark.parametrize("m,q,degree", [
+    (32, 320, -1), (32, 320, 65), (32, 320, True), (32, 320, 32.5),
+    (32, 321, 32), (33, 320, 32),
+])
+def test_auto_rejects_invalid_panel_before_fallback(m, q, degree):
+    cfg = AutoTMConfig(transition_method="auto", basis_order=m,
+                       quad_order=q, panel_degree=degree)
+    with pytest.raises(ValueError, match="panel_degree"):
+        auto_loglik(8., .5, .8, _data(), ClaytonCopula(), cfg)
+
+
+def test_panel_rule_reuses_cache_without_aliasing_hermite_nodes(hermite_cache_module):
+    module = hermite_cache_module
+    cfg = AutoTMConfig(transition_method="spectral", basis_order=32,
+                       quad_order=320, panel_degree=32)
+    args = (8., .5, .8, _data(), ClaytonCopula())
+    ordinary = replace(cfg, panel_degree=0)
+    reference = auto_loglik(*args, ordinary)
+    module._reset_hermite_rule_cache_limits_for_testing()
+    first = auto_loglik(*args, cfg)
+    before = module._hermite_rule_cache_info()
+    assert auto_loglik(*args, cfg) == first
+    assert module._hermite_rule_cache_info()["hits"] == before["hits"] + 1
+    assert auto_loglik(*args, ordinary) == reference
+    assert module._hermite_rule_cache_info()["entries"] == 2
 
 
 def test_cpp_hermite_cache_reuses_same_rule(hermite_cache_module):

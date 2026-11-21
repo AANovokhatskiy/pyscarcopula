@@ -780,7 +780,11 @@ GradLogLikResult grid_neg_loglik_with_grad(
                 return false;
             }
             if (op.local) local_grid_matvec(op, op.grad_vals, target, transition_grad);
-            const double inv_scale = 1.0 / scale;
+            // A subnormal scale can have an infinite reciprocal even when
+            // each quotient is representable. Preserve ordinary rounding.
+            const bool subnormal_scale =
+                scale < std::numeric_limits<double>::min();
+            const double inv_scale = subnormal_scale ? 0.0 : 1.0 / scale;
             for (int p = 0; p < 3; ++p) {
                 const std::size_t p_offset =
                     static_cast<std::size_t>(p) * K_size;
@@ -799,7 +803,8 @@ GradLogLikResult grid_neg_loglik_with_grad(
                     }
                 }
                 for (std::size_t j = 0; j < K_size; ++j) {
-                    new_d_beta[p_offset + j] = contrib[j] * inv_scale;
+                    new_d_beta[p_offset + j] = subnormal_scale
+                        ? contrib[j] / scale : contrib[j] * inv_scale;
                 }
             }
             for (std::size_t j = 0; j < K_size; ++j) {
@@ -961,6 +966,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     std::vector<double>& weighted_basis = ws.weighted_basis;
     if (ws.cached_quad_order != quad_order
         || ws.cached_basis_order != basis_order
+        || ws.cached_panel_degree != config.panel_degree
         || basis.size() != spectral_elements
         || weighted_basis.size() != spectral_elements) {
         if (!scar_internal::standard_normal_hermite_rule_with_weighted_basis(
@@ -969,9 +975,10 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 z,
                 weights,
                 basis,
-                weighted_basis)) {
+                weighted_basis, config.panel_degree)) {
             return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
         }
+        ws.cached_panel_degree = config.panel_degree;
         ws.cached_quad_order = quad_order;
         ws.cached_basis_order = basis_order;
     }

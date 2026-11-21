@@ -96,6 +96,14 @@ struct FinalFitValidation {
 
 bool valid_ou_final_parameters(DoubleView values) noexcept;
 
+struct GradientProjection {
+    bool enabled = false;
+    DoubleView parameters;
+    DoubleView gradient;
+    DoubleView lower;
+    DoubleView upper;
+};
+
 FinalFitValidation validate_ou_final_fit(
     DoubleView final_parameters,
     DoubleView initial_parameters,
@@ -113,7 +121,8 @@ FinalFitValidation validate_ou_final_fit(
     double explicit_gradient_tolerance,
     double optimizer_gtol,
     double rho_tolerance,
-    double growth_limit);
+    double growth_limit,
+    GradientProjection projection = {});
 
 struct BackendAgreementValidation {
     std::vector<std::string> reasons;

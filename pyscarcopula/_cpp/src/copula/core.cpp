@@ -586,11 +586,8 @@ Observations copula_sample_from_rng_draws(
                     throw std::invalid_argument(
                         "Gaussian pair sampling does not support rotation");
                 }
-                const double correlated =
-                    parameter * first_draw
-                    + std::sqrt(1.0 - parameter * parameter) * second_draw;
-                first = math::normal_cdf(first_draw);
-                second = math::normal_cdf(correlated);
+                math::bivariate_normal_draws_to_uniforms(
+                    first_draw, second_draw, parameter, first, second);
                 break;
             }
             case CopulaFamily::Clayton:

@@ -46,6 +46,14 @@ def latent_bounds(process, *, gamma_bound=None, beta_bound=None):
     return tuple(native["lower"]), tuple(native["upper"])
 
 
+def ou_kappa_optimizer_upper_bounds(n_obs, scale):
+    result = _checked(
+        _extension.load().model_ou_kappa_optimizer_upper_bounds(
+            n_obs, scale),
+        "OU kappa optimizer upper bounds")
+    return tuple(result["upper"])
+
+
 def ou_scaled_optimizer_bounds(scale):
     values = np.asarray(scale, dtype=np.float64)
     if values.shape != (3,):
@@ -90,6 +98,13 @@ def stationary_scale_bounds():
     result = _checked(
         _extension.load().model_stationary_scale_bounds(),
         "stationary-scale bounds")
+    return result["lower"][0], result["upper"][0]
+
+
+def stochastic_student_stationary_scale_bounds():
+    result = _checked(
+        _extension.load().model_stochastic_student_stationary_scale_bounds(),
+        "stochastic Student stationary-scale bounds")
     return result["lower"][0], result["upper"][0]
 
 
@@ -207,6 +222,10 @@ def ou_adaptive_spectral_basis_order(kappa, n_obs):
             float(kappa), int(n_obs)),
         "OU adaptive spectral basis policy")
     return int(result["order"])
+
+
+def ou_panel_orders_compatible(basis_order, quad_order, degree):
+    return _extension.load().ou_panel_orders_compatible(basis_order, quad_order, degree)
 
 
 def ou_resolve_quad_order(basis_order, explicit_quad_order=None):

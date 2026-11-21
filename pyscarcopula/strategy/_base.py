@@ -741,11 +741,12 @@ def get_strategy_for_result(result: FitResult,
         reject_unknown=False,
     )
     constructor_kwargs.update(explicit_kwargs)
-    return get_strategy(
-        result.method,
-        config=config,
-        **constructor_kwargs,
-    )
+    strategy = get_strategy(result.method, config=config, **constructor_kwargs)
+    if method == 'SCAR-TM-OU':
+        # The refined likelihood has additional saved settings. Preserve which
+        # values the caller supplied when replaying that configuration.
+        strategy._set_likelihood_overrides(explicit_kwargs, config)
+    return strategy
 
 
 def get_ou_strategy_for_result(result: FitResult, **kwargs) -> FitStrategy:

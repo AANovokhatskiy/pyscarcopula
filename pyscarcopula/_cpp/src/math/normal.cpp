@@ -21,6 +21,18 @@ double normal_cdf(double value) noexcept {
     return 0.5 * std::erfc(-value / std::sqrt(2.0));
 }
 
+void bivariate_normal_draws_to_uniforms(
+    double first_draw,
+    double second_draw,
+    double rho,
+    double& first,
+    double& second) noexcept {
+    const double correlated =
+        rho * first_draw + std::sqrt(1.0 - rho * rho) * second_draw;
+    first = normal_cdf(first_draw);
+    second = normal_cdf(correlated);
+}
+
 double normal_quantile(double p) {
     const double a[] = {
         -3.969683028665376e+01,

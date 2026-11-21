@@ -29,6 +29,23 @@ _REVIEW_KINDS = {
 }
 
 _SYMBOL_REVIEWS = (
+    # Restart configuration selection only; the OU evaluators remain native.
+    ('pyscarcopula.strategy._scar_ou_refit:_profiles',
+     'ce194e0c89c43640eb74da03a878e73c6fecfae07c56057a081eed43c1bcc5ff', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+    # Restart configuration selection only; the OU evaluators remain native.
+    ('pyscarcopula.strategy._scar_ou_refit:_matrix_grid',
+     'be0b5676754b398c7a7a7d168946e7a726b341256a9e0aa248812b49f0b0bbd5', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+    # Select supported quadrature profiles for the final fit diagnostic.
+    ('pyscarcopula.strategy._scar_ou_resolution:_panel_check_orders',
+     '174583ec2f872450bc909f66427cb38d5ad0dc924d7e7a246e92fbf752d83983', 'fit_orchestration', ('arithmetic',)),
+    # OU screen and refit compare complete native evaluations, apply generic
+    # optimizer termination criteria and record diagnostics (test_scar_ou_resolution.py).
+    ('pyscarcopula.strategy._scar_ou_resolution:check_final_resolution',
+     '145b9b924b699e83a35ba7eeb2741c207ad30984c499d93e3e10d4cab3184243', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+    ('pyscarcopula.strategy._scar_ou_refit:_projected_score',
+     '71401efe100561ad8d32f3834e5e4535a4340f36b221573ec98624aedabe80bb', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+    ('pyscarcopula.strategy._scar_ou_refit:fit_with_refinement',
+     '93b97bffd495f36e66156eea9e037c639a63bb932456755b85815e8084e718f3', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     # GAS scalar recovery counts and fixed-correlation restart coverage only:
     # objective/gradient evaluation and scaling stay native. Bivariate fits
     # now reuse the existing native stationarity check. No new numerical
@@ -95,7 +112,7 @@ _SYMBOL_REVIEWS = (
     # likelihood only reverses the sign of the validated native objective.
     # Covered by tests/test_dynamic_multivariate_parameter_routing.py.
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.log_likelihood',
-     '71c42bdaa0eee2253e39e5984277714a52cab51dc88080bc4cec26f900cee542', 'sign', ('arithmetic',)),
+     '5e3d2a22eb5e48ed2ff2c948954e0dc858d0ce0483693a848fdf39f4d0ad7af1', 'sign', ('arithmetic',)),
     # Shared dynamic block iteration: bounds, output allocation and native
     # strategy dispatch only; exercised by test_multivariate_sampling_threads.py.
     ('pyscarcopula.strategy.predict_helpers:sample_predictive_batches',
@@ -567,11 +584,11 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.scar_jacobi:SCARJacobiStrategy.fit',
      '34acc23e731777e32450b781ddb2e82b10c9ac5551df5b5a6b8825b913ccbdbd', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static',
-     '42273c2e70fc611d4e3e52bdccf6e925473364f6e816e3b8675b4af7482a90f8', 'fit_orchestration', ('arithmetic',)),
+     '04ad842f80d4bfa606f7cb7eafae929ba24793611202001e59b5e7bb1cb9206a', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.objective_and_grad_scaled',
      '0a7df649fc7a0847eee0a344e5bd707f05d6b2951dd72fde93d83a9a1464f72b', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.fit',
-     '455b96f3124edcd9b602d2bbf2ece7e85af9fc6e9a811a6ceadb558cab73a44c', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '2ae878dfc39a625bc486032f5b0a184ed2536ad659624b40cec6fa1b6b8c8489', 'fit_orchestration', ('arithmetic', 'numerical-call')),
 )
 
 EXCEPTIONS = {

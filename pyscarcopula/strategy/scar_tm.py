@@ -4,7 +4,11 @@ Python owns optimizer orchestration and result construction. The compiled
 evaluator owns likelihood, gradients, forward filtering, and state outputs.
 """
 
+from copy import copy
+from dataclasses import replace
+from functools import wraps
 import hashlib
+from inspect import signature
 
 import numpy as np
 from scipy.optimize import minimize, Bounds
@@ -23,8 +27,13 @@ from pyscarcopula.strategy._base import (
     reject_unknown_operation_kwargs,
     reject_unknown_strategy_kwargs,
 )
+from pyscarcopula.strategy._scar_ou_resolution import (
+    check_final_resolution,
+    resolution_tolerances,
+)
 from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
+    cpp_matrix_grid_limit,
     validate_cpp_config,
 )
 from pyscarcopula.numerical._arrays import (
@@ -152,7 +161,24 @@ def _resolved_stationary_scale_bounds(copula, override, explicit_bounds):
     return None, None
 
 
-def _log_stationary_optimizer_bounds(copula, override, explicit_bounds):
+def _ou_kappa_upper(n_obs):
+    """Limit the one-step OU autocorrelation to at least 0.001."""
+    return model_policy.ou_kappa_optimizer_upper_bounds(n_obs, 1)[0]
+
+
+def _ou_scaled_optimizer_bounds(scale, n_obs):
+    lower, upper = model_policy.ou_scaled_optimizer_bounds(scale)
+    upper[0] = model_policy.ou_kappa_optimizer_upper_bounds(n_obs, scale[0])[2]
+    return lower, upper
+
+
+def _ou_physical_upper(n_obs):
+    upper = _OU_PHYSICAL_UPPER.copy()
+    upper[0] = _ou_kappa_upper(n_obs)
+    return upper
+
+
+def _log_stationary_optimizer_bounds(copula, override, explicit_bounds, n_obs):
     scale_lower, scale_upper = _resolved_stationary_scale_bounds(
         copula, override, explicit_bounds)
     (lower_values, upper_values), _ = (
@@ -160,6 +186,7 @@ def _log_stationary_optimizer_bounds(copula, override, explicit_bounds):
             (scale_lower, scale_upper)))
     lower = np.asarray(lower_values, dtype=np.float64)
     upper = np.asarray(upper_values, dtype=np.float64)
+    upper[0] = model_policy.ou_kappa_optimizer_upper_bounds(n_obs, 1)[1]
     return lower, upper, (scale_lower, scale_upper)
 
 
@@ -540,6 +567,19 @@ def _append_failure_message(message, reasons):
     return f"{message}; final validation failed: {'; '.join(reasons)}"
 
 
+def _remember_likelihood_options(init):
+    """Distinguish explicit constructor options from defaults when replaying a fit."""
+    constructor = signature(init)
+
+    @wraps(init)
+    def initialize(self, *args, **kwargs):
+        init(self, *args, **kwargs)
+        supplied = constructor.bind(self, *args, **kwargs).arguments
+        self._set_likelihood_overrides(supplied, supplied.get("config"))
+
+    return initialize
+
+
 @register_strategy('SCAR-TM-OU')
 class SCARTMStrategy:
     """Transfer matrix estimation for SCAR-OU model.
@@ -595,16 +635,36 @@ class SCARTMStrategy:
         StochasticStudentCopula opts in.
     stationary_scale_bounds : (float or None, float or None) or None
         Optional lower and upper bounds for ``sigma_x`` in log-stationary
-        coordinates. ``None`` uses the model policy. StochasticStudentCopula
-        and the independent bivariate log-coordinate policy each default to
-        ``(0.001, 10000.0)``.
+        coordinates. ``None`` uses the model policy: ``(0.022, 10000.0)``
+        for StochasticStudentCopula and ``(0.001, 10000.0)`` for bivariate
+        models.
     final_validation_abs_per_obs : float
         Absolute cross-backend objective tolerance per observation.
     final_validation_rel_tol : float
         Relative cross-backend objective tolerance.
+    spectral_check_tolerances : (float, float) or None
+        Optional absolute tolerances for the full log-likelihood and each
+        score component across Hermite resolutions at the final fit point.
+        The default skips the check. Results are recorded in diagnostics.
+    spectral_check_mode : {"screen", "full"}
+        Use two light refinements or four refinements from the five-probe study.
     final_gradient_tolerance : float or None
         Maximum projected-gradient norm for a successful final fit. When
         omitted, the tolerance is derived from the optimizer ``gtol``.
+    refine_fit : bool, default False
+        Warm-start a second fit with the original transition method and
+        refined spectral and/or matrix settings. Inspect diagnostics["refine_fit"].
+    refine_matrix_K, refine_matrix_grid_range, refine_matrix_max_K : optional
+        Node count, range in stationary standard deviations and node cap for
+        the refined matrix grid. Local GH keeps the original grid.
+    refine_loglik_tol : float, default 1e-8
+        Maximum final log-likelihood discrepancy per observation against a
+        control evaluation. The control likelihood must also match or improve
+        the starting point on that same rule.
+    refine_score_tol : float, default 1e-5
+        Maximum projected gradient of the mean control objective in the
+        second optimizer's coordinates. The second fit caps its optimizer
+        ``gtol`` at this tolerance multiplied by the number of observations.
     final_growth_limit : float
         Maximum allowed OU parameter growth relative to initialization.
     final_rho_tolerance : float
@@ -612,6 +672,10 @@ class SCARTMStrategy:
         treated as numerically degenerate.
     strict_gradient_policy : bool
         Enforce the final projected-gradient tolerance (default False).
+        In log-stationary optimization, the projection uses the optimizer's
+        coordinates and bounds; physical-mode validation remains unchanged.
+        The existing ``final_boundary_flags`` still describe physical
+        parameters, rather than stationary-scale bounds.
     corr_gradient_block_bytes : int
         Budget for the three active correlation-gradient blocks (default
         64 MiB). Excludes PPF caches, transition storage and checkpoints.
@@ -635,6 +699,7 @@ class SCARTMStrategy:
         "sample_params": _prediction_context_keywords,
     }
 
+    @_remember_likelihood_options
     def __init__(self, config: NumericalConfig | None = None,
                  K: int | None = None,
                  grid_range: float | None = None,
@@ -660,6 +725,14 @@ class SCARTMStrategy:
                  final_rho_tolerance: float = 1e-15,
                  strict_gradient_policy: bool = False,
                  corr_gradient_block_bytes: int = 67_108_864,
+                 spectral_check_tolerances: tuple[float, float] | None = None,
+                 spectral_check_mode: str = "screen",
+                 refine_fit: bool = False,
+                 refine_matrix_K: int | None = None,
+                 refine_matrix_grid_range: float | None = None,
+                 refine_matrix_max_K: int | None = None,
+                 refine_loglik_tol: float = 1e-8,
+                 refine_score_tol: float = 1e-5,
                  **kwargs):
         if "backend" in kwargs:
             raise TypeError(
@@ -681,6 +754,33 @@ class SCARTMStrategy:
         self.spectral_basis_order = _normalize_spectral_basis_order(
             spectral_basis_order)
         self.spectral_quad_order = spectral_quad_order
+        self.spectral_check_tolerances = resolution_tolerances(
+            spectral_check_tolerances)
+        if spectral_check_mode not in ("screen", "full"):
+            raise ValueError("spectral_check_mode must be 'screen' or 'full'")
+        self.spectral_check_mode = spectral_check_mode
+        if not isinstance(refine_fit, (bool, np.bool_)):
+            raise TypeError("refine_fit must be boolean")
+        if refine_fit and self.transition_method not in ("auto", "spectral", "matrix"):
+            raise ValueError("refine_fit requires auto, spectral, or matrix")
+        self.refine_fit = refine_fit
+        self.refine_loglik_tol, self.refine_score_tol = resolution_tolerances(
+            (refine_loglik_tol, refine_score_tol))
+        self._panel_degree = 0
+        self._matrix_grid = None
+        self.refine_matrix_K = refine_matrix_K
+        self.refine_matrix_grid_range = refine_matrix_grid_range
+        self.refine_matrix_max_K = refine_matrix_max_K
+        if any(x is not None for x in (
+                refine_matrix_K, refine_matrix_grid_range, refine_matrix_max_K)):
+            validate_cpp_config(AutoTMConfig(
+                transition_method="matrix", grid_method=self.grid_method,
+                K=self.K if refine_matrix_K is None else refine_matrix_K,
+                grid_range=self.grid_range if refine_matrix_grid_range is None else refine_matrix_grid_range,
+                max_K=refine_matrix_max_K))
+            if (refine_matrix_K is not None and refine_matrix_max_K is not None
+                    and refine_matrix_K > refine_matrix_max_K):
+                raise ValueError("refine_matrix_K exceeds refine_matrix_max_K")
         self.analytical_grad = analytical_grad
         self.corr_gradient_block_bytes = corr_gradient_block_bytes
         self.smart_init = smart_init
@@ -797,6 +897,8 @@ class SCARTMStrategy:
                      n_obs: int | None = None):
         return AutoTMConfig(
             transition_method=transition_method or self.transition_method,
+            panel_degree=self._panel_degree,
+            matrix_grid=self._matrix_grid,
             small_kdt=self.auto_small_kdt,
             basis_order=self._spectral_basis_order_for(kappa, n_obs),
             quad_order=self.spectral_quad_order,
@@ -849,7 +951,7 @@ class SCARTMStrategy:
             self, result, final_params, initial_params, lower, upper,
             selected_evaluator, validation_evaluator, selected_engine,
             validation_engine, n_obs, optimizer_options,
-            correlation_validator=None):
+            correlation_validator=None, optimizer_bounds=None):
         """Re-evaluate and validate a candidate optimizer solution."""
         final_params = np.asarray(final_params, dtype=np.float64).reshape(-1)
         initial_params = np.asarray(initial_params, dtype=np.float64).reshape(-1)
@@ -870,13 +972,29 @@ class SCARTMStrategy:
         selected_grad = np.asarray((), dtype=np.float64)
         selected_evaluation_succeeded = True
         selected_error = ""
-        if native_validation.valid_ou_final_parameters(final_params):
+        valid_parameters = native_validation.valid_ou_final_parameters(final_params)
+        if valid_parameters:
             try:
                 selected_value, selected_grad = selected_evaluator(final_params)
                 selected_value = float(selected_value)
                 selected_grad = np.asarray(
                     selected_grad, dtype=np.float64).reshape(-1)
             except Exception as exc:
+                selected_evaluation_succeeded = False
+                selected_error = str(exc)
+
+        projection = None
+        if (self.strict_gradient_policy and optimizer_bounds is not None
+                and valid_parameters and selected_evaluation_succeeded
+                and selected_grad.shape == final_params.shape):
+            try:
+                projection = (
+                    _ou_to_log_stationary(final_params),
+                    _ou_grad_to_log_stationary(final_params, selected_grad),
+                    optimizer_bounds.lb,
+                    optimizer_bounds.ub,
+                )
+            except (FloatingPointError, NativeError, ValueError) as exc:
                 selected_evaluation_succeeded = False
                 selected_error = str(exc)
 
@@ -897,6 +1015,7 @@ class SCARTMStrategy:
             optimizer_gtol=optimizer_options.get("gtol", 1e-3),
             rho_tolerance=self.final_rho_tolerance,
             growth_limit=self.final_growth_limit,
+            projection=projection,
         )
         reasons = list(validation["reasons"])
 
@@ -1031,6 +1150,7 @@ class SCARTMStrategy:
                     copula,
                     self.log_stationary_scale_optimization,
                     self.stationary_scale_bounds,
+                    len(u),
                 ))
             x0_scaled = _ou_to_log_stationary(joint0)
             x0_scaled[:3] = _project_log_stationary_initial_point(
@@ -1046,7 +1166,7 @@ class SCARTMStrategy:
             upper[:3] = log_upper
         else:
             scaled_lower, scaled_upper = (
-                model_policy.ou_scaled_optimizer_bounds(scale[:3]))
+                _ou_scaled_optimizer_bounds(scale[:3], len(u)))
             lower[:3] = scaled_lower
             upper[:3] = scaled_upper
         optimizer_box = Bounds(lower, upper)
@@ -1316,7 +1436,8 @@ class SCARTMStrategy:
                  if bounded_log_stationary else _OU_PHYSICAL_LOWER),
                 np.full(n_corr, -np.inf),
             )),
-            upper=np.full(3 + n_corr, np.inf),
+            upper=np.concatenate((_ou_physical_upper(len(u)),
+                                  np.full(n_corr, np.inf))),
             selected_evaluator=selected_final_evaluator,
             validation_evaluator=None,
             selected_engine=selected_engine,
@@ -1324,8 +1445,14 @@ class SCARTMStrategy:
             n_obs=len(u),
             optimizer_options=optimizer_options,
             correlation_validator=validate_correlation,
+            optimizer_bounds=optimizer_box if log_stationary else None,
         )
         diagnostics.update(validation_diagnostics)
+        if self.spectral_check_tolerances is not None:
+            check_final_resolution(
+                u, copula, joint, self._auto_config,
+                result, diagnostics, self.spectral_check_tolerances,
+                self.spectral_check_mode)
         try:
             copula._set_corr_from_params(joint[3:])
         except Exception:
@@ -1404,9 +1531,12 @@ class SCARTMStrategy:
         Notes
         -----
         ``diagnostics['final_validation_passed']`` reports candidate checks;
-        it does not certify integration accuracy. The separate
-        ``final_integration_status`` remains ``'not_checked'`` until an
-        explicit resolution study is performed outside this fit.
+        the optional ``spectral_check_tolerances`` study separately reports
+        Hermite resolution agreement in ``final_integration_status``.
+
+        For T observations, the optimizer constrains
+        ``kappa <= -log(0.001) * (T - 1)``, corresponding to an OU
+        one-step autocorrelation of at least 0.001.
 
         Returns
         -------
@@ -1429,6 +1559,21 @@ class SCARTMStrategy:
                 finite_diff_rel_step=finite_diff_rel_step,
             ),
         )
+        if self.refine_fit:
+            from pyscarcopula.strategy._scar_ou_refit import fit_with_refinement
+
+            def run(strategy, initial, *, restart_gtol=None):
+                fit_gtol = gtol if restart_gtol is None else restart_gtol
+                return strategy.fit(
+                    copula, u, alpha0=initial, gtol=fit_gtol, ftol=ftol, maxfun=maxfun,
+                    maxiter=maxiter, maxls=maxls, eps=eps, maxcor=maxcor,
+                    finite_diff_rel_step=finite_diff_rel_step, verbose=verbose,
+                    initial_mle_result=initial_mle_result)
+
+            ordinary = copy(self)
+            ordinary.refine_fit = False
+            return fit_with_refinement(
+                ordinary, copula, u, alpha0, run, optimizer_gtol=optimizer_options["gtol"])
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,
         )
@@ -1462,6 +1607,7 @@ class SCARTMStrategy:
                     copula,
                     self.log_stationary_scale_optimization,
                     self.stationary_scale_bounds,
+                    len(u),
                 ))
         else:
             log_lower = log_upper = None
@@ -1515,7 +1661,7 @@ class SCARTMStrategy:
                 scale = model_policy.optimizer_unit_scale(alpha0)
                 x0_scaled = _cpp_scar_ou.physical_to_scaled(alpha0, scale)
                 optimizer_box = Bounds(
-                    *model_policy.ou_scaled_optimizer_bounds(scale))
+                    *_ou_scaled_optimizer_bounds(scale, len(u)))
 
             def objective_and_grad(x_scaled):
                 alpha = _trial_parameters(
@@ -1578,7 +1724,7 @@ class SCARTMStrategy:
                     physical_grad,
                     (_OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER
                      if bounded_log_stationary else _OU_PHYSICAL_LOWER),
-                    _OU_PHYSICAL_UPPER,
+                    _ou_physical_upper(len(u)),
                 )
                 acceptable_boundary = (
                     np.isfinite(final_val)
@@ -1612,7 +1758,7 @@ class SCARTMStrategy:
                 scale = model_policy.optimizer_unit_scale(alpha0)
                 x0_scaled = _cpp_scar_ou.physical_to_scaled(alpha0, scale)
                 optimizer_box = Bounds(
-                    *model_policy.ou_scaled_optimizer_bounds(scale))
+                    *_ou_scaled_optimizer_bounds(scale, len(u)))
 
             def objective_scaled(x_scaled):
                 alpha = _trial_parameters(
@@ -1684,7 +1830,7 @@ class SCARTMStrategy:
             lower=(
                 _OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER
                 if bounded_log_stationary else _OU_PHYSICAL_LOWER),
-            upper=_OU_PHYSICAL_UPPER,
+            upper=_ou_physical_upper(len(u)),
             selected_evaluator=lambda values: evaluate_final(
                 values, True, record=True),
             validation_evaluator=None,
@@ -1692,8 +1838,15 @@ class SCARTMStrategy:
             validation_engine=None,
             n_obs=len(u),
             optimizer_options=optimizer_options,
+            optimizer_bounds=optimizer_box if log_stationary else None,
         )
         diagnostics.update(validation_diagnostics)
+
+        if self.spectral_check_tolerances is not None:
+            check_final_resolution(
+                u, copula, alpha, self._auto_config,
+                result, diagnostics, self.spectral_check_tolerances,
+                self.spectral_check_mode)
 
         if verbose:
             print(f"  => alpha={alpha}, logL={-result.fun:.4f}")
@@ -1723,11 +1876,55 @@ class SCARTMStrategy:
             diagnostics=diagnostics,
         )
 
+    def _set_likelihood_overrides(self, supplied, config):
+        fields = set(supplied)
+        if config is not None:
+            fields.add("n_threads")
+        self._likelihood_overrides = fields
+
+    def _likelihood_config(self, result, n_obs):
+        requested = self._auto_config(kappa=result.params.kappa, n_obs=n_obs)
+        refinement = result.diagnostics.get("refine_fit", {})
+        if refinement.get("status") == "accepted":
+            saved = refinement["likelihood_config"]
+        else:
+            legacy = result.diagnostics.get("spectral_refit", {})
+            if legacy.get("status") != "accepted":
+                return requested
+            saved = dict(transition_method="spectral", basis_order=legacy["basis_order"],
+                         quad_order=legacy["quad_order"], panel_degree=legacy["panel_degree"])
+
+        cfg = replace(requested, **saved)
+        aliases = {"spectral_basis_order": "basis_order", "spectral_quad_order": "quad_order",
+                   "auto_small_kdt": "small_kdt"}
+        fields = (aliases.get(name, name) for name in self._likelihood_overrides)
+        overrides = {name: getattr(requested, name) for name in fields if hasattr(requested, name)}
+        if any(name in overrides and overrides[name] != getattr(cfg, name)
+               for name in ("basis_order", "quad_order")):
+            # A fitted panel rule is specific to its basis and quadrature orders.
+            overrides["panel_degree"] = 0
+        if cfg.matrix_grid is not None:
+            # Auto uses a separate refined grid for its matrix fallback.
+            grid_fields = ("K", "grid_range", "max_K", "pts_per_sigma")
+            grid = tuple(overrides.get(name, value) for name, value in zip(grid_fields, cfg.matrix_grid))
+            if overrides.get("transition_method") == "matrix":
+                saved_size, _, saved_cap, _ = cfg.matrix_grid
+                if saved_cap is not None and saved_size > saved_cap:
+                    saved_size = saved_cap
+                native_limit = cpp_matrix_grid_limit(overrides.get("grid_method", cfg.grid_method))
+                if saved_size > native_limit:
+                    saved_size = native_limit
+                overrides.update(zip(grid_fields, (overrides.get("K", saved_size), *grid[1:])))
+                overrides["matrix_grid"] = None
+            else:
+                overrides["matrix_grid"] = grid
+        return replace(cfg, **overrides)
+
     def log_likelihood(self, copula, u: np.ndarray,
                        result: LatentResult) -> float:
         """Evaluate TM log-likelihood at fitted parameters."""
         p = result.params
-        cfg = self._auto_config(kappa=p.kappa, n_obs=len(u))
+        cfg = self._likelihood_config(result, len(u))
         self._uses_cpp(copula)
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,

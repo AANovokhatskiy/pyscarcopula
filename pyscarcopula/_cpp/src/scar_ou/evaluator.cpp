@@ -1,6 +1,7 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
+#include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
 
@@ -8,6 +9,61 @@
 
 namespace scar {
 using namespace evaluator_detail;
+
+namespace {
+OuNumericalConfig matrix_fallback_config(OuNumericalConfig config) {
+    if (config.matrix_K != 0) {
+        config.K = config.matrix_K;
+        config.grid_range = config.matrix_grid_range;
+        config.max_K = config.matrix_max_K;
+        if (config.matrix_pts_per_sigma != 0) {
+            config.pts_per_sigma = config.matrix_pts_per_sigma;
+        }
+    }
+    return config;
+}
+
+bool matrix_request_exceeds_cap(const OuNumericalConfig& config) {
+    const auto native_limit = config.grid_method == OuGridMethod::Dense
+        ? scar_internal::kMaxDenseGridSize : scar_internal::kMaxGridSize;
+    return (config.max_K > 0 && config.K > config.max_K)
+        || (config.K > 0 && static_cast<std::size_t>(config.K) > native_limit);
+}
+
+template <typename EvaluateMatrix, typename EvaluateLocal, typename Accepted>
+auto auto_matrix_or_local(
+    const OuParams& params,
+    ObservationView u,
+    const OuNumericalConfig& config,
+    EvaluateMatrix evaluate_matrix,
+    EvaluateLocal evaluate_local,
+    Accepted accepted) {
+    const auto matrix_config = matrix_fallback_config(config);
+    int matrix_reason = SCAR_FALLBACK_CAPPED;
+    // The requested refit grid may be beyond the native matrix size limit.
+    // Skip it before allocation when the node request already exceeds its cap.
+    if (config.matrix_K == 0 || !matrix_request_exceeds_cap(matrix_config)) {
+        auto result = evaluate_matrix(matrix_config);
+        const bool matrix_accepted = accepted(result);
+        matrix_reason = matrix_accepted
+            ? matrix_grid_fallback_reason(params, u, matrix_config)
+            : SCAR_FALLBACK_FAILED;
+        if (matrix_accepted && matrix_reason == SCAR_FALLBACK_NONE) {
+            set_auto_fallback(result, {OuBackend::Spectral});
+            return result;
+        }
+        if (!result.is_ok() && !recoverable_numerical_status(result.status)) {
+            set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
+                              matrix_reason);
+            return result;
+        }
+    }
+    auto result = evaluate_local(config);
+    set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
+                      matrix_reason);
+    return result;
+}
+}  // namespace
 
 const PreparedDynamicEmission& ScarOuEvaluator::resolve_dynamic_emission(
     const CopulaSpec& copula,
@@ -289,27 +345,15 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    result = neg_loglik_with_grad_and_corr_matrix(
-        params, copula, u, config);
-    const int matrix_reason = auto_grad_accepted(result)
-        ? matrix_grid_fallback_reason(params, u, config)
-        : SCAR_FALLBACK_FAILED;
-    if (auto_grad_accepted(result)
-        && matrix_reason == SCAR_FALLBACK_NONE) {
-        set_auto_fallback(result, {OuBackend::Spectral});
-        return result;
-    }
-    if (!result.is_ok()
-        && !recoverable_numerical_status(result.status)) {
-        set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
-                          matrix_reason);
-        return result;
-    }
-    result = neg_loglik_with_grad_and_corr_local_gh(
-        params, copula, u, config);
-    set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
-                      matrix_reason);
-    return result;
+    return auto_matrix_or_local(
+        params, u, config,
+        [&](const OuNumericalConfig& cfg) {
+            return neg_loglik_with_grad_and_corr_matrix(params, copula, u, cfg);
+        },
+        [&](const OuNumericalConfig& cfg) {
+            return neg_loglik_with_grad_and_corr_local_gh(params, copula, u, cfg);
+        },
+        auto_grad_accepted);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_auto(
@@ -341,27 +385,17 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_auto
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    result = neg_loglik_with_grad_and_corr_directional_matrix(
-        params, copula, u, config, corr_direction);
-    const int matrix_reason = auto_grad_accepted(result)
-        ? matrix_grid_fallback_reason(params, u, config)
-        : SCAR_FALLBACK_FAILED;
-    if (auto_grad_accepted(result)
-        && matrix_reason == SCAR_FALLBACK_NONE) {
-        set_auto_fallback(result, {OuBackend::Spectral});
-        return result;
-    }
-    if (!result.is_ok()
-        && !recoverable_numerical_status(result.status)) {
-        set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
-                          matrix_reason);
-        return result;
-    }
-    result = neg_loglik_with_grad_and_corr_directional_local_gh(
-        params, copula, u, config, corr_direction);
-    set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
-                      matrix_reason);
-    return result;
+    return auto_matrix_or_local(
+        params, u, config,
+        [&, corr_direction](const OuNumericalConfig& cfg) {
+            return neg_loglik_with_grad_and_corr_directional_matrix(
+                params, copula, u, cfg, corr_direction);
+        },
+        [&, corr_direction](const OuNumericalConfig& cfg) {
+            return neg_loglik_with_grad_and_corr_directional_local_gh(
+                params, copula, u, cfg, corr_direction);
+        },
+        auto_grad_accepted);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_auto(
@@ -390,25 +424,15 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    result = neg_loglik_with_grad_matrix(params, copula, u, config);
-    const int matrix_reason = auto_grad_accepted(result)
-        ? matrix_grid_fallback_reason(params, u, config)
-        : SCAR_FALLBACK_FAILED;
-    if (auto_grad_accepted(result)
-        && matrix_reason == SCAR_FALLBACK_NONE) {
-        set_auto_fallback(result, {OuBackend::Spectral});
-        return result;
-    }
-    if (!result.is_ok()
-        && !recoverable_numerical_status(result.status)) {
-        set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
-                          matrix_reason);
-        return result;
-    }
-    result = neg_loglik_with_grad_local_gh(params, copula, u, config);
-    set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
-                      matrix_reason);
-    return result;
+    return auto_matrix_or_local(
+        params, u, config,
+        [&](const OuNumericalConfig& cfg) {
+            return neg_loglik_with_grad_matrix(params, copula, u, cfg);
+        },
+        [&](const OuNumericalConfig& cfg) {
+            return neg_loglik_with_grad_local_gh(params, copula, u, cfg);
+        },
+        auto_grad_accepted);
 }
 
 LogLikResult ScarOuEvaluator::loglik_auto(
@@ -437,25 +461,15 @@ LogLikResult ScarOuEvaluator::loglik_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    result = loglik_matrix(params, copula, u, config);
-    const int matrix_reason = auto_loglik_accepted(result)
-        ? matrix_grid_fallback_reason(params, u, config)
-        : SCAR_FALLBACK_FAILED;
-    if (auto_loglik_accepted(result)
-        && matrix_reason == SCAR_FALLBACK_NONE) {
-        set_auto_fallback(result, {OuBackend::Spectral});
-        return result;
-    }
-    if (!result.is_ok()
-        && !recoverable_numerical_status(result.status)) {
-        set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
-                          matrix_reason);
-        return result;
-    }
-    result = loglik_local_gh(params, copula, u, config);
-    set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
-                      matrix_reason);
-    return result;
+    return auto_matrix_or_local(
+        params, u, config,
+        [&](const OuNumericalConfig& cfg) {
+            return loglik_matrix(params, copula, u, cfg);
+        },
+        [&](const OuNumericalConfig& cfg) {
+            return loglik_local_gh(params, copula, u, cfg);
+        },
+        auto_loglik_accepted);
 }
 
 std::vector<double> ScarOuEvaluator::predictive_mean_auto(

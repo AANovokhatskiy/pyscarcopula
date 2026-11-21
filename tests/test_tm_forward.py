@@ -136,7 +136,7 @@ def test_log_stationary_optimizer_selection_is_optional_for_bivariate_model():
         stochastic_student._scar_optimizer_config)
     assert bivariate._scar_stationary_scale_bounds == (0.001, 10_000.0)
     assert stochastic_student._scar_stationary_scale_bounds == (
-        0.001, 10_000.0)
+        0.022, 10_000.0)
     assert not scar_tm._uses_log_stationary_scale(bivariate)
     assert scar_tm._uses_log_stationary_scale(bivariate, True)
     assert not scar_tm._uses_bounded_log_stationary_scale(bivariate)
@@ -319,7 +319,7 @@ def test_stochastic_student_uses_model_log_scale_bounds_by_default(monkeypatch):
         captured["x0"], scar_tm._ou_to_log_stationary(alpha0))
     assert captured["bounds"].lb[0] == pytest.approx(np.log(0.001))
     assert np.isneginf(captured["bounds"].lb[1])
-    assert captured["bounds"].lb[2] == pytest.approx(np.log(0.001))
+    assert captured["bounds"].lb[2] == pytest.approx(np.log(0.022))
     assert captured["bounds"].ub[2] == pytest.approx(np.log(10_000.0))
     assert captured["options"]["maxiter"] == 1000
     assert captured["options"]["maxls"] == 200
@@ -329,7 +329,104 @@ def test_stochastic_student_uses_model_log_scale_bounds_by_default(monkeypatch):
     assert result.diagnostics["optimizer_parameterization"] == (
         "log_kappa_mu_log_stationary_sigma")
     assert result.diagnostics["optimizer_stationary_scale_bounds"] == (
-        0.001, 10_000.0)
+        0.022, 10_000.0)
+
+
+@pytest.mark.parametrize("corr_mode", ["fixed", "shrinkage"])
+@pytest.mark.parametrize("scale_bounds,expected_lower,expected_upper", [
+    (None, 0.022, 10_000.0),
+    ((0.005, 1.0), 0.005, 1.0),
+])
+def test_student_stationary_scale_bound_projects_initial_point(
+        monkeypatch, corr_mode, scale_bounds, expected_lower, expected_upper):
+    captured = {}
+
+    def fake_minimize(fun, x0, *, method, jac, bounds, options):
+        captured["bounds"] = bounds
+        captured["x0"] = np.asarray(x0).copy()
+        return SimpleNamespace(
+            x=np.asarray(x0).copy(), fun=0.0, jac=np.zeros_like(x0),
+            success=False, message="test", nfev=1)
+
+    monkeypatch.setattr(scar_tm, "minimize", fake_minimize)
+    monkeypatch.setattr(
+        SCARTMStrategy, "_validate_final_fit", lambda *args, **kwargs: {})
+    u = np.random.default_rng(17).uniform(0.1, 0.9, size=(20, 2))
+    result = fit(
+        StochasticStudentCopula(d=2, corr_mode=corr_mode), u,
+        method="scar-tm-ou", alpha0=[0.001, 0.3, 0.0001],
+        stationary_scale_bounds=scale_bounds)
+
+    assert captured["bounds"].lb[2] == pytest.approx(np.log(expected_lower))
+    assert captured["bounds"].ub[2] == pytest.approx(np.log(expected_upper))
+    assert captured["x0"][2] == pytest.approx(np.log(expected_lower))
+    assert result.params.kappa == pytest.approx(0.001)
+    assert result.params.nu == pytest.approx(expected_lower * np.sqrt(0.002))
+
+
+def test_student_stationary_scale_bound_with_real_optimizer():
+    u = np.random.default_rng(17).uniform(0.1, 0.9, size=(20, 2))
+    result = fit(
+        StochasticStudentCopula(d=2, R=np.eye(2)), u,
+        method="scar-tm-ou", alpha0=[2.0, 0.3, 0.002], maxiter=1,
+        transition_method="spectral", spectral_basis_order=8,
+        spectral_quad_order=24)
+
+    sigma = result.params.nu / np.sqrt(2.0 * result.params.kappa)
+    assert sigma >= 0.022 - 1e-14
+    assert result.diagnostics["optimizer_stationary_scale_bounds"] == (
+        0.022, 10_000.0)
+
+
+@pytest.mark.parametrize("corr_mode", ["fixed", "shrinkage"])
+@pytest.mark.parametrize("log_stationary", [False, True])
+@pytest.mark.parametrize("analytical_grad", [False, True])
+def test_ou_optimizer_limits_kappa_for_minimum_rho(
+        monkeypatch, corr_mode, log_stationary, analytical_grad):
+    captured = {}
+
+    def fake_minimize(fun, x0, *, method, jac, bounds, options):
+        captured["bounds"] = bounds
+        x = np.clip(x0, bounds.lb, bounds.ub)
+        return SimpleNamespace(
+            x=x, fun=0.0, jac=np.zeros_like(x), success=False,
+            message="test", nfev=1)
+
+    def capture_validation(self, *args, **kwargs):
+        captured["physical_upper"] = np.asarray(kwargs["upper"])
+        return {}
+
+    monkeypatch.setattr(scar_tm, "minimize", fake_minimize)
+    monkeypatch.setattr(SCARTMStrategy, "_validate_final_fit", capture_validation)
+    u = np.random.default_rng(17).uniform(0.1, 0.9, size=(20, 2))
+    kappa_max = -np.log(0.001) * (len(u) - 1)
+    alpha0 = np.array([2.0 * kappa_max, 0.3, 1.4])
+    result = fit(
+        StochasticStudentCopula(d=2, corr_mode=corr_mode), u,
+        method="scar-tm-ou", alpha0=alpha0,
+        log_stationary_scale_optimization=log_stationary,
+        analytical_grad=analytical_grad)
+
+    expected_bound = (np.log(kappa_max) if log_stationary
+                      else kappa_max / alpha0[0])
+    assert captured["bounds"].ub[0] == pytest.approx(expected_bound)
+    assert captured["physical_upper"][0] == pytest.approx(kappa_max)
+    assert result.params.kappa == pytest.approx(kappa_max)
+    assert np.exp(-result.params.kappa / (len(u) - 1)) == pytest.approx(0.001)
+
+
+@pytest.mark.parametrize("n_obs", [2, 20, 500])
+@pytest.mark.parametrize("log_stationary", [False, True])
+def test_ou_kappa_bound_matches_observation_step(n_obs, log_stationary):
+    scale = np.array([3.0, 1.0, 1.0])
+    if log_stationary:
+        _, upper, _ = scar_tm._log_stationary_optimizer_bounds(
+            BivariateGaussianCopula(), True, None, n_obs)
+        kappa = np.exp(upper[0])
+    else:
+        _, upper = scar_tm._ou_scaled_optimizer_bounds(scale, n_obs)
+        kappa = upper[0] * scale[0]
+    assert np.exp(-kappa / (n_obs - 1)) == pytest.approx(0.001)
 
 
 def test_scar_tm_auto_selects_spectral_except_narrow_local_fallback():
@@ -810,6 +907,131 @@ def test_scar_tm_strict_gradient_policy_rejects_large_gradient():
     assert not result.success
     assert diagnostics["final_projected_gradient_norm"] == pytest.approx(1.0)
     assert "projected gradient exceeds" in result.message
+
+
+@pytest.mark.parametrize("joint", [False, True])
+@pytest.mark.parametrize("log_gradient,accepted", [
+    ([-1.0, 0.0, 1.0], True),
+    ([1.0, 0.0, 1.0], False),
+    ([-1.0, 0.0, -1.0], False),
+])
+def test_scar_strict_projection_uses_log_stationary_bounds(
+        joint, log_gradient, accepted):
+    n_obs = 100
+    kappa = -np.log(0.001) * (n_obs - 1)
+    physical = np.array([kappa, 0.3, 0.022 * np.sqrt(2 * kappa)])
+    log_gradient = np.asarray(log_gradient)
+    if joint:
+        physical = np.append(physical, 0.2)
+        log_gradient = np.append(log_gradient, 0.0)
+    physical_gradient = log_gradient.copy()
+    physical_gradient[0] = (log_gradient[0] - 0.5 * log_gradient[2]) / physical[0]
+    physical_gradient[2] = log_gradient[2] / physical[2]
+    copula = StochasticStudentCopula(d=2, R=np.eye(2))
+    log_lower, log_upper, _ = scar_tm._log_stationary_optimizer_bounds(
+        copula, None, None, n_obs)
+    if joint:
+        log_lower = np.append(log_lower, -np.inf)
+        log_upper = np.append(log_upper, np.inf)
+    lower = np.full(physical.shape, -np.inf)
+    upper = np.full(physical.shape, np.inf)
+    lower[[0, 2]] = 0.001
+    upper[0] = kappa
+    result = SimpleNamespace(
+        fun=12.0, jac=log_gradient, success=True, message="optimizer success")
+    diagnostics = SCARTMStrategy(
+        strict_gradient_policy=True,
+        final_gradient_tolerance=1e-4,
+    )._validate_final_fit(
+        result=result, final_params=physical, initial_params=physical,
+        lower=lower, upper=upper,
+        selected_evaluator=lambda values: (12.0, physical_gradient),
+        validation_evaluator=None, selected_engine="cpp",
+        validation_engine=None, n_obs=n_obs, optimizer_options={"gtol": 1e-3},
+        optimizer_bounds=scar_tm.Bounds(log_lower, log_upper))
+
+    assert result.success is accepted
+    assert diagnostics["final_validation_passed"] is accepted
+    assert diagnostics["final_projected_gradient_norm"] == pytest.approx(
+        0.0 if accepted else 1.0)
+    # Boundary flags retain their physical (kappa, mu, nu) meaning.
+    assert diagnostics["final_boundary_flags"][:3] == (True, False, False)
+
+
+@pytest.mark.parametrize("coordinates,log_gradient,accepted", [
+    ([np.log(2.0), 0.3, np.log(10_000.0)], [0.0, 0.0, -1.0], True),
+    ([np.log(2.0), 0.3, np.log(10_000.0)], [0.0, 0.0, 1.0], False),
+    ([np.log(0.001), 0.3, 0.0], [1.0, 0.0, 0.0], True),
+    ([np.log(0.001), 0.3, 0.0], [-1.0, 0.0, 0.0], False),
+])
+def test_scar_strict_projection_handles_other_log_bounds(
+        coordinates, log_gradient, accepted):
+    physical = scar_tm._ou_from_log_stationary(np.asarray(coordinates))
+    physical_gradient = np.array([
+        (log_gradient[0] - 0.5 * log_gradient[2]) / physical[0],
+        log_gradient[1],
+        log_gradient[2] / physical[2],
+    ])
+    copula = StochasticStudentCopula(d=2, R=np.eye(2))
+    log_lower, log_upper, _ = scar_tm._log_stationary_optimizer_bounds(
+        copula, None, None, 100)
+    result = SimpleNamespace(fun=12.0, success=True, message="optimizer success")
+    diagnostics = SCARTMStrategy(
+        strict_gradient_policy=True,
+        final_gradient_tolerance=1e-4,
+    )._validate_final_fit(
+        result=result, final_params=physical, initial_params=physical,
+        lower=np.array([0.001, -np.inf, 0.001]),
+        upper=scar_tm._ou_physical_upper(100),
+        selected_evaluator=lambda values: (12.0, physical_gradient),
+        validation_evaluator=None, selected_engine="cpp",
+        validation_engine=None, n_obs=100, optimizer_options={"gtol": 1e-3},
+        optimizer_bounds=scar_tm.Bounds(log_lower, log_upper))
+
+    assert result.success is accepted
+    assert diagnostics["final_projected_gradient_norm"] == pytest.approx(
+        0.0 if accepted else 1.0)
+
+
+def test_scar_strict_log_projection_rejects_nonfinite_gradient():
+    physical = np.array([2.0, 0.3, 1.0])
+    copula = StochasticStudentCopula(d=2, R=np.eye(2))
+    log_lower, log_upper, _ = scar_tm._log_stationary_optimizer_bounds(
+        copula, None, None, 20)
+    result = SimpleNamespace(fun=12.0, success=True, message="optimizer success")
+    diagnostics = SCARTMStrategy(strict_gradient_policy=True)._validate_final_fit(
+        result=result, final_params=physical, initial_params=physical,
+        lower=np.array([0.001, -np.inf, 0.001]),
+        upper=scar_tm._ou_physical_upper(20),
+        selected_evaluator=lambda values: (12.0, np.array([np.nan, 0.0, 0.0])),
+        validation_evaluator=None, selected_engine="cpp",
+        validation_engine=None, n_obs=20, optimizer_options={"gtol": 1e-3},
+        optimizer_bounds=scar_tm.Bounds(log_lower, log_upper))
+
+    assert not result.success
+    assert not diagnostics["final_validation_passed"]
+    assert "final gradient is not finite" in result.message
+
+
+@pytest.mark.parametrize("corr_mode", ["fixed", "shrinkage"])
+def test_student_strict_validation_accepts_both_active_log_bounds(corr_mode):
+    u = np.random.default_rng(2).uniform(0.05, 0.95, (100, 3))
+    kwargs = dict(
+        method="scar-tm-ou", alpha0=[10, 3, 0.001 * np.sqrt(20)],
+        maxiter=300, gtol=1e-8, ftol=1e-14,
+        final_gradient_tolerance=1e-5)
+    plain = StochasticStudentCopula(
+        d=3, R=np.eye(3), corr_mode=corr_mode).fit(u, **kwargs)
+    strict = StochasticStudentCopula(
+        d=3, R=np.eye(3), corr_mode=corr_mode).fit(
+        u, strict_gradient_policy=True, **kwargs)
+
+    assert plain.success and strict.success
+    np.testing.assert_array_equal(strict.params.values, plain.params.values)
+    assert strict.nfev == plain.nfev
+    assert strict.diagnostics["final_rho"] == pytest.approx(0.001)
+    assert strict.diagnostics["final_stationary_std"] == pytest.approx(0.022)
+    assert strict.diagnostics["final_projected_gradient_norm"] <= 1e-5
 
 
 def test_scar_tm_abnormal_recovery_uses_physical_gradient(monkeypatch):

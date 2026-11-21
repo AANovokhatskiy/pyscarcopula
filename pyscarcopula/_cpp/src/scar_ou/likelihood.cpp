@@ -56,7 +56,7 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
             z,
             weights,
             basis,
-            weighted_basis)) {
+            weighted_basis, config.panel_degree)) {
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
     }
 

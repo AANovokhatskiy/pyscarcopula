@@ -24,11 +24,25 @@ does not introduce simulation noise.
 | `auto_small_kdt` | strategy kwarg | `1e-2` | In `transition_method='auto'`, use the local transition when $\kappa\,dt$ is below this value. |
 | `spectral_basis_order` | strategy kwarg | `'auto'` | Hermite basis size for the spectral likelihood. The auto policy uses 128, 96, 64, or 32 from the current $\kappa\,dt$; pass an integer to fix the basis size. |
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
+| `refine_fit` | strategy kwarg | `False` | Warm-start a second fit using the same transition method (auto, spectral, or matrix). |
+| `refine_matrix_grid_range` | strategy kwarg | auto | Matrix range in stationary standard deviations; defaults to the larger of 8 and the original range. |
+| `refine_matrix_max_K` | strategy kwarg | auto | Matrix node cap; raises a finite first-stage cap to at least 10,000 within native limits. An uncapped first stage stays uncapped by default. |
+| `refine_matrix_K` | strategy kwarg | auto | Requested matrix nodes; the automatic policy targets half the original spacing, subject to the node cap. |
+| `refine_loglik_tol` | strategy kwarg | `1e-8` | Maximum final log-likelihood difference per observation against a finer control rule. |
+| `refine_score_tol` | strategy kwarg | `1e-5` | Maximum projected control gradient of the mean negative log-likelihood in optimizer coordinates. |
+| `spectral_check_tolerances` | strategy kwarg | `None` | Optional pair of positive absolute tolerances for the total log-likelihood and each score component at the final point. |
+| `spectral_check_mode` | strategy kwarg | `"screen"` | Light sensitivity check or `"full"` five-resolution comparison when tolerances are supplied. |
 | `analytical_grad` | strategy kwarg | `True` | Uses the analytical gradient and avoids optimizer finite differences. |
 | `corr_gradient_block_bytes` | strategy kwarg | `67108864` (64 MiB) | Budget for active grid correlation-gradient blocks or the spectral correlation workspace. Larger grid blocks reduce repeated forward passes. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
 | `log_stationary_scale_optimization` | strategy kwarg | `None` | For bivariate models, `True` enables `[log(kappa), mu, log(sigma_x)]` with `kappa, sigma_x >= 0.001`; `False` forces scaled physical coordinates; `None` keeps the model default. |
-| `stationary_scale_bounds` | strategy kwarg | `None` | Overrides model bounds for `sigma_x` in log-stationary coordinates. `StochasticStudentCopula` and bivariate models use separate policies, both defaulting to `(0.001, 10000.0)`. |
+| `stationary_scale_bounds` | strategy kwarg | `None` | Overrides model bounds for `sigma_x` in log-stationary coordinates. The default is `(0.022, 10000.0)` for `StochasticStudentCopula` and `(0.001, 10000.0)` for bivariate models. |
+
+SCAR-TM-OU fits constrain `kappa <= -log(0.001) * (T - 1)`, where
+`T` is the number of observations. With `dt = 1 / (T - 1)`, this imposes
+`rho = exp(-kappa * dt) >= 0.001`. The bound applies in both optimizer
+coordinate systems and to joint correlation fits; direct likelihood
+evaluation continues to accept the physical parameter domain.
 
 For `StochasticStudentCopula`, `alpha0` is still supplied as
 `[kappa, mu, nu]`, but the optimizer internally uses
@@ -38,8 +52,10 @@ For `StochasticStudentCopula`, `alpha0` is still supplied as
 is opt-in via `log_stationary_scale_optimization=True`. The log-coordinate
 fit guarantees positive `nu` after conversion but does not apply the legacy
 `nu >= 0.001` bound. `StochasticStudentCopula` uses
-`0.001 <= sigma_x <= 10000`, while retaining final validation against the
-physical `nu >= 0.001` bound and the other OU acceptance checks. Its
+`0.022 <= sigma_x <= 10000` and `kappa >= 0.001` by default. Together,
+these imply `nu >= 0.022 * sqrt(2 * 0.001)`, approximately `0.000984`,
+not a strict `nu >= 0.001` bound. The final validation still requires
+positive physical `nu` and performs the other OU acceptance checks. Its
 model-specific SCAR optimizer defaults are `maxiter=1000` and `maxls=200`;
 they come from `stochastic_student_scar_optimizer`. Ordinary bivariate
 SCAR-TM-OU fits use `bivariate_scar_optimizer`; when it is omitted, that field
@@ -293,6 +309,87 @@ quadrature but does not fix a poor latent grid; `K`, `grid_range`, and
 `pts_per_sigma` still determine where the posterior can live.
 
 ### Spectral Hermite likelihood
+
+With `refine_fit=True`, a successful first fit supplies the starting OU
+and free correlation parameters for a second optimization. Both passes use
+the requested transition method. In `auto`, each trial point goes through
+ordinary dispatch, including both fallbacks, regardless of the first fit's
+terminal backend. Spectral evaluations use a fixed higher-order rule, matrix
+evaluations use the refined grid, and local GH uses the original grid and
+quadrature throughout. Explicit `spectral` and `matrix` refine their own
+backend. Explicit `local` does not support refinement.
+
+For the automatic matrix node count, the starting size is the effective grid
+size from the first fit when available, otherwise the original requested size
+within its cap. The restart targets twice as many intervals per unit of
+stationary standard deviation and doubles `pts_per_sigma` on adaptive grids.
+An explicit `refine_matrix_K` keeps the original adaptive density target.
+If `auto` reaches its matrix fallback and the planned refit grid exceeds
+its node cap, it goes directly to local GH on the original grid.
+The diagnostics record the effective sizes and standardized grid steps when
+the corresponding final evaluations actually used a grid.
+
+A successful restart is accepted when all three conditions hold:
+
+- At the new parameters, the difference between the fitted and control
+  log-likelihoods divided by T is at most `refine_loglik_tol`.
+- The new log-likelihood equals or exceeds the original candidate's likelihood
+  when both are evaluated on the same control rule.
+- The infinity norm of the projected gradient of the mean control objective
+  is at most `refine_score_tol`. Projection uses the restart's optimizer
+  coordinates and bounds, including free correlation coordinates.
+
+The control keeps the same dispatch mode. It increases spectral resolution;
+matrix and local evaluations use their respective restart grids. Agreement on
+the same grid is not an independent estimate of matrix or local integration
+error. The panel table goes up to 160 fit modes and 192 control modes. For
+larger custom orders, refinement uses Gauss-Hermite within the native order limit. The implementation tries the
+next available profile after numerical failure or rejection. An exhausted
+profile budget returns the first fit, including its correlation parameters.
+Inspect `result.diagnostics["refine_fit"]` for the decision and individual
+attempts. The division by T expresses numerical error per observation.
+Agreement between finite rules is an empirical accuracy check.
+
+When both refitting and a final resolution check are requested, the returned
+candidate carries its own resolution report. For a panel restart, the screen
+compares the fitted rule, a higher panel degree at the same basis size, and the
+control profile. Full mode also evaluates an intermediate degree at each basis
+size. Both modes apply the requested absolute likelihood and score tolerances.
+
+For an optional final check, pass `spectral_check_tolerances=(1e-5, 1e-4)`
+to `fit`. These example spreads are absolute, for the entire series. The
+score is the gradient of the positive-sign log-likelihood in
+`(log(kappa), mu, log(stationary_sigma))` coordinates, followed by any
+jointly estimated raw correlation coordinates.
+
+The check reuses the successful fit's final spectral value and gradient.
+The default screen increases Q and M separately by one quarter (rounded up).
+The M probe uses the original Q when it can integrate the larger basis,
+otherwise it uses the already tested larger Q. A completed screen reports
+`screen_passed`. With `spectral_check_mode="full"` the four additional
+orders are (M, 2Q), (M, 4Q), (M₁, 4Q), (M₂, 4Q), with
+M₁ = M + ceil(M/2) and M₂ = max(2M, M₁+1). Agreement of all five reports
+`numerical_agreement`. Both modes stop as soon as any observed spread
+exceeds its tolerance. A failed probe or an order above 1024 also gives
+`unresolved`. These comparisons provide empirical evidence of sensitivity.
+
+`result.diagnostics["spectral_resolution_check"]` records each completed
+probe, the observed spreads and the reason for an early stop or skipped
+check. `final_integration_status` stays `not_checked` for an unsuccessful
+fit or a non-spectral final backend. `final_integration_converged` is true
+for full agreement, false for an excessive spread, and null otherwise.
+The check is diagnostic only. It makes zero optimizer calls and reports
+the original fit parameters and success flag. An unresolved result can be
+investigated using a separately refined matrix grid at the same parameters.
+
+For `a = kappa / (T - 1)`, the one-step OU operator has rank-M truncation
+error exp(−aM) in the stationary Gaussian L² operator norm. Thus
+M ≥ ceil(log(1/ε)/a) controls that operator at tolerance ε. To translate
+this into log-likelihood and score accuracy one also needs the observed
+emissions and the normalization of the whole series. If an emission is
+polynomial of degree d in standardized state, its Hermite moment matrix
+is integrated exactly when 2Q−1 ≥ 2M−2+d. General copula emissions require
+their own quadrature error estimates or numerical resolution checks.
 
 The spectral method uses stationarity of the OU process. Write
 

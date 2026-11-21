@@ -31,7 +31,8 @@ bool standard_normal_hermite_rule_with_weighted_basis(
     std::vector<double>& z,
     std::vector<double>& weights,
     std::vector<double>& basis,
-    std::vector<double>& weighted_basis);
+    std::vector<double>& weighted_basis,
+    int panel_degree = 0);
 HermiteRuleCacheInfo hermite_rule_cache_info();
 void clear_hermite_rule_cache();
 void set_hermite_rule_cache_limits_for_testing(

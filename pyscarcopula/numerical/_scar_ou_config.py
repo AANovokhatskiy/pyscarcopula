@@ -32,6 +32,9 @@ class AutoTMConfig:
     n_threads: int = 1
     corr_gradient_block_bytes: int = 67_108_864  # 64 MiB
 
+    panel_degree: int = 0
+    matrix_grid: tuple[int, float, int | None, int] | None = None
+
 
 CPP_MAX_GRID_SIZE = 100_000
 CPP_MAX_DENSE_GRID_SIZE = 10_000
@@ -46,6 +49,12 @@ def normalize_grid_method(value) -> str:
             "grid_method must be one of 'auto', 'dense', or 'sparse', "
             f"got {value!r}")
     return method
+
+
+def cpp_matrix_grid_limit(grid_method: str) -> int:
+    if normalize_grid_method(grid_method) == "dense":
+        return CPP_MAX_DENSE_GRID_SIZE
+    return CPP_MAX_GRID_SIZE
 
 
 def _cpp_integer_option(name: str, value, minimum: int, maximum: int) -> int:
@@ -81,10 +90,16 @@ def validate_cpp_config(
     method = normalize_ou_transition_method(
         transition_method or config.transition_method)
     grid_method = normalize_grid_method(config.grid_method)
-    grid_limit = (
-        CPP_MAX_DENSE_GRID_SIZE
-        if method == "matrix" and grid_method == "dense"
-        else CPP_MAX_GRID_SIZE)
+    matrix_limit = cpp_matrix_grid_limit(grid_method)
+    grid_limit = matrix_limit if method == "matrix" else CPP_MAX_GRID_SIZE
+    if config.matrix_grid is not None:
+        size, radius, cap, points = config.matrix_grid
+        if cap is not None:
+            _cpp_integer_option("matrix_max_K", cap, 2, matrix_limit)
+        # Auto checks the request against the user and native caps before allocation.
+        _cpp_integer_option("matrix_K", size, 2, 2_147_483_647)
+        _cpp_finite_option("matrix_grid_range", radius, positive=True)
+        _cpp_integer_option("matrix_pts_per_sigma", points, 1, 2_147_483_647)
     _cpp_integer_option("K", config.K, 2, grid_limit)
     if config.max_K is not None:
         _cpp_integer_option("max_K", config.max_K, 2, grid_limit)
@@ -102,7 +117,7 @@ def validate_cpp_config(
         None if config.quad_order is None else _cpp_integer_option(
             "quad_order", config.quad_order, 1, CPP_MAX_SPECTRAL_ORDER))
     try:
-        model_policy.ou_resolve_quad_order(
+        quad_order = model_policy.ou_resolve_quad_order(
             basis_order, explicit_quad_order)
     except Exception as exc:
         if explicit_quad_order is None:
@@ -113,6 +128,10 @@ def validate_cpp_config(
         raise ValueError(
             "quad_order must be at least basis_order and no greater than "
             f"{CPP_MAX_SPECTRAL_ORDER}") from exc
+
+    degree = _cpp_integer_option("panel_degree", config.panel_degree, 0, 64)
+    if degree and not model_policy.ou_panel_orders_compatible(basis_order, quad_order, degree):
+        raise ValueError("panel_degree is incompatible with basis_order and quad_order")
 
     _cpp_finite_option("grid_range", config.grid_range, positive=True)
     _cpp_finite_option("small_kdt", config.small_kdt, positive=True)

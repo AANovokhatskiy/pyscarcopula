@@ -185,6 +185,11 @@ void bind_copula(py::module_& m) {
     m.def("model_ou_parameter_bounds", []() {
         return parameter_bounds_to_dict(scar::ou_parameter_bounds());
     });
+    m.def("model_ou_kappa_optimizer_upper_bounds",
+        [](std::int64_t n_obs, double scale) {
+            return parameter_bounds_to_dict(
+                scar::ou_kappa_optimizer_upper_bounds(n_obs, scale));
+        }, py::arg("n_obs"), py::arg("scale"));
     m.def("model_ou_scaled_optimizer_bounds",
         [](const std::vector<double>& scale) {
             return parameter_bounds_to_dict(
@@ -228,6 +233,10 @@ void bind_copula(py::module_& m) {
         }, py::arg("lower"), py::arg("upper"));
     m.def("model_stationary_scale_bounds", []() {
         return parameter_bounds_to_dict(scar::stationary_scale_bounds());
+    });
+    m.def("model_stochastic_student_stationary_scale_bounds", []() {
+        return parameter_bounds_to_dict(
+            scar::stochastic_student_stationary_scale_bounds());
     });
     m.def("model_student_fit_policy",
         [](int dimension, bool stochastic) {

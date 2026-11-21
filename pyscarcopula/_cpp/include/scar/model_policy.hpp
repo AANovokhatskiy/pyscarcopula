@@ -4,6 +4,7 @@
 #include "scar/core/result.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace scar {
@@ -32,6 +33,8 @@ using OptimizerFailureEvaluationResult = Result<OptimizerFailureEvaluation>;
 
 ParameterBoundsResult model_public_parameter_bounds(const CopulaSpec& spec);
 ParameterBoundsResult ou_parameter_bounds();
+ParameterBoundsResult ou_kappa_optimizer_upper_bounds(
+    std::int64_t n_obs, double scale);
 ParameterBoundsResult ou_scaled_optimizer_bounds(
     const std::vector<double>& scale);
 ParameterBoundsResult ou_log_stationary_parameter_bounds();
@@ -44,6 +47,7 @@ ParameterBoundsResult default_gas_parameter_bounds();
 Result<ParameterBounds> normalize_positive_bounds(
     double lower, bool has_lower, double upper, bool has_upper);
 Result<ParameterBounds> stationary_scale_bounds();
+Result<ParameterBounds> stochastic_student_stationary_scale_bounds();
 FitParameterPolicyResult student_fit_parameter_policy(
     int dimension, bool stochastic);
 FitParameterPolicyResult equicorr_fit_parameter_policy();

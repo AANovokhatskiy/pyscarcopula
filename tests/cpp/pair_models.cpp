@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -279,12 +280,23 @@ int run_pair_model_tests() {
             spec, observations, raw_grid);
         const scar::GridValuesWithGrad grid_gradient =
             scar::copula_pdf_and_grad_grid(spec, observations, raw_grid);
+        const auto grid_size = observations.size() * raw_grid.size();
         if (grid.n_obs != static_cast<std::int64_t>(observations.size())
             || grid.n_grid != static_cast<std::int64_t>(raw_grid.size())
-            || grid.values != grid_gradient.pdf.values
-            || grid_gradient.d_pdf_dx.values.size() != grid.values.size()) {
+            || grid.values.size() != grid_size
+            || grid_gradient.pdf.values.size() != grid_size
+            || grid_gradient.d_pdf_dx.values.size() != grid_size) {
+            std::fprintf(stderr,
+                         "pair density grid mismatch (model %d, rotation %d): "
+                         "shape %lld x %lld, expected %zu x %zu; "
+                         "sizes: pdf=%zu, pdf with gradient=%zu, gradient=%zu\n",
+                         static_cast<int>(test.model_id), static_cast<int>(test.rotation),
+                         static_cast<long long>(grid.n_obs), static_cast<long long>(grid.n_grid),
+                         observations.size(), raw_grid.size(), grid.values.size(),
+                         grid_gradient.pdf.values.size(), grid_gradient.d_pdf_dx.values.size());
             return base + 8;
         }
+        constexpr double grid_tolerance = 2e-13;
         for (std::size_t row = 0; row < observations.size(); ++row) {
             for (std::size_t column = 0; column < raw_grid.size(); ++column) {
                 const std::size_t cell = row * raw_grid.size() + column;
@@ -296,11 +308,19 @@ int run_pair_model_tests() {
                     raw_grid[column],
                     expected_density,
                     expected_gradient);
-                if (!close(grid.values[cell], expected_density, 2e-13)
-                    || !close(
-                        grid_gradient.d_pdf_dx.values[cell],
-                        expected_gradient,
-                        2e-13)) {
+                const double grid_density = grid.values[cell];
+                const double density_with_gradient = grid_gradient.pdf.values[cell];
+                const double gradient = grid_gradient.d_pdf_dx.values[cell];
+                if (!close(grid_density, expected_density, grid_tolerance)
+                    || !close(density_with_gradient, expected_density, grid_tolerance)
+                    || !close(gradient, expected_gradient, grid_tolerance)) {
+                    std::fprintf(stderr,
+                                 "pair density grid mismatch (model %d, rotation %d, cell %zu): "
+                                 "pdf=%.17g, pdf with gradient=%.17g, expected pdf=%.17g; "
+                                 "gradient=%.17g, expected gradient=%.17g\n",
+                                 static_cast<int>(test.model_id), static_cast<int>(test.rotation),
+                                 cell, grid_density, density_with_gradient, expected_density,
+                                 gradient, expected_gradient);
                     return base + 9;
                 }
             }
