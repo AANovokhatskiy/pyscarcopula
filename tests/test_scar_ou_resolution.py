@@ -143,7 +143,7 @@ def test_refined_likelihood_honors_public_overrides(legacy):
     model = BivariateGaussianCopula()
     fit = run_fit(model, u, transition_method="spectral", refine_fit=True)
     report = fit.diagnostics["refine_fit"]
-    assert report["status"] == "accepted"
+    assert report["status"] == "accepted", report
     if legacy:
         fit = replace(fit, diagnostics={"spectral_refit": report})
     assert log_likelihood(model, u, fit) == pytest.approx(fit.log_likelihood)
@@ -244,7 +244,8 @@ def test_accepted_refit_checks_returned_candidate(mode, count):
     result = run_fit(BivariateGaussianCopula(), u, transition_method="spectral",
                      refine_fit=True, spectral_check_tolerances=(1e-5, 1e-4),
                      spectral_check_mode=mode)
-    assert result.diagnostics["refine_fit"]["status"] == "accepted"
+    report = result.diagnostics["refine_fit"]
+    assert report["status"] == "accepted", report
     probes = result.diagnostics["spectral_resolution_check"]["probes"]
     assert len(probes) == count
     assert probes[0]["basis_order"] == result.spectral_basis_order
