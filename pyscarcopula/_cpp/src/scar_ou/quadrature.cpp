@@ -588,9 +588,7 @@ bool standard_normal_hermite_rule_uncached(
         z, weights, basis, quad_order, basis_order);
 }
 
-// Golub-Welsch for the uniform measure on [-1,1], mapped onto each panel.
-bool build_panel_nodes(int m, int q, int degree,
-                       std::vector<double>& z, std::vector<double>& weights) {
+std::vector<double> panel_edges(int m) {
     std::vector<double> edges{1, 2, 4, 8};
     switch (m) {
     case 32: edges.push_back(16); break;
@@ -599,9 +597,21 @@ bool build_panel_nodes(int m, int q, int degree,
     case 128: edges.insert(edges.end(), {12, 16, 20, 24, 28}); break;
     case 160: edges.insert(edges.end(), {12, 16, 20, 24, 28, 32}); break;
     case 192: edges.insert(edges.end(), {12, 16, 21, 26, 31, 36}); break;
-    default: return false;
+    default: return {};
     }
-    if (degree < 1 || degree > 64 || q != 2 * degree * static_cast<int>(edges.size())) {
+    return edges;
+}
+
+int panel_quad_order(int degree, const std::vector<double>& edges) {
+    return degree >= 1 && degree <= 64
+        ? 2 * degree * static_cast<int>(edges.size()) : 0;
+}
+
+// Golub-Welsch for the uniform measure on [-1,1], mapped onto each panel.
+bool build_panel_nodes(int m, int q, int degree,
+                       std::vector<double>& z, std::vector<double>& weights) {
+    const auto edges = panel_edges(m);
+    if (q <= 0 || q != panel_quad_order(degree, edges)) {
         return false;
     }
     std::vector<double> nodes(degree), off(degree), eigenvectors(degree * degree);
@@ -1047,6 +1057,11 @@ void local_gh_predict_matvec(
 }  // namespace scar_internal
 
 namespace scar {
+
+bool ou_panel_orders_compatible(int basis_order, int quad_order, int degree) {
+    return quad_order > 0 && quad_order == scar_internal::panel_quad_order(
+        degree, scar_internal::panel_edges(basis_order));
+}
 
 Result<OuHermiteRule> ou_hermite_rule(int quad_order, int basis_order) {
     Result<OuHermiteRule> result;

@@ -6,7 +6,9 @@ evaluator owns likelihood, gradients, forward filtering, and state outputs.
 
 from copy import copy
 from dataclasses import replace
+from functools import wraps
 import hashlib
+from inspect import signature
 
 import numpy as np
 from scipy.optimize import minimize, Bounds
@@ -564,6 +566,19 @@ def _append_failure_message(message, reasons):
     return f"{message}; final validation failed: {'; '.join(reasons)}"
 
 
+def _remember_likelihood_options(init):
+    """Distinguish explicit constructor options from defaults when replaying a fit."""
+    constructor = signature(init)
+
+    @wraps(init)
+    def initialize(self, *args, **kwargs):
+        init(self, *args, **kwargs)
+        supplied = constructor.bind(self, *args, **kwargs).arguments
+        self._set_likelihood_overrides(supplied, supplied.get("config"))
+
+    return initialize
+
+
 @register_strategy('SCAR-TM-OU')
 class SCARTMStrategy:
     """Transfer matrix estimation for SCAR-OU model.
@@ -682,6 +697,7 @@ class SCARTMStrategy:
         "sample_params": _prediction_context_keywords,
     }
 
+    @_remember_likelihood_options
     def __init__(self, config: NumericalConfig | None = None,
                  K: int | None = None,
                  grid_range: float | None = None,
@@ -1856,20 +1872,47 @@ class SCARTMStrategy:
             diagnostics=diagnostics,
         )
 
+    def _set_likelihood_overrides(self, supplied, config):
+        fields = set(supplied)
+        if config is not None:
+            fields.add("n_threads")
+        self._likelihood_overrides = fields
+
+    def _likelihood_config(self, result, n_obs):
+        requested = self._auto_config(kappa=result.params.kappa, n_obs=n_obs)
+        refinement = result.diagnostics.get("refine_fit", {})
+        if refinement.get("status") == "accepted":
+            saved = refinement["likelihood_config"]
+        else:
+            legacy = result.diagnostics.get("spectral_refit", {})
+            if legacy.get("status") != "accepted":
+                return requested
+            saved = dict(transition_method="spectral", basis_order=legacy["basis_order"],
+                         quad_order=legacy["quad_order"], panel_degree=legacy["panel_degree"])
+
+        cfg = replace(requested, **saved)
+        aliases = {"spectral_basis_order": "basis_order", "spectral_quad_order": "quad_order",
+                   "auto_small_kdt": "small_kdt"}
+        fields = (aliases.get(name, name) for name in self._likelihood_overrides)
+        overrides = {name: getattr(requested, name) for name in fields if hasattr(requested, name)}
+        if any(name in overrides and overrides[name] != getattr(cfg, name)
+               for name in ("basis_order", "quad_order")):
+            # A fitted panel rule is specific to its basis and quadrature orders.
+            overrides["panel_degree"] = 0
+        if cfg.matrix_grid is not None:
+            # Auto uses a separate refined grid for its matrix fallback.
+            grid_fields = ("K", "grid_range", "max_K", "pts_per_sigma")
+            grid = tuple(overrides.get(name, value) for name, value in zip(grid_fields, cfg.matrix_grid))
+            if overrides.get("transition_method") == "matrix":
+                overrides.update(zip(grid_fields, grid))
+            overrides["matrix_grid"] = grid
+        return replace(cfg, **overrides)
+
     def log_likelihood(self, copula, u: np.ndarray,
                        result: LatentResult) -> float:
         """Evaluate TM log-likelihood at fitted parameters."""
         p = result.params
-        cfg = self._auto_config(kappa=p.kappa, n_obs=len(u))
-        refinement = result.diagnostics.get("refine_fit", {})
-        if refinement.get("status") == "accepted":
-            cfg = replace(cfg, **refinement["likelihood_config"])
-        else:
-            # Replay panel rules from results saved before refine_fit.
-            legacy = result.diagnostics.get("spectral_refit", {})
-            if legacy.get("status") == "accepted":
-                cfg = replace(cfg, transition_method="spectral", basis_order=legacy["basis_order"],
-                              quad_order=legacy["quad_order"], panel_degree=legacy["panel_degree"])
+        cfg = self._likelihood_config(result, len(u))
         self._uses_cpp(copula)
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,

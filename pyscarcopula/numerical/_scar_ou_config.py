@@ -39,8 +39,6 @@ class AutoTMConfig:
 CPP_MAX_GRID_SIZE = 100_000
 CPP_MAX_DENSE_GRID_SIZE = 10_000
 CPP_MAX_SPECTRAL_ORDER = 1_024
-# Positive half-axis panels used by the native composite rule.
-_PANEL_COUNTS = {32: 5, 64: 7, 96: 8, 128: 9, 160: 10, 192: 10}
 _GRID_METHODS = frozenset(("auto", "dense", "sparse"))
 
 
@@ -128,7 +126,7 @@ def validate_cpp_config(
             f"{CPP_MAX_SPECTRAL_ORDER}") from exc
 
     degree = _cpp_integer_option("panel_degree", config.panel_degree, 0, 64)
-    if degree and quad_order != 2 * degree * _PANEL_COUNTS.get(basis_order, 0):
+    if degree and not model_policy.ou_panel_orders_compatible(basis_order, quad_order, degree):
         raise ValueError("panel_degree is incompatible with basis_order and quad_order")
 
     _cpp_finite_option("grid_range", config.grid_range, positive=True)

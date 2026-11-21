@@ -1,8 +1,11 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 from scipy.optimize import OptimizeResult
 
 from pyscarcopula import BivariateGaussianCopula, StochasticStudentCopula
+from pyscarcopula.api import log_likelihood
 from pyscarcopula._native.errors import NativeError
 from pyscarcopula.strategy import _scar_ou_resolution as resolution
 from pyscarcopula.strategy import scar_tm
@@ -132,6 +135,43 @@ def test_optional_composite_restart(fixed_point, method, corr):
     assert result.nfev >= 2
     strategy = scar_tm.SCARTMStrategy(transition_method=method)
     assert strategy.log_likelihood(model, u, result) == pytest.approx(result.log_likelihood)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_refined_likelihood_honors_public_overrides(legacy):
+    u = np.random.default_rng(81).uniform(.12, .88, (22, 2))
+    model = BivariateGaussianCopula()
+    fit = run_fit(model, u, transition_method="spectral", refine_fit=True)
+    report = fit.diagnostics["refine_fit"]
+    assert report["status"] == "accepted"
+    if legacy:
+        fit = replace(fit, diagnostics={"spectral_refit": report})
+    assert log_likelihood(model, u, fit) == pytest.approx(fit.log_likelihood)
+
+    plain = replace(fit, diagnostics={})
+    override = dict(transition_method="matrix", K=15, adaptive=False, grid_range=2.)
+    expected = log_likelihood(model, u, plain, **override)
+    assert abs(expected - fit.log_likelihood) > 0.01
+    assert scar_tm.SCARTMStrategy(**override).log_likelihood(model, u, fit) == pytest.approx(expected)
+    assert log_likelihood(model, u, fit, **override) == pytest.approx(expected)
+
+    override = dict(spectral_basis_order=12, spectral_quad_order=48)
+    assert log_likelihood(model, u, fit, **override) == pytest.approx(
+        log_likelihood(model, u, plain, **override))
+
+
+def test_refined_auto_likelihood_preserves_unspecified_matrix_settings(fixed_point):
+    u = np.random.default_rng(81).uniform(.2, .8, (22, 2))
+    model = BivariateGaussianCopula()
+    fit = run_fit(model, u, transition_method="auto", refine_fit=True, refine_score_tol=100.,
+                  adaptive=False, K=51, refine_matrix_K=201, refine_matrix_grid_range=8.,
+                  refine_matrix_max_K=501)
+    assert fit.diagnostics["refine_fit"]["status"] == "accepted"
+    plain = replace(fit, diagnostics={})
+    expected = log_likelihood(model, u, plain, transition_method="matrix",
+                              K=201, grid_range=3., max_K=501)
+    assert log_likelihood(model, u, fit, transition_method="matrix",
+                          grid_range=3.) == pytest.approx(expected)
 
 
 def test_failed_refit_restores_joint_candidate(fixed_point):

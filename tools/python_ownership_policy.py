@@ -31,7 +31,7 @@ _REVIEW_KINDS = {
 _SYMBOL_REVIEWS = (
     # Restart configuration selection only; the OU evaluators remain native.
     ('pyscarcopula.strategy._scar_ou_refit:_profiles',
-     '62ddaed69b5fd2f573296a929d8788171d724b30b8ebf38566abea46ec804213', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     'ce194e0c89c43640eb74da03a878e73c6fecfae07c56057a081eed43c1bcc5ff', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     # Restart configuration selection only; the OU evaluators remain native.
     ('pyscarcopula.strategy._scar_ou_refit:_matrix_grid',
      '79d588405fd7fde92ff5aa5e4c1bc1e8e13d52cd0fef13d41fb17b33993da509', 'fit_orchestration', ('arithmetic', 'numerical-call')),
@@ -112,7 +112,7 @@ _SYMBOL_REVIEWS = (
     # likelihood only reverses the sign of the validated native objective.
     # Covered by tests/test_dynamic_multivariate_parameter_routing.py.
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.log_likelihood',
-     '2979bb4fb45b68d476795f94c5f4ab21b79c0c0da27ead24189742d031c109b3', 'sign', ('arithmetic',)),
+     '5e3d2a22eb5e48ed2ff2c948954e0dc858d0ce0483693a848fdf39f4d0ad7af1', 'sign', ('arithmetic',)),
     # Shared dynamic block iteration: bounds, output allocation and native
     # strategy dispatch only; exercised by test_multivariate_sampling_threads.py.
     ('pyscarcopula.strategy.predict_helpers:sample_predictive_batches',

@@ -398,6 +398,8 @@ void bind_scar_ou(py::module_& m) {
         output["status"] = static_cast<int>(result.status);
         return output;
     }, py::arg("kappa"), py::arg("n_obs"));
+    m.def("ou_panel_orders_compatible", &scar::ou_panel_orders_compatible,
+          py::arg("basis_order"), py::arg("quad_order"), py::arg("degree"));
     m.def("model_ou_resolve_quad_order", [](
             int basis_order,
             const std::optional<int>& explicit_quad_order) {

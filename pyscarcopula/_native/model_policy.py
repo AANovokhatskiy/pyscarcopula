@@ -224,6 +224,10 @@ def ou_adaptive_spectral_basis_order(kappa, n_obs):
     return int(result["order"])
 
 
+def ou_panel_orders_compatible(basis_order, quad_order, degree):
+    return _extension.load().ou_panel_orders_compatible(basis_order, quad_order, degree)
+
+
 def ou_resolve_quad_order(basis_order, explicit_quad_order=None):
     result = _checked(
         _extension.load().model_ou_resolve_quad_order(
