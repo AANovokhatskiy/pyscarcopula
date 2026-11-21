@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.22.2 - 2026-11-21
+
+Version: `0.22.1` -> `0.22.2`
+
+- Add opt-in `refine_fit` warm-start optimization for SCAR-TM-OU auto,
+  spectral, and matrix transitions, with configurable matrix grids and
+  likelihood and projected-score acceptance tolerances. Preserve the first
+  fit when refinement fails or is rejected, and report attempts and decisions
+  in diagnostics. Auto retains its normal backend dispatch and fallbacks.
+- Add optional spectral resolution checks with screen and full modes for the
+  final log-likelihood and score. Report sensitivity and incomplete checks in
+  diagnostics without changing the fitted parameters or success flag; finite
+  rule agreement is an empirical check, not an error guarantee.
+- Preserve accepted refinement settings for subsequent likelihood evaluation
+  while honoring explicit caller overrides. Validate spectral panel rules
+  centrally and refresh cached bases when the panel degree changes.
+- Bound SCAR-TM-OU optimizer `kappa` by the observation count, imposing a
+  minimum one-step autocorrelation of 0.001. Direct likelihood evaluation
+  retains the physical parameter domain. Apply strict projected-gradient
+  validation in log-stationary optimizer coordinates and bounds.
+- Raise the default lower stationary-scale bound for stochastic Student OU
+  fits to 0.022; retain the separate bivariate default. Log-stationary fits
+  require positive `nu` but do not enforce a strict `nu >= 0.001` bound.
+- Avoid reciprocal overflow for subnormal normalization scales in SCAR-OU
+  gradients and SCAR-Jacobi filtering. Add numerical and configuration
+  regression coverage and document the new fit and diagnostic controls.
+
 ## 0.22.1 - 2026-09-21
 
 Version: `0.22.0` -> `0.22.1`
