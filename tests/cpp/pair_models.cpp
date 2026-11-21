@@ -308,10 +308,10 @@ int run_pair_model_tests() {
                     raw_grid[column],
                     expected_density,
                     expected_gradient);
-                const double density = grid.values[cell];
+                const double grid_density = grid.values[cell];
                 const double density_with_gradient = grid_gradient.pdf.values[cell];
                 const double gradient = grid_gradient.d_pdf_dx.values[cell];
-                if (!close(density, expected_density, grid_tolerance)
+                if (!close(grid_density, expected_density, grid_tolerance)
                     || !close(density_with_gradient, expected_density, grid_tolerance)
                     || !close(gradient, expected_gradient, grid_tolerance)) {
                     std::fprintf(stderr,
@@ -319,7 +319,7 @@ int run_pair_model_tests() {
                                  "pdf=%.17g, pdf with gradient=%.17g, expected pdf=%.17g; "
                                  "gradient=%.17g, expected gradient=%.17g\n",
                                  static_cast<int>(test.model_id), static_cast<int>(test.rotation),
-                                 cell, density, density_with_gradient, expected_density,
+                                 cell, grid_density, density_with_gradient, expected_density,
                                  gradient, expected_gradient);
                     return base + 9;
                 }
