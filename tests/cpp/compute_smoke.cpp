@@ -20,6 +20,7 @@
 #include "scar/vine/result.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <variant>
 #include <vector>
 
@@ -44,87 +45,118 @@ int run_vine_model_tests();
 int run_multivariate_model_tests();
 int run_application_model_tests();
 
+namespace {
+
+int report_failure(const char* suite, int check, int status) {
+    std::fprintf(stderr, "scar_compute_smoke: %s failed (check %d, internal status %d)\n",
+                 suite, check, status);
+    return status;
+}
+
+}  // namespace
+
 int main() {
     const int ou_quadrature_status = run_ou_quadrature_cache_tests();
     if (ou_quadrature_status != 0) {
-        return 2200 + ou_quadrature_status;
+        return report_failure("ou_quadrature_cache", ou_quadrature_status,
+                              2200 + ou_quadrature_status);
     }
     const int parallel_runtime_status = run_parallel_runtime_tests();
     if (parallel_runtime_status != 0) {
-        return 750 + parallel_runtime_status;
+        return report_failure("parallel_runtime", parallel_runtime_status,
+                              750 + parallel_runtime_status);
     }
     const int parallel_deferred_status = run_parallel_deferred_tests();
     if (parallel_deferred_status != 0) {
-        return 760 + parallel_deferred_status;
+        return report_failure("parallel_deferred", parallel_deferred_status,
+                              760 + parallel_deferred_status);
     }
     const int jacobi_status = run_jacobi_domain_tests();
     if (jacobi_status != 0) {
-        return 100 + jacobi_status;
+        return report_failure("jacobi_domain", jacobi_status, 100 + jacobi_status);
     }
     const int jacobi_transition_status = run_jacobi_transition_tests();
     if (jacobi_transition_status != 0) {
-        return 200 + jacobi_transition_status;
+        return report_failure("jacobi_transition", jacobi_transition_status,
+                              200 + jacobi_transition_status);
     }
     const int jacobi_evaluator_status = run_jacobi_evaluator_tests();
     if (jacobi_evaluator_status != 0) {
-        return 300 + jacobi_evaluator_status;
+        return report_failure("jacobi_evaluator", jacobi_evaluator_status,
+                              300 + jacobi_evaluator_status);
     }
     const int jacobi_sampling_status = run_jacobi_sampling_tests();
     if (jacobi_sampling_status != 0) {
-        return 400 + jacobi_sampling_status;
+        return report_failure("jacobi_sampling", jacobi_sampling_status,
+                              400 + jacobi_sampling_status);
     }
     const int pair_model_status = run_pair_model_tests();
     if (pair_model_status != 0) {
-        return 500 + pair_model_status;
+        return report_failure("pair_models", pair_model_status,
+                              500 + pair_model_status);
     }
     const int multivariate_gaussian_status =
         run_multivariate_gaussian_tests();
     if (multivariate_gaussian_status != 0) {
-        return 550 + multivariate_gaussian_status;
+        return report_failure("multivariate_gaussian", multivariate_gaussian_status,
+                              550 + multivariate_gaussian_status);
     }
     const int multivariate_student_status = run_multivariate_student_tests();
     if (multivariate_student_status != 0) {
-        return 575 + multivariate_student_status;
+        return report_failure("multivariate_student", multivariate_student_status,
+                              575 + multivariate_student_status);
     }
     const int factor_joint_workspace_status = run_factor_joint_workspace_tests();
     if (factor_joint_workspace_status != 0) {
-        return 580 + factor_joint_workspace_status;
+        return report_failure("factor_joint_workspace", factor_joint_workspace_status,
+                              580 + factor_joint_workspace_status);
     }
     const int factor_rosenblatt_parallel_status =
         run_factor_rosenblatt_parallel_tests();
     if (factor_rosenblatt_parallel_status != 0) {
-        return 600 + factor_rosenblatt_parallel_status;
+        return report_failure("factor_rosenblatt_parallel", factor_rosenblatt_parallel_status,
+                              600 + factor_rosenblatt_parallel_status);
     }
     const int factor_rosenblatt_gaussian_plan_status =
         run_factor_rosenblatt_gaussian_plan_tests();
     if (factor_rosenblatt_gaussian_plan_status != 0) {
-        return 610 + factor_rosenblatt_gaussian_plan_status;
+        return report_failure("factor_rosenblatt_gaussian_plan",
+                              factor_rosenblatt_gaussian_plan_status,
+                              610 + factor_rosenblatt_gaussian_plan_status);
     }
     const int equicorr_stochastic_student_status =
         run_equicorr_stochastic_student_tests();
     if (equicorr_stochastic_student_status != 0) {
-        return 625 + equicorr_stochastic_student_status;
+        return report_failure("equicorr_stochastic_student",
+                              equicorr_stochastic_student_status,
+                              625 + equicorr_stochastic_student_status);
     }
     const int gas_model_status = run_gas_model_tests();
     if (gas_model_status != 0) {
-        return 650 + gas_model_status;
+        return report_failure("gas_models", gas_model_status, 650 + gas_model_status);
     }
-    if (run_ou_matrix_engineering_tests() != 0) return 99;
+    const int ou_matrix_engineering_status = run_ou_matrix_engineering_tests();
+    if (ou_matrix_engineering_status != 0) {
+        return report_failure("ou_matrix_engineering", ou_matrix_engineering_status, 99);
+    }
     const int ou_model_status = run_ou_model_tests();
     if (ou_model_status != 0) {
-        return 675 + ou_model_status;
+        return report_failure("ou_models", ou_model_status, 675 + ou_model_status);
     }
     const int vine_model_status = run_vine_model_tests();
     if (vine_model_status != 0) {
-        return 685 + vine_model_status;
+        return report_failure("vine_models", vine_model_status,
+                              685 + vine_model_status);
     }
     const int multivariate_model_status = run_multivariate_model_tests();
     if (multivariate_model_status != 0) {
-        return 600 + multivariate_model_status;
+        return report_failure("multivariate_models", multivariate_model_status,
+                              600 + multivariate_model_status);
     }
     const int application_model_status = run_application_model_tests();
     if (application_model_status != 0) {
-        return 700 + application_model_status;
+        return report_failure("application_models", application_model_status,
+                              700 + application_model_status);
     }
     const double span_values[] = {0.25, 0.75};
     const scar::DoubleView span{span_values, 2};

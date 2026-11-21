@@ -4,8 +4,10 @@
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/model_policy.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -283,6 +285,23 @@ int run_pair_model_tests() {
             || grid.n_grid != static_cast<std::int64_t>(raw_grid.size())
             || grid.values != grid_gradient.pdf.values
             || grid_gradient.d_pdf_dx.values.size() != grid.values.size()) {
+            std::fprintf(stderr,
+                         "pair density grid mismatch (model %d, rotation %d): "
+                         "shape %lld x %lld, expected %zu x %zu; "
+                         "sizes: pdf=%zu, pdf with gradient=%zu, gradient=%zu\n",
+                         static_cast<int>(test.model_id), static_cast<int>(test.rotation),
+                         static_cast<long long>(grid.n_obs), static_cast<long long>(grid.n_grid),
+                         observations.size(), raw_grid.size(), grid.values.size(),
+                         grid_gradient.pdf.values.size(), grid_gradient.d_pdf_dx.values.size());
+            const auto [pdf, pdf_with_gradient] = std::mismatch(
+                grid.values.begin(), grid.values.end(),
+                grid_gradient.pdf.values.begin(), grid_gradient.pdf.values.end());
+            if (pdf != grid.values.end()
+                && pdf_with_gradient != grid_gradient.pdf.values.end()) {
+                const auto cell = static_cast<std::size_t>(pdf - grid.values.begin());
+                std::fprintf(stderr, "first differing cell %zu: %.17g vs %.17g\n",
+                             cell, *pdf, *pdf_with_gradient);
+            }
             return base + 8;
         }
         for (std::size_t row = 0; row < observations.size(); ++row) {

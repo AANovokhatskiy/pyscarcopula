@@ -11,6 +11,7 @@
 #include "scar/math/gamma.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 namespace {
@@ -254,6 +255,13 @@ int run_multivariate_model_tests() {
         || !equicorr_rosenblatt.is_ok()
         || dense_rosenblatt.residuals.size() != observations.size()
         || equicorr_rosenblatt.residuals.size() != observations.size()) {
+        std::fprintf(stderr,
+                     "Gaussian Rosenblatt: dense status=%d, size=%zu; "
+                     "equicorrelation status=%d, size=%zu; expected size=%zu\n",
+                     static_cast<int>(dense_rosenblatt.status),
+                     dense_rosenblatt.residuals.size(),
+                     static_cast<int>(equicorr_rosenblatt.status),
+                     equicorr_rosenblatt.residuals.size(), observations.size());
         return 9;
     }
     for (std::size_t index = 0; index < observations.size(); ++index) {
