@@ -72,7 +72,7 @@ def _projected_score(strategy, copula, start, end, gradient, n):
     return float(np.max(np.abs(projected)))
 
 
-def fit_with_refinement(ordinary, copula, u, initial, run):
+def fit_with_refinement(ordinary, copula, u, initial, run, *, optimizer_gtol):
     base = run(ordinary, initial)
     report = dict(status="skipped", tolerance=ordinary.refine_loglik_tol, attempts=[])
     base.diagnostics["refine_fit"] = report
@@ -84,6 +84,7 @@ def fit_with_refinement(ordinary, copula, u, initial, run):
     joint = base.parameter_count > 3
     start = np.r_[params, copula._pack_corr_params()] if joint else params
     n = len(u)
+    restart_gtol = min(optimizer_gtol, n * ordinary.refine_score_tol)
     m0 = ordinary._spectral_basis_order_for(params[0], n)
     report.update(status="rejected", first_backend=base.diagnostics["last_backend"],
                   first_log_likelihood=base.log_likelihood,
@@ -117,7 +118,7 @@ def fit_with_refinement(ordinary, copula, u, initial, run):
                               quad_order=control_q)
 
             start_nll, _ = _probe(u, copula, start, control)
-            candidate = run(stage, start)
+            candidate = run(stage, start, restart_gtol=restart_gtol)
             evaluations += candidate.nfev
             if not candidate.success:
                 attempt["reason"] = "second_fit_failed"

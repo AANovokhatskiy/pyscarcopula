@@ -947,11 +947,8 @@ GasSampleResult GasEvaluator::sample_bivariate(
         const double parameter = gas_transform(emission, g);
         double sample[2] = {0.0, 0.0};
         if (copula.family == CopulaFamily::Gaussian) {
-            const double residual_scale = std::sqrt(
-                std::max(0.0, 1.0 - parameter * parameter));
-            sample[0] = math::normal_cdf(draw[0]);
-            sample[1] = math::normal_cdf(
-                parameter * draw[0] + residual_scale * draw[1]);
+            math::bivariate_normal_draws_to_uniforms(
+                draw[0], draw[1], parameter, sample[0], sample[1]);
         } else {
             sample[0] = draw[0];
             sample[1] = sampling_kernel.inverse_h(

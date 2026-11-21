@@ -266,7 +266,8 @@ def test_predictive_histogram_preserves_rng_calls_with_native_cells():
     tau = expected_rng.uniform(left, right)
     expected = copula_native.tau_to_param(copula, tau)
 
-    np.testing.assert_array_equal(actual, expected)
+    # NumPy and the native interpolation can round the cell draw differently.
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=2e-15)
     np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
 
 

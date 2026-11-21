@@ -663,7 +663,8 @@ class SCARTMStrategy:
         the starting point on that same rule.
     refine_score_tol : float, default 1e-5
         Maximum projected gradient of the mean control objective in the
-        second optimizer's coordinates.
+        second optimizer's coordinates. The second fit caps its optimizer
+        ``gtol`` at this tolerance multiplied by the number of observations.
     final_growth_limit : float
         Maximum allowed OU parameter growth relative to initialization.
     final_rho_tolerance : float
@@ -1542,19 +1543,6 @@ class SCARTMStrategy:
         LatentResult
         """
         reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
-        if self.refine_fit:
-            from pyscarcopula.strategy._scar_ou_refit import fit_with_refinement
-
-            def run(strategy, initial):
-                return strategy.fit(
-                    copula, u, alpha0=initial, gtol=gtol, ftol=ftol, maxfun=maxfun,
-                    maxiter=maxiter, maxls=maxls, eps=eps, maxcor=maxcor,
-                    finite_diff_rel_step=finite_diff_rel_step, verbose=verbose,
-                    initial_mle_result=initial_mle_result)
-
-            ordinary = copy(self)
-            ordinary.refine_fit = False
-            return fit_with_refinement(ordinary, copula, u, alpha0, run)
         log_stationary = _uses_log_stationary_scale(
             copula, self.log_stationary_scale_optimization)
         optimizer_options = lbfgsb_options(
@@ -1571,6 +1559,21 @@ class SCARTMStrategy:
                 finite_diff_rel_step=finite_diff_rel_step,
             ),
         )
+        if self.refine_fit:
+            from pyscarcopula.strategy._scar_ou_refit import fit_with_refinement
+
+            def run(strategy, initial, *, restart_gtol=None):
+                fit_gtol = gtol if restart_gtol is None else restart_gtol
+                return strategy.fit(
+                    copula, u, alpha0=initial, gtol=fit_gtol, ftol=ftol, maxfun=maxfun,
+                    maxiter=maxiter, maxls=maxls, eps=eps, maxcor=maxcor,
+                    finite_diff_rel_step=finite_diff_rel_step, verbose=verbose,
+                    initial_mle_result=initial_mle_result)
+
+            ordinary = copy(self)
+            ordinary.refine_fit = False
+            return fit_with_refinement(
+                ordinary, copula, u, alpha0, run, optimizer_gtol=optimizer_options["gtol"])
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,
         )

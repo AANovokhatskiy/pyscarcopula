@@ -174,6 +174,23 @@ def test_refined_auto_likelihood_preserves_unspecified_matrix_settings(fixed_poi
                           grid_range=3.) == pytest.approx(expected)
 
 
+@pytest.mark.parametrize("gtol, expected", [(None, (1e-3, 2.2e-4)), (1e-6, (1e-6, 1e-6))])
+def test_refit_caps_optimizer_gtol(fixed_point, monkeypatch, gtol, expected):
+    minimize = scar_tm.minimize
+    tolerances = []
+
+    def record(fun, x0, **kwargs):
+        tolerances.append(kwargs["options"]["gtol"])
+        return minimize(fun, x0, **kwargs)
+
+    monkeypatch.setattr(scar_tm, "minimize", record)
+    u = np.random.default_rng(81).uniform(.12, .88, (22, 2))
+    run_fit(BivariateGaussianCopula(), u, transition_method="matrix",
+            refine_fit=True, gtol=gtol)
+
+    assert tolerances == pytest.approx(expected)
+
+
 def test_failed_refit_restores_joint_candidate(fixed_point):
     u = np.random.default_rng(82).uniform(.12, .88, (22, 3))
     model = StochasticStudentCopula(d=3, corr_mode="shrinkage")

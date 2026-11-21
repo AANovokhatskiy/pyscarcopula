@@ -45,7 +45,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy._scar_ou_refit:_projected_score',
      '71401efe100561ad8d32f3834e5e4535a4340f36b221573ec98624aedabe80bb', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.strategy._scar_ou_refit:fit_with_refinement',
-     '7cef17edc885ebfe49c5c62c89a4c150a6612200625c0334556808f487ff52a7', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '93b97bffd495f36e66156eea9e037c639a63bb932456755b85815e8084e718f3', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     # GAS scalar recovery counts and fixed-correlation restart coverage only:
     # objective/gradient evaluation and scaling stay native. Bivariate fits
     # now reuse the existing native stationarity check. No new numerical
@@ -588,7 +588,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.objective_and_grad_scaled',
      '0a7df649fc7a0847eee0a344e5bd707f05d6b2951dd72fde93d83a9a1464f72b', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.fit',
-     '01c24598219425a8e706772c727161bb49eee5f7f220c305a12374d6283fb0dd', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '2ae878dfc39a625bc486032f5b0a184ed2536ad659624b40cec6fa1b6b8c8489', 'fit_orchestration', ('arithmetic', 'numerical-call')),
 )
 
 EXCEPTIONS = {
