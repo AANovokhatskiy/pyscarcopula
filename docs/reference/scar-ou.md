@@ -324,6 +324,8 @@ size from the first fit when available, otherwise the original requested size
 within its cap. The restart targets twice as many intervals per unit of
 stationary standard deviation and doubles `pts_per_sigma` on adaptive grids.
 An explicit `refine_matrix_K` keeps the original adaptive density target.
+If `auto` reaches its matrix fallback and the planned refit grid exceeds
+its node cap, it goes directly to local GH on the original grid.
 The diagnostics record the effective sizes and standardized grid steps when
 the corresponding final evaluations actually used a grid.
 

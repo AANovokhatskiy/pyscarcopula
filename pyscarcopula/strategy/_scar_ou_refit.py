@@ -9,14 +9,14 @@ from pyscarcopula._native import model_policy, scar_ou
 from pyscarcopula._native.errors import NativeError
 from pyscarcopula.strategy._scar_ou_resolution import PROFILES, _probe
 from pyscarcopula.numerical._scar_ou_config import (
-    CPP_MAX_GRID_SIZE, CPP_MAX_DENSE_GRID_SIZE, CPP_MAX_SPECTRAL_ORDER,
+    CPP_MAX_SPECTRAL_ORDER, cpp_matrix_grid_limit,
 )
 
 
 def _matrix_grid(strategy, first_size):
     radius = strategy.refine_matrix_grid_range
     radius = max(8.0, float(strategy.grid_range)) if radius is None else float(radius)
-    limit = CPP_MAX_DENSE_GRID_SIZE if str(strategy.grid_method).lower() == "dense" else CPP_MAX_GRID_SIZE
+    limit = cpp_matrix_grid_limit(strategy.grid_method)
     cap = strategy.refine_matrix_max_K
     if cap is None and strategy.max_K is not None:
         cap = min(limit, max(10_000, strategy.max_K, strategy.refine_matrix_K or 0))
@@ -25,9 +25,13 @@ def _matrix_grid(strategy, first_size):
     if size is None:
         if strategy.adaptive:
             points = min(2_147_483_647, 2 * int(points))
-        limit = min(limit, cap or limit)
         intervals = (first_size - 1) * (2.0 * radius / float(strategy.grid_range))
-        size = 1 + ceil(min(limit - 1, intervals))
+        if strategy.transition_method == "auto":
+            # Retain a request above the cap so auto can fall back to local.
+            size = 1 + ceil(min(2_147_483_646, intervals))
+        else:
+            limit = min(limit, cap or limit)
+            size = 1 + ceil(min(limit - 1, intervals))
     return int(size), radius, None if cap is None else int(cap), int(points)
 
 

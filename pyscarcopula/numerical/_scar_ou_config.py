@@ -51,6 +51,12 @@ def normalize_grid_method(value) -> str:
     return method
 
 
+def cpp_matrix_grid_limit(grid_method: str) -> int:
+    if normalize_grid_method(grid_method) == "dense":
+        return CPP_MAX_DENSE_GRID_SIZE
+    return CPP_MAX_GRID_SIZE
+
+
 def _cpp_integer_option(name: str, value, minimum: int, maximum: int) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(
             value, (int, np.integer)):
@@ -84,17 +90,15 @@ def validate_cpp_config(
     method = normalize_ou_transition_method(
         transition_method or config.transition_method)
     grid_method = normalize_grid_method(config.grid_method)
-    grid_limit = (
-        CPP_MAX_DENSE_GRID_SIZE
-        if method == "matrix" and grid_method == "dense"
-        else CPP_MAX_GRID_SIZE)
+    matrix_limit = cpp_matrix_grid_limit(grid_method)
+    grid_limit = matrix_limit if method == "matrix" else CPP_MAX_GRID_SIZE
     if config.matrix_grid is not None:
         size, radius, cap, points = config.matrix_grid
-        matrix_limit = CPP_MAX_DENSE_GRID_SIZE if grid_method == "dense" else CPP_MAX_GRID_SIZE
-        _cpp_integer_option("matrix_K", size, 2, matrix_limit)
-        _cpp_finite_option("matrix_grid_range", radius, positive=True)
         if cap is not None:
             _cpp_integer_option("matrix_max_K", cap, 2, matrix_limit)
+        # Auto checks the request against the user and native caps before allocation.
+        _cpp_integer_option("matrix_K", size, 2, 2_147_483_647)
+        _cpp_finite_option("matrix_grid_range", radius, positive=True)
         _cpp_integer_option("matrix_pts_per_sigma", points, 1, 2_147_483_647)
     _cpp_integer_option("K", config.K, 2, grid_limit)
     if config.max_K is not None:

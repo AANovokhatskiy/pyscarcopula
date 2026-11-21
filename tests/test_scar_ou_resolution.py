@@ -238,6 +238,42 @@ def test_matrix_refinement_default_spacing(fixed_point):
     assert report["final_grid_step"] == pytest.approx(report["first_grid_step"] / 2)
 
 
+@pytest.mark.parametrize("grid_range, cap, requested_K", [(5., 51, 161), (.01, 10_000, 80_001)])
+def test_auto_refinement_falls_back_when_matrix_grid_exceeds_cap(
+        fixed_point, monkeypatch, grid_range, cap, requested_K):
+    from pyscarcopula.strategy import _scar_ou_refit as refit
+
+    # Keep the spectral rule too small in both stages so native auto dispatch
+    # reaches matrix on these alternating tail observations.
+    monkeypatch.setattr(refit, "_profiles", lambda *_: [(3, 3, 0, 3, 3, 0)])
+    u = np.tile([[.001, .001], [.001, .999]], (25, 1))
+    model = BivariateGaussianCopula()
+    result = model.fit(
+        u, method="scar-tm-ou", alpha0=[.98, 0., 4. * np.sqrt(1.96)],
+        smart_init=False, transition_method="auto", auto_small_kdt=1e-9,
+        spectral_basis_order=3, spectral_quad_order=3, adaptive=False,
+        K=51, grid_range=grid_range, grid_method="dense", refine_fit=True,
+        refine_matrix_max_K=cap,
+        refine_score_tol=100.,
+    )
+    report = result.diagnostics["refine_fit"]
+    assert report["first_backend"] == "matrix"
+    assert report["matrix_K"] == requested_K
+    assert report["matrix_max_K"] == cap
+    assert report["status"] == "accepted", report
+    assert report["final_backend"] == "local"
+    assert result.diagnostics["matrix_capped"] > 0
+    assert log_likelihood(model, u, result) == pytest.approx(result.log_likelihood)
+    if cap == 51:
+        explicit = log_likelihood(
+            model, u, replace(result, diagnostics={}), transition_method="matrix",
+            K=51, grid_range=8., max_K=51,
+        )
+        assert log_likelihood(model, u, result, transition_method="matrix") == pytest.approx(explicit)
+    else:
+        assert log_likelihood(model, u, result, max_K=None) == pytest.approx(result.log_likelihood)
+
+
 @pytest.mark.parametrize("mode,count", [("screen", 3), ("full", 5)])
 def test_accepted_refit_checks_returned_candidate(mode, count):
     u = np.random.default_rng(81).uniform(.12, .88, (22, 2))

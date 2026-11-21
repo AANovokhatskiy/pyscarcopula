@@ -34,7 +34,7 @@ _SYMBOL_REVIEWS = (
      'ce194e0c89c43640eb74da03a878e73c6fecfae07c56057a081eed43c1bcc5ff', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     # Restart configuration selection only; the OU evaluators remain native.
     ('pyscarcopula.strategy._scar_ou_refit:_matrix_grid',
-     '79d588405fd7fde92ff5aa5e4c1bc1e8e13d52cd0fef13d41fb17b33993da509', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     'be0b5676754b398c7a7a7d168946e7a726b341256a9e0aa248812b49f0b0bbd5', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     # Select supported quadrature profiles for the final fit diagnostic.
     ('pyscarcopula.strategy._scar_ou_resolution:_panel_check_orders',
      '174583ec2f872450bc909f66427cb38d5ad0dc924d7e7a246e92fbf752d83983', 'fit_orchestration', ('arithmetic',)),

@@ -945,6 +945,26 @@ def test_auto_matrix_fallback_uses_only_refined_matrix_grid(failed_spectral_case
     np.testing.assert_allclose(grad, expected)
 
 
+@pytest.mark.parametrize("cap", [10_000, None])
+def test_auto_skips_refined_dense_matrix_above_native_limit(failed_spectral_case, cap):
+    u, copula, cfg, alpha = failed_spectral_case
+    capped = replace(cfg, grid_method="dense", matrix_grid=(10_001, 8., cap, 4))
+    local = replace(cfg, transition_method="local")
+    value, info = _cpp_scar_ou.loglik(*alpha, u, copula, capped)
+    expected, _ = _cpp_scar_ou.loglik(*alpha, u, copula, local)
+    assert value == pytest.approx(expected)
+    obj = _cpp_scar_ou.prepare_objective(u, copula, capped)
+    nll, grad, grad_info = obj.neg_loglik_with_grad_info(*alpha)
+    nll_ref, grad_ref, _ = _cpp_scar_ou.neg_loglik_with_grad_info(*alpha, u, copula, local)
+    assert nll == pytest.approx(nll_ref)
+    np.testing.assert_allclose(grad, grad_ref)
+    for details in (info, grad_info):
+        assert details["backend"] == "local"
+        assert details["matrix_fallback_reason"] == "capped"
+        assert details["fallback_chain"] == ["spectral", "matrix"]
+        assert details["K_effective"] == cfg.K
+
+
 def test_cpp_auto_loglik_falls_back_from_failed_spectral_to_matrix(
         failed_spectral_case):
     u, copula, cfg, alpha = failed_spectral_case

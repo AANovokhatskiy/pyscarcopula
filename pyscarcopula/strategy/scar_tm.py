@@ -33,6 +33,7 @@ from pyscarcopula.strategy._scar_ou_resolution import (
 )
 from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
+    cpp_matrix_grid_limit,
     validate_cpp_config,
 )
 from pyscarcopula.numerical._arrays import (
@@ -1904,8 +1905,16 @@ class SCARTMStrategy:
             grid_fields = ("K", "grid_range", "max_K", "pts_per_sigma")
             grid = tuple(overrides.get(name, value) for name, value in zip(grid_fields, cfg.matrix_grid))
             if overrides.get("transition_method") == "matrix":
-                overrides.update(zip(grid_fields, grid))
-            overrides["matrix_grid"] = grid
+                saved_size, _, saved_cap, _ = cfg.matrix_grid
+                if saved_cap is not None and saved_size > saved_cap:
+                    saved_size = saved_cap
+                native_limit = cpp_matrix_grid_limit(overrides.get("grid_method", cfg.grid_method))
+                if saved_size > native_limit:
+                    saved_size = native_limit
+                overrides.update(zip(grid_fields, (overrides.get("K", saved_size), *grid[1:])))
+                overrides["matrix_grid"] = None
+            else:
+                overrides["matrix_grid"] = grid
         return replace(cfg, **overrides)
 
     def log_likelihood(self, copula, u: np.ndarray,
