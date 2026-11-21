@@ -24,6 +24,12 @@ does not introduce simulation noise.
 | `auto_small_kdt` | strategy kwarg | `1e-2` | In `transition_method='auto'`, use the local transition when $\kappa\,dt$ is below this value. |
 | `spectral_basis_order` | strategy kwarg | `'auto'` | Hermite basis size for the spectral likelihood. The auto policy uses 128, 96, 64, or 32 from the current $\kappa\,dt$; pass an integer to fix the basis size. |
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
+| `refine_fit` | strategy kwarg | `False` | Warm-start a second fit using the same transition method (auto, spectral, or matrix). |
+| `refine_matrix_grid_range` | strategy kwarg | auto | Matrix range in stationary standard deviations; defaults to the larger of 8 and the original range. |
+| `refine_matrix_max_K` | strategy kwarg | auto | Matrix node cap; raises a finite first-stage cap to at least 10,000 within native limits. An uncapped first stage stays uncapped by default. |
+| `refine_matrix_K` | strategy kwarg | auto | Requested matrix nodes; the automatic policy targets half the original spacing, subject to the node cap. |
+| `refine_loglik_tol` | strategy kwarg | `1e-8` | Maximum final log-likelihood difference per observation against a finer control rule. |
+| `refine_score_tol` | strategy kwarg | `1e-5` | Maximum projected control gradient of the mean negative log-likelihood in optimizer coordinates. |
 | `spectral_check_tolerances` | strategy kwarg | `None` | Optional pair of positive absolute tolerances for the total log-likelihood and each score component at the final point. |
 | `spectral_check_mode` | strategy kwarg | `"screen"` | Light sensitivity check or `"full"` five-resolution comparison when tolerances are supplied. |
 | `analytical_grad` | strategy kwarg | `True` | Uses the analytical gradient and avoids optimizer finite differences. |
@@ -303,6 +309,50 @@ quadrature but does not fix a poor latent grid; `K`, `grid_range`, and
 `pts_per_sigma` still determine where the posterior can live.
 
 ### Spectral Hermite likelihood
+
+With `refine_fit=True`, a successful first fit supplies the starting OU
+and free correlation parameters for a second optimization. Both passes use
+the requested transition method. In `auto`, each trial point goes through
+ordinary dispatch, including both fallbacks, regardless of the first fit's
+terminal backend. Spectral evaluations use a fixed higher-order rule, matrix
+evaluations use the refined grid, and local GH uses the original grid and
+quadrature throughout. Explicit `spectral` and `matrix` refine their own
+backend. Explicit `local` does not support refinement.
+
+For the automatic matrix node count, the starting size is the effective grid
+size from the first fit when available, otherwise the original requested size
+within its cap. The restart targets twice as many intervals per unit of
+stationary standard deviation and doubles `pts_per_sigma` on adaptive grids.
+An explicit `refine_matrix_K` keeps the original adaptive density target.
+The diagnostics record the effective sizes and standardized grid steps when
+the corresponding final evaluations actually used a grid.
+
+A successful restart is accepted when all three conditions hold:
+
+- At the new parameters, the difference between the fitted and control
+  log-likelihoods divided by T is at most `refine_loglik_tol`.
+- The new log-likelihood equals or exceeds the original candidate's likelihood
+  when both are evaluated on the same control rule.
+- The infinity norm of the projected gradient of the mean control objective
+  is at most `refine_score_tol`. Projection uses the restart's optimizer
+  coordinates and bounds, including free correlation coordinates.
+
+The control keeps the same dispatch mode. It increases spectral resolution;
+matrix and local evaluations use their respective restart grids. Agreement on
+the same grid is not an independent estimate of matrix or local integration
+error. The panel table goes up to 160 fit modes and 192 control modes. For
+larger custom orders, refinement uses Gauss-Hermite within the native order limit. The implementation tries the
+next available profile after numerical failure or rejection. An exhausted
+profile budget returns the first fit, including its correlation parameters.
+Inspect `result.diagnostics["refine_fit"]` for the decision and individual
+attempts. The division by T expresses numerical error per observation.
+Agreement between finite rules is an empirical accuracy check.
+
+When both refitting and a final resolution check are requested, the returned
+candidate carries its own resolution report. For a panel restart, the screen
+compares the fitted rule, a higher panel degree at the same basis size, and the
+control profile. Full mode also evaluates an intermediate degree at each basis
+size. Both modes apply the requested absolute likelihood and score tolerances.
 
 For an optional final check, pass `spectral_check_tolerances=(1e-5, 1e-4)`
 to `fit`. These example spreads are absolute, for the entire series. The

@@ -295,8 +295,11 @@ struct HermiteRuleCache {
     std::uint64_t duplicate_builds = 0;
 };
 
-std::uint64_t hermite_rule_cache_key(int quad_order, int basis_order) {
-    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(quad_order)) << 32)
+std::uint64_t hermite_rule_cache_key(int quad_order, int basis_order, int panel_degree) {
+    // Validated spectral orders fit in 16 bits. Keep the upper word
+    // exclusive to ordinary rules when searching for reusable Hermite nodes.
+    return (static_cast<std::uint64_t>(panel_degree) << 48)
+        | (static_cast<std::uint64_t>(quad_order) << 32)
         | static_cast<std::uint32_t>(basis_order);
 }
 
@@ -371,9 +374,9 @@ void clear_cache_contents(HermiteRuleCache& cache) {
 
 std::shared_ptr<const CachedHermiteRule> find_cached_hermite_rule(
     int quad_order,
-    int basis_order) {
+    int basis_order, int panel_degree = 0) {
 
-    const auto key = hermite_rule_cache_key(quad_order, basis_order);
+    const auto key = hermite_rule_cache_key(quad_order, basis_order, panel_degree);
     std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
     auto& cache = hermite_rule_cache();
     const auto it = cache.entries.find(key);
@@ -424,9 +427,9 @@ bool load_cached_hermite_rule(
     std::vector<double>& z,
     std::vector<double>& weights,
     std::vector<double>& basis,
-    std::vector<double>& weighted_basis) {
+    std::vector<double>& weighted_basis, int panel_degree) {
 
-    const auto rule = find_cached_hermite_rule(quad_order, basis_order);
+    const auto rule = find_cached_hermite_rule(quad_order, basis_order, panel_degree);
     if (!rule) {
         return false;
     }
@@ -443,9 +446,9 @@ void store_cached_hermite_rule(
     const std::vector<double>& z,
     const std::vector<double>& weights,
     const std::vector<double>& basis,
-    const std::vector<double>* precomputed_weighted_basis = nullptr) {
+    const std::vector<double>* precomputed_weighted_basis = nullptr, int panel_degree = 0) {
 
-    const auto key = hermite_rule_cache_key(quad_order, basis_order);
+    const auto key = hermite_rule_cache_key(quad_order, basis_order, panel_degree);
     std::vector<double> weighted_basis;
     if (precomputed_weighted_basis != nullptr) {
         weighted_basis = *precomputed_weighted_basis;
@@ -585,6 +588,54 @@ bool standard_normal_hermite_rule_uncached(
         z, weights, basis, quad_order, basis_order);
 }
 
+// Golub-Welsch for the uniform measure on [-1,1], mapped onto each panel.
+bool build_panel_nodes(int m, int q, int degree,
+                       std::vector<double>& z, std::vector<double>& weights) {
+    std::vector<double> edges{1, 2, 4, 8};
+    switch (m) {
+    case 32: edges.push_back(16); break;
+    case 64: edges.insert(edges.end(), {12, 16, 20}); break;
+    case 96: edges.insert(edges.end(), {12, 16, 20, 24}); break;
+    case 128: edges.insert(edges.end(), {12, 16, 20, 24, 28}); break;
+    case 160: edges.insert(edges.end(), {12, 16, 20, 24, 28, 32}); break;
+    case 192: edges.insert(edges.end(), {12, 16, 21, 26, 31, 36}); break;
+    default: return false;
+    }
+    if (degree < 1 || degree > 64 || q != 2 * degree * static_cast<int>(edges.size())) {
+        return false;
+    }
+    std::vector<double> nodes(degree), off(degree), eigenvectors(degree * degree);
+    for (int j = 0; j < degree; ++j) {
+        eigenvectors[j*degree+j] = 1.0;
+        const double k = j+1;
+        off[j] = k / std::sqrt(4*k*k-1);
+    }
+    if (!tridiagonal_ql(nodes, off, eigenvectors, degree)) {
+        return false;
+    }
+    std::vector<int> order(degree);
+    for (int j = 0; j < degree; ++j) order[j] = j;
+    std::sort(order.begin(), order.end(), [&](int i, int j) { return nodes[i] < nodes[j]; });
+    z.resize(q);
+    weights.resize(q);
+    double left = 0;
+    int pos = q/2;
+    for (double right : edges) {
+        const double half = (right-left)/2;
+        for (int j : order) {
+            const double x = left + half*(1+nodes[j]);
+            const double w = (right-left)*eigenvectors[j]*eigenvectors[j]
+                * std::exp(-0.5*x*x)/std::sqrt(2*kPi);
+            z[pos] = x;
+            z[q-1-pos] = -x;
+            weights[pos] = weights[q-1-pos] = w;
+            ++pos;
+        }
+        left = right;
+    }
+    return true;
+}
+
 bool build_hermite_rule(
     int quad_order,
     int basis_order,
@@ -678,18 +729,31 @@ bool standard_normal_hermite_rule_with_weighted_basis(
     std::vector<double>& z,
     std::vector<double>& weights,
     std::vector<double>& basis,
-    std::vector<double>& weighted_basis) {
+    std::vector<double>& weighted_basis,
+    int panel_degree) {
 
     std::size_t basis_elements = 0;
     if (!valid_spectral_dimensions(
             quad_order, basis_order, basis_elements)) {
         return false;
     }
+    if (panel_degree < 0 || panel_degree > 64) {
+        return false;
+    }
     if (load_cached_hermite_rule(
-            quad_order, basis_order, z, weights, basis, weighted_basis)) {
+            quad_order, basis_order, z, weights, basis, weighted_basis, panel_degree)) {
         return true;
     }
-    if (!build_hermite_rule(
+    const bool panels = panel_degree != 0;
+    if (panels) {
+        if (!build_panel_nodes(basis_order, quad_order, panel_degree, z, weights)) {
+            return false;
+        }
+        fill_hermite_basis(z, quad_order, basis_order, basis);
+        if (!hermite_rule_invariants_hold(z, weights, basis, quad_order, basis_order)) {
+            return false;
+        }
+    } else if (!build_hermite_rule(
             quad_order, basis_order, z, weights, basis)) {
         return false;
     }
@@ -705,7 +769,7 @@ bool standard_normal_hermite_rule_with_weighted_basis(
         }
     }
     store_cached_hermite_rule(
-        quad_order, basis_order, z, weights, basis, &weighted_basis);
+        quad_order, basis_order, z, weights, basis, &weighted_basis, panel_degree);
     return true;
 }
 

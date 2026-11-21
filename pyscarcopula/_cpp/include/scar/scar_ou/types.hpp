@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+
 namespace scar {
 
 /// Numerical representation used for SCAR-OU state propagation.
@@ -42,6 +43,12 @@ struct OuNumericalConfig {
     // Active density, state-derivative and forward-history blocks only.
     // PPF tables, transitions and checkpoint vectors are budgeted separately.
     std::uint64_t corr_gradient_block_bytes = 64U * 1024U * 1024U;
+    int panel_degree = 0;
+    // Optional matrix fallback grid; local GH always keeps the primary grid.
+    int matrix_K = 0;
+    double matrix_grid_range = 0.0;
+    int matrix_max_K = 0;
+    int matrix_pts_per_sigma = 0;
 };
 
 }  // namespace scar

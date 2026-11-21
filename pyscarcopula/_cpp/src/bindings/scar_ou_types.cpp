@@ -1,5 +1,6 @@
 #include "module.hpp"
 
+
 #include "scar/scar_ou/types.hpp"
 
 namespace py = pybind11;
@@ -34,6 +35,11 @@ void bind_scar_ou_types(py::module_& m) {
         "OuNumericalConfig",
         "Grid, quadrature, and backend-dispatch settings for SCAR-OU.")
         .def(py::init<>())
+        .def_readwrite("matrix_K", &scar::OuNumericalConfig::matrix_K)
+        .def_readwrite("matrix_grid_range", &scar::OuNumericalConfig::matrix_grid_range)
+        .def_readwrite("matrix_pts_per_sigma", &scar::OuNumericalConfig::matrix_pts_per_sigma)
+        .def_readwrite("matrix_max_K", &scar::OuNumericalConfig::matrix_max_K)
+        .def_readwrite("panel_degree", &scar::OuNumericalConfig::panel_degree)
         .def_readwrite("K", &scar::OuNumericalConfig::K)
         .def_readwrite("grid_range", &scar::OuNumericalConfig::grid_range)
         .def_readwrite("adaptive", &scar::OuNumericalConfig::adaptive)

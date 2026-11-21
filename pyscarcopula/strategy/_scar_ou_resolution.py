@@ -13,6 +13,32 @@ from pyscarcopula.copula.multivariate.corr_param import (
 from pyscarcopula.numerical._scar_ou_config import CPP_MAX_SPECTRAL_ORDER
 
 
+# Candidate M, Q, panel degree and their independently finer control profile.
+PROFILES = (
+    (32, 320, 32, 64, 672, 48),
+    (64, 448, 32, 96, 896, 56),
+    (96, 640, 40, 128, 1008, 56),
+    (128, 720, 40, 160, 1020, 51),
+    (160, 880, 44, 192, 1020, 51),
+)
+
+
+def _panel_check_orders(config, mode):
+    for m, q, degree, high_m, high_q, high_degree in PROFILES:
+        if (m, q, degree) == (config.basis_order, config.quad_order, config.panel_degree):
+            nodes_per_degree = q // degree
+            high_nodes_per_degree = high_q // high_degree
+            middle = (degree + high_degree) // 2
+            base = (m, q, degree)
+            fine = (m, nodes_per_degree * high_degree, high_degree)
+            control = (high_m, high_q, high_degree)
+            if mode == "screen":
+                return (base, fine, control)
+            return (base, (m, nodes_per_degree * middle, middle), fine,
+                    (high_m, high_nodes_per_degree * middle, middle), control)
+    raise ValueError("unknown spectral refit profile")
+
+
 def resolution_tolerances(values):
     if values is None:
         return None
@@ -63,19 +89,21 @@ def check_final_resolution(
     config = config_for(kappa=params[0], n_obs=len(u))
     m = config.basis_order
     q = model_policy.ou_resolve_quad_order(m, config.quad_order)
-    if mode == "screen":
+    if config.panel_degree:
+        orders = _panel_check_orders(config, mode)
+    elif mode == "screen":
         next_q = q + (q + 3) // 4
         next_m = m + (m + 3) // 4
         # If the original rule cannot integrate the larger basis, compare
         # the two bases at next_q, already evaluated by the first probe.
-        orders = ((m, q), (m, next_q), (next_m, q if q >= next_m else next_q))
+        orders = ((m, q, 0), (m, next_q, 0), (next_m, q if q >= next_m else next_q, 0))
     else:
         middle = m + (m + 1) // 2
         high_basis = max(2 * m, middle + 1)
         high_quad = 4 * q
-        orders = ((m, q), (m, 2 * q), (m, high_quad),
-                  (middle, high_quad), (high_basis, high_quad))
-    for i, (basis, quad) in enumerate(orders):
+        orders = ((m, q, 0), (m, 2 * q, 0), (m, high_quad, 0),
+                  (middle, high_quad, 0), (high_basis, high_quad, 0))
+    for i, (basis, quad, degree) in enumerate(orders):
         if quad > CPP_MAX_SPECTRAL_ORDER:
             check.update(reason="order_limit", pending_orders=[basis, quad])
             return
@@ -84,7 +112,7 @@ def check_final_resolution(
                 value, gradient = fit.fun, fit.jac
             else:
                 cfg = replace(config, transition_method="spectral",
-                              basis_order=basis, quad_order=quad)
+                              basis_order=basis, quad_order=quad, panel_degree=degree)
                 value, gradient = _probe(u, copula, params, cfg)
             score = scar_ou.gradient_to_log_stationary(params, gradient)
             vector = np.r_[-value, -score]

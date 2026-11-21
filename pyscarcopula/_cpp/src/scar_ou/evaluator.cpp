@@ -9,6 +9,20 @@
 namespace scar {
 using namespace evaluator_detail;
 
+namespace {
+OuNumericalConfig matrix_fallback_config(OuNumericalConfig config) {
+    if (config.matrix_K != 0) {
+        config.K = config.matrix_K;
+        config.grid_range = config.matrix_grid_range;
+        config.max_K = config.matrix_max_K;
+        if (config.matrix_pts_per_sigma != 0) {
+            config.pts_per_sigma = config.matrix_pts_per_sigma;
+        }
+    }
+    return config;
+}
+}  // namespace
+
 const PreparedDynamicEmission& ScarOuEvaluator::resolve_dynamic_emission(
     const CopulaSpec& copula,
     std::unique_ptr<PreparedDynamicEmission>& owner) const {
@@ -289,10 +303,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    result = neg_loglik_with_grad_and_corr_matrix(
-        params, copula, u, config);
+    const auto matrix_config = matrix_fallback_config(config);
+    result = neg_loglik_with_grad_and_corr_matrix(params, copula, u, matrix_config);
     const int matrix_reason = auto_grad_accepted(result)
-        ? matrix_grid_fallback_reason(params, u, config)
+        ? matrix_grid_fallback_reason(params, u, matrix_config)
         : SCAR_FALLBACK_FAILED;
     if (auto_grad_accepted(result)
         && matrix_reason == SCAR_FALLBACK_NONE) {
@@ -341,10 +355,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_auto
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    result = neg_loglik_with_grad_and_corr_directional_matrix(
-        params, copula, u, config, corr_direction);
+    const auto matrix_config = matrix_fallback_config(config);
+    result = neg_loglik_with_grad_and_corr_directional_matrix(params, copula, u, matrix_config, corr_direction);
     const int matrix_reason = auto_grad_accepted(result)
-        ? matrix_grid_fallback_reason(params, u, config)
+        ? matrix_grid_fallback_reason(params, u, matrix_config)
         : SCAR_FALLBACK_FAILED;
     if (auto_grad_accepted(result)
         && matrix_reason == SCAR_FALLBACK_NONE) {
@@ -390,9 +404,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    result = neg_loglik_with_grad_matrix(params, copula, u, config);
+    const auto matrix_config = matrix_fallback_config(config);
+    result = neg_loglik_with_grad_matrix(params, copula, u, matrix_config);
     const int matrix_reason = auto_grad_accepted(result)
-        ? matrix_grid_fallback_reason(params, u, config)
+        ? matrix_grid_fallback_reason(params, u, matrix_config)
         : SCAR_FALLBACK_FAILED;
     if (auto_grad_accepted(result)
         && matrix_reason == SCAR_FALLBACK_NONE) {
@@ -437,9 +452,10 @@ LogLikResult ScarOuEvaluator::loglik_auto(
         set_auto_fallback(result, {OuBackend::Spectral});
         return result;
     }
-    result = loglik_matrix(params, copula, u, config);
+    const auto matrix_config = matrix_fallback_config(config);
+    result = loglik_matrix(params, copula, u, matrix_config);
     const int matrix_reason = auto_loglik_accepted(result)
-        ? matrix_grid_fallback_reason(params, u, config)
+        ? matrix_grid_fallback_reason(params, u, matrix_config)
         : SCAR_FALLBACK_FAILED;
     if (auto_loglik_accepted(result)
         && matrix_reason == SCAR_FALLBACK_NONE) {

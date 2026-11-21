@@ -115,3 +115,140 @@ def test_screen_detects_mode_sensitivity_at_minimal_quadrature(fixed_point, monk
 def test_check_rejects_invalid_tolerance(bad):
     with pytest.raises(ValueError, match="spectral_check_tolerances"):
         scar_tm.SCARTMStrategy(spectral_check_tolerances=bad)
+
+@pytest.mark.parametrize("method,corr", [("auto", None), ("spectral", "shrinkage")])
+def test_optional_composite_restart(fixed_point, method, corr):
+    u = np.random.default_rng(81).uniform(.12, .88, (22, 3 if corr else 2))
+    model = (StochasticStudentCopula(d=3, corr_mode=corr) if corr
+             else BivariateGaussianCopula())
+    base = run_fit(model, u, transition_method=method)
+    assert "refine_fit" not in base.diagnostics
+    result = run_fit(model, u, transition_method=method, refine_fit=True,
+                     refine_score_tol=100.)
+    check = result.diagnostics["refine_fit"]
+    assert check["status"] == "accepted", check
+    assert check["basis_order"] > check["first_basis_order"]
+    assert check["attempts"][-1]["error_per_obs"] <= 1e-8
+    assert result.nfev >= 2
+    strategy = scar_tm.SCARTMStrategy(transition_method=method)
+    assert strategy.log_likelihood(model, u, result) == pytest.approx(result.log_likelihood)
+
+
+def test_failed_refit_restores_joint_candidate(fixed_point):
+    u = np.random.default_rng(82).uniform(.12, .88, (22, 3))
+    model = StochasticStudentCopula(d=3, corr_mode="shrinkage")
+    result = run_fit(model, u, refine_fit=True, refine_score_tol=1e-30)
+    report = result.diagnostics["refine_fit"]
+    assert report["status"] == "rejected"
+    assert result.log_likelihood == report["first_log_likelihood"]
+    np.testing.assert_allclose(model.R, result.diagnostics["corr_matrix"])
+
+@pytest.mark.parametrize("shift", [-1., 1.])
+def test_control_disagreement_keeps_first_fit(fixed_point, monkeypatch, shift):
+    from pyscarcopula.strategy import _scar_ou_refit as refit
+
+    probe = refit._probe
+    calls = []
+    def altered_probe(u, model, params, config):
+        value, grad = probe(u, model, params, config)
+        calls.append(config.basis_order)
+        return value + (shift if len(calls) % 2 == 0 else 0.), grad
+    monkeypatch.setattr(refit, "_probe", altered_probe)
+    u = np.random.default_rng(80).uniform(.2, .8, (22, 2))
+    fit = run_fit(BivariateGaussianCopula(), u, refine_fit=True,
+                  refine_score_tol=100.)
+    report = fit.diagnostics["refine_fit"]
+    assert report["status"] == "rejected"
+    assert report["first_log_likelihood"] == fit.log_likelihood
+    assert all(a["error_per_obs"] > 1e-8 for a in report["attempts"])
+
+
+@pytest.mark.parametrize("method,backend", [("auto", "local"), ("matrix", "matrix")])
+def test_grid_restart_preserves_dispatch_and_warm_start(fixed_point, method, backend):
+    u = np.random.default_rng(81).uniform(.2, .8, (22, 2))
+    model = BivariateGaussianCopula()
+    options = dict(transition_method=method, auto_small_kdt=1., adaptive=False, K=51)
+    base = run_fit(model, u, **options)
+    result = run_fit(model, u, **options, refine_fit=True, refine_score_tol=100.,
+                     refine_matrix_K=201, refine_matrix_grid_range=8., refine_matrix_max_K=501)
+    report = result.diagnostics["refine_fit"]
+    assert report["status"] == "accepted", report
+    assert result.nfev == 2
+    assert result.transition_method == report["likelihood_config"]["transition_method"] == method
+    assert report["final_backend"] == backend
+    assert report["matrix_K"] == 201
+    if method == "matrix":
+        assert result.spectral_basis_order == base.spectral_basis_order
+        assert result.spectral_quad_order == base.spectral_quad_order
+    assert report["final_K_effective"] == (51 if method == "auto" else 201)
+    if backend == "local":
+        assert result.log_likelihood == base.log_likelihood
+    strategy = scar_tm.SCARTMStrategy()
+    assert strategy.log_likelihood(model, u, result) == pytest.approx(result.log_likelihood)
+
+
+def test_matrix_refinement_default_spacing(fixed_point):
+    u = np.random.default_rng(81).uniform(.2, .8, (22, 2))
+    result = run_fit(BivariateGaussianCopula(), u, transition_method="matrix",
+                     refine_fit=True, refine_score_tol=100., adaptive=False, K=51, grid_range=5.)
+    report = result.diagnostics["refine_fit"]
+    assert report["status"] == "accepted", report
+    assert report["matrix_grid_range"] == 8.
+    assert report["matrix_max_K"] == 10000
+    assert report["final_grid_step"] == pytest.approx(report["first_grid_step"] / 2)
+
+
+@pytest.mark.parametrize("mode,count", [("screen", 3), ("full", 5)])
+def test_accepted_refit_checks_returned_candidate(mode, count):
+    u = np.random.default_rng(81).uniform(.12, .88, (22, 2))
+    result = run_fit(BivariateGaussianCopula(), u, transition_method="spectral",
+                     refine_fit=True, spectral_check_tolerances=(1e-5, 1e-4),
+                     spectral_check_mode=mode)
+    assert result.diagnostics["refine_fit"]["status"] == "accepted"
+    probes = result.diagnostics["spectral_resolution_check"]["probes"]
+    assert len(probes) == count
+    assert probes[0]["basis_order"] == result.spectral_basis_order
+    assert probes[0]["log_likelihood"] == result.log_likelihood
+    assert probes[-1]["basis_order"] > probes[0]["basis_order"]
+
+@pytest.mark.parametrize("kwargs", [
+    {"refine_matrix_K": 1}, {"refine_matrix_max_K": True},
+    {"refine_matrix_grid_range": np.nan},
+    {"refine_matrix_K": 101, "refine_matrix_max_K": 100},
+])
+def test_invalid_refined_grid(kwargs):
+    with pytest.raises(ValueError):
+        scar_tm.SCARTMStrategy(refine_fit=True, **kwargs)
+
+
+def test_auto_local_refinement_uses_fitted_warm_start(monkeypatch):
+    minimize = scar_tm.minimize
+    starts, ends = [], []
+
+    def record(fun, x0, **kwargs):
+        starts.append(x0.copy())
+        fit = minimize(fun, x0, **kwargs)
+        ends.append(fit.x.copy())
+        return fit
+
+    monkeypatch.setattr(scar_tm, "minimize", record)
+    u = np.random.default_rng(81).uniform(.12, .88, (22, 2))
+    result = run_fit(BivariateGaussianCopula(), u, refine_fit=True, auto_small_kdt=1000.,
+                     adaptive=False, K=41, log_stationary_scale_optimization=True)
+    report = result.diagnostics["refine_fit"]
+    assert report["first_backend"] == "local"
+    assert len(starts) >= 2
+    assert not np.allclose(starts[0], ends[0])
+    for restart in starts[1:]:
+        np.testing.assert_allclose(restart, ends[0])
+
+
+@pytest.mark.parametrize("method", ["auto", "spectral"])
+def test_custom_profile_reserves_finer_control(method):
+    from pyscarcopula.strategy._scar_ou_refit import _profiles
+
+    [(m, q, _, control_m, control_q, _)] = _profiles(method, 820, 1024)
+    assert 820 < m < control_m <= 1024
+    assert q == control_q == 1024
+    assert _profiles(method, 1023, 1024) == []
+    assert _profiles(method, 1024, 1024) == []

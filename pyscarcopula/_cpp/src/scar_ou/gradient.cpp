@@ -966,6 +966,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     std::vector<double>& weighted_basis = ws.weighted_basis;
     if (ws.cached_quad_order != quad_order
         || ws.cached_basis_order != basis_order
+        || ws.cached_panel_degree != config.panel_degree
         || basis.size() != spectral_elements
         || weighted_basis.size() != spectral_elements) {
         if (!scar_internal::standard_normal_hermite_rule_with_weighted_basis(
@@ -974,9 +975,10 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 z,
                 weights,
                 basis,
-                weighted_basis)) {
+                weighted_basis, config.panel_degree)) {
             return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
         }
+        ws.cached_panel_degree = config.panel_degree;
         ws.cached_quad_order = quad_order;
         ws.cached_basis_order = basis_order;
     }

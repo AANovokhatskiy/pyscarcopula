@@ -4,6 +4,8 @@ Python owns optimizer orchestration and result construction. The compiled
 evaluator owns likelihood, gradients, forward filtering, and state outputs.
 """
 
+from copy import copy
+from dataclasses import replace
 import hashlib
 
 import numpy as np
@@ -633,6 +635,19 @@ class SCARTMStrategy:
     final_gradient_tolerance : float or None
         Maximum projected-gradient norm for a successful final fit. When
         omitted, the tolerance is derived from the optimizer ``gtol``.
+    refine_fit : bool, default False
+        Warm-start a second fit with the original transition method and
+        refined spectral and/or matrix settings. Inspect diagnostics["refine_fit"].
+    refine_matrix_K, refine_matrix_grid_range, refine_matrix_max_K : optional
+        Node count, range in stationary standard deviations and node cap for
+        the refined matrix grid. Local GH keeps the original grid.
+    refine_loglik_tol : float, default 1e-8
+        Maximum final log-likelihood discrepancy per observation against a
+        control evaluation. The control likelihood must also match or improve
+        the starting point on that same rule.
+    refine_score_tol : float, default 1e-5
+        Maximum projected gradient of the mean control objective in the
+        second optimizer's coordinates.
     final_growth_limit : float
         Maximum allowed OU parameter growth relative to initialization.
     final_rho_tolerance : float
@@ -694,6 +709,12 @@ class SCARTMStrategy:
                  corr_gradient_block_bytes: int = 67_108_864,
                  spectral_check_tolerances: tuple[float, float] | None = None,
                  spectral_check_mode: str = "screen",
+                 refine_fit: bool = False,
+                 refine_matrix_K: int | None = None,
+                 refine_matrix_grid_range: float | None = None,
+                 refine_matrix_max_K: int | None = None,
+                 refine_loglik_tol: float = 1e-8,
+                 refine_score_tol: float = 1e-5,
                  **kwargs):
         if "backend" in kwargs:
             raise TypeError(
@@ -720,6 +741,28 @@ class SCARTMStrategy:
         if spectral_check_mode not in ("screen", "full"):
             raise ValueError("spectral_check_mode must be 'screen' or 'full'")
         self.spectral_check_mode = spectral_check_mode
+        if not isinstance(refine_fit, (bool, np.bool_)):
+            raise TypeError("refine_fit must be boolean")
+        if refine_fit and self.transition_method not in ("auto", "spectral", "matrix"):
+            raise ValueError("refine_fit requires auto, spectral, or matrix")
+        self.refine_fit = refine_fit
+        self.refine_loglik_tol, self.refine_score_tol = resolution_tolerances(
+            (refine_loglik_tol, refine_score_tol))
+        self._panel_degree = 0
+        self._matrix_grid = None
+        self.refine_matrix_K = refine_matrix_K
+        self.refine_matrix_grid_range = refine_matrix_grid_range
+        self.refine_matrix_max_K = refine_matrix_max_K
+        if any(x is not None for x in (
+                refine_matrix_K, refine_matrix_grid_range, refine_matrix_max_K)):
+            validate_cpp_config(AutoTMConfig(
+                transition_method="matrix", grid_method=self.grid_method,
+                K=self.K if refine_matrix_K is None else refine_matrix_K,
+                grid_range=self.grid_range if refine_matrix_grid_range is None else refine_matrix_grid_range,
+                max_K=refine_matrix_max_K))
+            if (refine_matrix_K is not None and refine_matrix_max_K is not None
+                    and refine_matrix_K > refine_matrix_max_K):
+                raise ValueError("refine_matrix_K exceeds refine_matrix_max_K")
         self.analytical_grad = analytical_grad
         self.corr_gradient_block_bytes = corr_gradient_block_bytes
         self.smart_init = smart_init
@@ -836,6 +879,8 @@ class SCARTMStrategy:
                      n_obs: int | None = None):
         return AutoTMConfig(
             transition_method=transition_method or self.transition_method,
+            panel_degree=self._panel_degree,
+            matrix_grid=self._matrix_grid,
             small_kdt=self.auto_small_kdt,
             basis_order=self._spectral_basis_order_for(kappa, n_obs),
             quad_order=self.spectral_quad_order,
@@ -1480,6 +1525,19 @@ class SCARTMStrategy:
         LatentResult
         """
         reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
+        if self.refine_fit:
+            from pyscarcopula.strategy._scar_ou_refit import fit_with_refinement
+
+            def run(strategy, initial):
+                return strategy.fit(
+                    copula, u, alpha0=initial, gtol=gtol, ftol=ftol, maxfun=maxfun,
+                    maxiter=maxiter, maxls=maxls, eps=eps, maxcor=maxcor,
+                    finite_diff_rel_step=finite_diff_rel_step, verbose=verbose,
+                    initial_mle_result=initial_mle_result)
+
+            ordinary = copy(self)
+            ordinary.refine_fit = False
+            return fit_with_refinement(ordinary, copula, u, alpha0, run)
         log_stationary = _uses_log_stationary_scale(
             copula, self.log_stationary_scale_optimization)
         optimizer_options = lbfgsb_options(
@@ -1803,6 +1861,15 @@ class SCARTMStrategy:
         """Evaluate TM log-likelihood at fitted parameters."""
         p = result.params
         cfg = self._auto_config(kappa=p.kappa, n_obs=len(u))
+        refinement = result.diagnostics.get("refine_fit", {})
+        if refinement.get("status") == "accepted":
+            cfg = replace(cfg, **refinement["likelihood_config"])
+        else:
+            # Replay panel rules from results saved before refine_fit.
+            legacy = result.diagnostics.get("spectral_refit", {})
+            if legacy.get("status") == "accepted":
+                cfg = replace(cfg, transition_method="spectral", basis_order=legacy["basis_order"],
+                              quad_order=legacy["quad_order"], panel_degree=legacy["panel_degree"])
         self._uses_cpp(copula)
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,

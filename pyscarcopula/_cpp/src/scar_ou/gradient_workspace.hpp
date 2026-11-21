@@ -49,6 +49,7 @@ struct ScarOuGridGradientWorkspace {
 };
 
 struct ScarOuSpectralGradientWorkspace {
+    int cached_panel_degree = 0;
     int cached_quad_order = 0;
     int cached_basis_order = 0;
     std::vector<double> z;

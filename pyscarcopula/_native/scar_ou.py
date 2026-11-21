@@ -381,6 +381,13 @@ def _config(module, cfg: AutoTMConfig):
     out.auto_small_kdt = float(cfg.small_kdt)
     out.spectral_basis_order = int(cfg.basis_order)
     out.spectral_quad_order = 0 if cfg.quad_order is None else int(cfg.quad_order)
+    out.panel_degree = cfg.panel_degree
+    if cfg.matrix_grid is not None:
+        size, radius, cap, points = cfg.matrix_grid
+        out.matrix_pts_per_sigma = points
+        out.matrix_K = size
+        out.matrix_grid_range = radius
+        out.matrix_max_K = 0 if cap is None else cap
     out.n_threads = int(cfg.n_threads)
     out.corr_gradient_block_bytes = int(cfg.corr_gradient_block_bytes)
     grid_method = normalize_grid_method(cfg.grid_method)
